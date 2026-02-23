@@ -1,0 +1,39 @@
+from dataclasses import dataclass, field
+
+import wikipediaapi
+
+from app.config import settings
+
+
+@dataclass
+class AgentDeps:
+    tavily_api_key: str
+    wiki: wikipediaapi.Wikipedia
+    pdf_context: str = ""
+    uploaded_filenames: list[str] = field(default_factory=list)
+    research_plan: list[str] = field(default_factory=list)
+    evaluation_count: int = 0
+    tool_cache: dict = field(default_factory=dict)
+    source_urls: set = field(default_factory=set)
+    query_complexity: str = "standard"
+    # Enhanced feature fields
+    chart_payloads: list[dict] = field(default_factory=list)
+    source_claims: dict[str, list[str]] = field(default_factory=dict)
+    memory_context: str = ""
+
+
+def get_agent_deps(
+    pdf_context: str = "",
+    uploaded_filenames: list[str] | None = None,
+    memory_context: str = "",
+) -> AgentDeps:
+    return AgentDeps(
+        tavily_api_key=settings.tavily_api_key,
+        wiki=wikipediaapi.Wikipedia(
+            language="en",
+            user_agent="m-clone-research-agent/1.0",
+        ),
+        pdf_context=pdf_context,
+        uploaded_filenames=uploaded_filenames or [],
+        memory_context=memory_context,
+    )

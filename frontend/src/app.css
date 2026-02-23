@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	html {
+		@apply bg-navy;
+	}
+
+	::-webkit-scrollbar {
+		width: 6px;
+		height: 6px;
+	}
+
+	::-webkit-scrollbar-track {
+		@apply bg-navy-800;
+	}
+
+	::-webkit-scrollbar-thumb {
+		@apply bg-navy-500 rounded-full;
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		@apply bg-gold-dark;
+	}
+}
+
+@layer components {
+	.gold-divider {
+		@apply border-t border-gold/20;
+	}
+
+	.card {
+		@apply bg-navy-800 border border-navy-600 rounded-lg;
+	}
+
+	.btn-gold {
+		@apply bg-gold hover:bg-gold-light text-navy font-semibold py-3 px-6 rounded-lg transition-all duration-200 text-sm tracking-wide disabled:opacity-40 disabled:cursor-not-allowed;
+	}
+
+	.input-base {
+		@apply bg-navy-800 border border-navy-600 rounded-lg text-slate-100 placeholder-slate-500 focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/50 transition-colors duration-200;
+	}
+}
+
+/* ── Light theme overrides ─────────────────────────────────────────────────── */
+.light {
+	background-color: #f8fafc;
+	color: #1e293b;
+}
+
+.light header,
+.light footer {
+	background-color: #f1f5f9;
+	border-color: #e2e8f0;
+}
+
+.light header h1 {
+	color: #a0802a;
+}
+
+.light header p,
+.light footer span {
+	color: #94a3b8;
+}
+
+.light main {
+	background-color: #f8fafc;
+}
+
+.light .bg-navy {
+	background-color: #f8fafc !important;
+}
+
+.light .bg-navy-800,
+.light .bg-navy-800\/60,
+.light .bg-navy-800\/30 {
+	background-color: #ffffff !important;
+}
+
+.light .bg-navy-700 {
+	background-color: #f1f5f9 !important;
+}
+
+.light .bg-navy-900 {
+	background-color: #f8fafc !important;
+}
+
+.light .border-navy-600,
+.light .border-navy-700 {
+	border-color: #e2e8f0 !important;
+}
+
+.light .text-slate-400 {
+	color: #475569 !important;
+}
+
+.light .text-slate-500 {
+	color: #64748b !important;
+}
+
+.light .text-slate-600 {
+	color: #94a3b8 !important;
+}
+
+.light .text-slate-100,
+.light .text-slate-200,
+.light .text-slate-300 {
+	color: #1e293b !important;
+}
+
+.light ::-webkit-scrollbar-track {
+	background-color: #f1f5f9;
+}
+
+.light ::-webkit-scrollbar-thumb {
+	background-color: #cbd5e1;
+}

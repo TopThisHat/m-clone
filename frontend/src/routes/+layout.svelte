@@ -1,0 +1,88 @@
+<script lang="ts">
+	import '../app.css';
+	import { theme } from '$lib/stores/themeStore';
+	import { currentUser } from '$lib/stores/authStore';
+	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
+	import NotificationBell from '$lib/components/NotificationBell.svelte';
+	import type { LayoutData } from './$types';
+
+	let { children, data }: { children: import('svelte').Snippet; data: LayoutData } = $props();
+
+	// Hydrate store from SSR — runs on every page in the app
+	$effect(() => {
+		currentUser.set(data.user ?? null);
+	});
+</script>
+
+<svelte:head>
+	<title>Manus Research — Private Intelligence</title>
+</svelte:head>
+
+<div class="min-h-screen bg-navy flex flex-col" class:light={$theme === 'light'}>
+	<!-- Header -->
+	<header class="border-b border-navy-700 px-8 py-4 flex items-center justify-between flex-shrink-0">
+		<div class="flex items-center gap-3">
+			<!-- Logo mark -->
+			<a href="/" class="flex items-center gap-3">
+				<div
+					class="w-8 h-8 bg-gold rounded-sm flex items-center justify-center shadow-lg shadow-gold/10"
+				>
+					<span class="text-navy font-serif font-bold text-sm select-none">M</span>
+				</div>
+				<div>
+					<h1 class="font-serif text-gold text-lg leading-none tracking-wide">Manus Research</h1>
+					<p class="text-navy-500 text-xs tracking-widest uppercase mt-0.5">Private Intelligence</p>
+				</div>
+			</a>
+		</div>
+
+		<!-- Status / version -->
+		<div class="flex items-center gap-6">
+			<div class="hidden sm:flex items-center gap-4 text-xs text-slate-600">
+				<span>GPT-4o</span>
+				<span class="w-px h-3 bg-navy-600"></span>
+				<span>Tavily Search</span>
+				<span class="w-px h-3 bg-navy-600"></span>
+				<span>Yahoo Finance</span>
+			</div>
+			<div class="flex items-center gap-2">
+				<div class="flex items-center gap-1.5">
+					<div class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
+					<span class="text-xs text-slate-500">Live</span>
+				</div>
+				{#if $currentUser}
+					<a
+						href="/teams"
+						class="text-xs text-slate-500 hover:text-gold transition-colors px-2 py-1 rounded hover:bg-navy-800"
+					>
+						Teams
+					</a>
+					<NotificationBell />
+				{/if}
+				<ThemeToggle />
+				{#if $currentUser}
+					<span class="text-xs text-slate-600 hidden sm:block">{$currentUser.display_name}</span>
+				{/if}
+			</div>
+		</div>
+	</header>
+
+	<!-- Main Content -->
+	<main class="flex-1 overflow-hidden">
+		{@render children()}
+	</main>
+
+	<!-- Footer -->
+	<footer class="border-t border-navy-700 px-8 py-3 flex items-center justify-between flex-shrink-0">
+		<span class="text-xs text-slate-700">
+			For informational purposes only. Not investment advice.
+		</span>
+		<div class="flex items-center gap-4">
+			<a href="/dashboard" class="text-xs text-slate-600 hover:text-gold transition-colors">Dashboard</a>
+			{#if $currentUser}
+				<a href="/teams" class="text-xs text-slate-600 hover:text-gold transition-colors">Teams</a>
+			{/if}
+			<span class="text-xs text-slate-700 font-light">Powered by pydantic-ai</span>
+		</div>
+	</footer>
+</div>
