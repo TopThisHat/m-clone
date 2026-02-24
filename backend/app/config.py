@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     redis_url: str = ""
     redis_ttl_hours: int = 24
 
+    # AI models
+    anthropic_api_key: str = ""
+    default_model: str = "openai:gpt-4o"
+
     # Auth / SSO
     oidc_issuer: str = ""
     oidc_client_id: str = "m-clone"

@@ -7,3 +7,5 @@ class ResearchRequest(BaseModel):
     query: str
     pdf_session_key: str | None = None
     message_history: list[Any] | None = None
+    depth: str = "balanced"   # "fast" | "balanced" | "deep"
+    model: str | None = None

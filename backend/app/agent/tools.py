@@ -156,6 +156,7 @@ async def web_search(ctx: RunContext[AgentDeps], query: str) -> str:
         score = item.get("score", 0)
         if url:
             ctx.deps.source_urls.add(url)
+            ctx.deps.source_titles[url] = title
             # Extract numeric claims for conflict detection
             claims = _CLAIM_PATTERN.findall(content)
             if claims:

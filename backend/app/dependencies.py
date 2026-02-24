@@ -15,6 +15,7 @@ class AgentDeps:
     evaluation_count: int = 0
     tool_cache: dict = field(default_factory=dict)
     source_urls: set = field(default_factory=set)
+    source_titles: dict[str, str] = field(default_factory=dict)  # url → title
     query_complexity: str = "standard"
     # Enhanced feature fields
     chart_payloads: list[dict] = field(default_factory=list)
@@ -22,10 +23,14 @@ class AgentDeps:
     memory_context: str = ""
 
 
+_DEPTH_MAP = {"fast": "simple", "balanced": "standard", "deep": "deep"}
+
+
 def get_agent_deps(
     pdf_context: str = "",
     uploaded_filenames: list[str] | None = None,
     memory_context: str = "",
+    depth: str = "balanced",
 ) -> AgentDeps:
     return AgentDeps(
         tavily_api_key=settings.tavily_api_key,
@@ -36,4 +41,5 @@ def get_agent_deps(
         pdf_context=pdf_context,
         uploaded_filenames=uploaded_filenames or [],
         memory_context=memory_context,
+        query_complexity=_DEPTH_MAP.get(depth, "standard"),
     )

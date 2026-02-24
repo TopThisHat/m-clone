@@ -8,12 +8,29 @@ from fastapi.responses import StreamingResponse
 
 from app.agent.streaming import stream_research
 from app.auth import get_optional_user
+from app.config import settings
 from app.dependencies import get_agent_deps
 from app.models.job import AsyncResearchRequest, JobStatus
 from app.models.request import ResearchRequest
 from app.routers.documents import get_pdf_text
 
 router = APIRouter(prefix="/api", tags=["research"])
+
+
+@router.get("/config/models")
+def available_models():
+    """Return the list of available AI models."""
+    models = [
+        {"id": "openai:gpt-4o", "label": "GPT-4o", "description": "Flagship"},
+        {"id": "openai:gpt-4o-mini", "label": "GPT-4o Mini", "description": "Fast & efficient"},
+    ]
+    if settings.anthropic_api_key:
+        models.append({
+            "id": "anthropic:claude-sonnet-4-6",
+            "label": "Claude Sonnet",
+            "description": "Anthropic",
+        })
+    return models
 
 
 @router.post("/research")
@@ -33,6 +50,7 @@ async def research_endpoint(body: ResearchRequest, request: Request):
         pdf_context=pdf_text,
         uploaded_filenames=filenames,
         memory_context=memory_ctx,
+        depth=body.depth,
     )
 
     return StreamingResponse(
@@ -40,6 +58,7 @@ async def research_endpoint(body: ResearchRequest, request: Request):
             query=body.query,
             deps=deps,
             message_history=body.message_history,
+            model=body.model,
         ),
         media_type="text/event-stream",
         headers={

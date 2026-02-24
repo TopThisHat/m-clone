@@ -218,7 +218,7 @@
 					<!-- User bubble -->
 					<div class="flex justify-end">
 						<div
-							class="max-w-[75%] bg-navy-700 border border-navy-600 rounded-2xl rounded-tr-sm px-5 py-3"
+							class="max-w-[90%] md:max-w-[75%] bg-navy-700 border border-navy-600 rounded-2xl rounded-tr-sm px-5 py-3"
 						>
 							<p class="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap">
 								{msg.content}
@@ -314,6 +314,29 @@
 											{@html renderMd(msg.content)}
 										</article>
 									</div>
+
+									<!-- Sources footnote section -->
+									{#if msg.sources?.length}
+										<div class="mt-4 pt-4 border-t border-navy-700">
+											<p class="text-xs text-slate-500 uppercase tracking-widest mb-2">Sources</p>
+											<ol class="space-y-1">
+												{#each msg.sources as src, i}
+													<li class="text-xs text-slate-400">
+														<span class="text-gold mr-1.5">[{i + 1}]</span>
+														<a
+															href={src.url}
+															target="_blank"
+															rel="noopener noreferrer"
+															class="hover:text-gold underline underline-offset-2 transition-colors"
+														>
+															{src.title}
+														</a>
+														<span class="text-slate-600 ml-1">— {src.domain}</span>
+													</li>
+												{/each}
+											</ol>
+										</div>
+									{/if}
 
 									<!-- Inline charts for tickers mentioned in this report -->
 									{#each chartsForMessage(msg.content) as chart}

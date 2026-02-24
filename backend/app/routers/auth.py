@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app.auth import create_jwt, get_current_user
 from app.config import settings
-from app.db import DatabaseNotConfigured, db_upsert_user
+from app.db import DatabaseNotConfigured, db_upsert_user, db_get_user, db_update_user_theme
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -33,17 +33,53 @@ def _set_jwt_cookie(response: Response, token: str) -> None:
 @router.get("/me")
 async def me(request: Request):
     """Return current user info from JWT cookie, or 401."""
-    from fastapi import Cookie as FastCookie
     jwt_cookie = request.cookies.get("jwt")
     if not jwt_cookie:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     from app.auth import decode_jwt
     payload = decode_jwt(jwt_cookie)
+    sid = payload["sub"]
+
+    # Try to fetch theme from DB; fall back to JWT data if DB unavailable
+    theme = "dark"
+    try:
+        user_row = await db_get_user(sid)
+        if user_row:
+            theme = user_row.get("theme") or "dark"
+    except DatabaseNotConfigured:
+        pass
+
     return {
-        "sid": payload["sub"],
+        "sid": sid,
         "display_name": payload.get("display_name", ""),
         "email": payload.get("email", ""),
+        "theme": theme,
     }
+
+
+class PreferencesBody(BaseModel):
+    theme: str
+
+
+@router.patch("/preferences")
+async def update_preferences(body: PreferencesBody, request: Request):
+    """Update user preferences (theme). Requires auth."""
+    jwt_cookie = request.cookies.get("jwt")
+    if not jwt_cookie:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from app.auth import decode_jwt
+    payload = decode_jwt(jwt_cookie)
+    sid = payload["sub"]
+
+    if body.theme not in ("dark", "light"):
+        raise HTTPException(status_code=400, detail="theme must be 'dark' or 'light'")
+
+    try:
+        await db_update_user_theme(sid, body.theme)
+    except DatabaseNotConfigured:
+        pass  # Silently ignore if DB not configured
+
+    return {"ok": True}
 
 
 # ── Dev bypass ────────────────────────────────────────────────────────────────

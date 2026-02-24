@@ -61,6 +61,8 @@ async def init_schema() -> None:
             CREATE INDEX IF NOT EXISTS sessions_updated_at_idx
                 ON sessions (updated_at DESC);
 
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT DEFAULT 'dark';
+
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT FALSE;
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS usage_tokens INTEGER DEFAULT 0;
             ALTER TABLE sessions ADD COLUMN IF NOT EXISTS owner_sid TEXT REFERENCES users(sid);
@@ -381,6 +383,15 @@ async def db_get_user(sid: str) -> dict[str, Any] | None:
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE sid = $1", sid)
     return _row_to_dict(row) if row else None
+
+
+async def db_update_user_theme(sid: str, theme: str) -> None:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET theme = $1 WHERE sid = $2",
+            theme, sid,
+        )
 
 
 # ── Teams ──────────────────────────────────────────────────────────────────────

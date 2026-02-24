@@ -11,7 +11,7 @@ import {
 	conflictWarnings,
 	memoryContext
 } from '$lib/stores/reportStore';
-import type { ChartPayload } from '$lib/stores/reportStore';
+import type { ChartPayload, ChatSource } from '$lib/stores/reportStore';
 import { activeSessionId, sessionList } from '$lib/stores/sessionStore';
 import { createSession, updateSession, listSessions } from '$lib/api/sessions';
 import type { ToolIconType } from '$lib/stores/traceStore';
@@ -42,7 +42,9 @@ function generateSuggestions(markdown: string): string[] {
 export async function startResearch(
 	query: string,
 	pdfSessionKey?: string,
-	msgHistory?: unknown[] | null
+	msgHistory?: unknown[] | null,
+	depth?: string,
+	model?: string
 ): Promise<void> {
 	const isFollowUp = !!msgHistory;
 	const originalQuery = query;
@@ -75,7 +77,12 @@ export async function startResearch(
 
 	isStreaming.set(true);
 
-	const body: Record<string, unknown> = { query, pdf_session_key: pdfSessionKey ?? null };
+	const body: Record<string, unknown> = {
+		query,
+		pdf_session_key: pdfSessionKey ?? null,
+		depth: depth ?? 'balanced',
+		model: model ?? null
+	};
 	if (isFollowUp) body.message_history = msgHistory;
 
 	let response: Response;
@@ -274,11 +281,12 @@ function handleSSEEvent(
 			const md = data.markdown as string;
 			const suggestions = generateSuggestions(md);
 			const warnings = (data.conflict_warnings as string[]) || get(conflictWarnings);
+			const sources = (data.sources as ChatSource[]) || [];
 
 			chatMessages.update((msgs) =>
 				msgs.map((m) =>
 					m.id === asstMsgId
-						? { ...m, content: md, isStreaming: false, suggestions, conflictWarnings: warnings }
+						? { ...m, content: md, isStreaming: false, suggestions, conflictWarnings: warnings, sources }
 						: m
 				)
 			);

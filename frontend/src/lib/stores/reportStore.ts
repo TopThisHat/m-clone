@@ -4,6 +4,12 @@ import { marked } from 'marked';
 // Configure marked for safe rendering
 marked.setOptions({ gfm: true, breaks: true });
 
+export interface ChatSource {
+	url: string;
+	title: string;
+	domain: string;
+}
+
 export interface ChatMessage {
 	id: string;
 	role: 'user' | 'assistant';
@@ -11,6 +17,7 @@ export interface ChatMessage {
 	isStreaming?: boolean;
 	suggestions?: string[];
 	conflictWarnings?: string[];
+	sources?: ChatSource[];
 }
 
 export interface ChartPayload {

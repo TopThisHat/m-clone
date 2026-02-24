@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { startResearch, cancelResearch } from '$lib/api/research';
 	import { uploadPdf } from '$lib/api/documents';
 	import { isStreaming, errorMessage, messageHistory, chatMessages } from '$lib/stores/reportStore';
@@ -10,6 +11,25 @@
 	let uploadError = $state<string | null>(null);
 	let fileInput = $state<HTMLInputElement | undefined>();
 	let textareaEl = $state<HTMLTextAreaElement | undefined>();
+
+	// ── Research depth ──────────────────────────────────────────────────────
+	let depth = $state<'fast' | 'balanced' | 'deep'>('balanced');
+
+	// ── Model selection ─────────────────────────────────────────────────────
+	let models = $state<{ id: string; label: string; description: string }[]>([]);
+	let selectedModel = $state('openai:gpt-4o');
+
+	onMount(async () => {
+		try {
+			const res = await fetch('/api/config/models');
+			if (res.ok) {
+				models = await res.json();
+				if (models.length) selectedModel = models[0].id;
+			}
+		} catch {
+			// silently ignore — model selector will be hidden
+		}
+	});
 
 	const showPdfAttach = $derived(!$isStreaming);
 
@@ -58,7 +78,7 @@
 		}
 
 		try {
-			await startResearch(q, pdfKey, history);
+			await startResearch(q, pdfKey, history, depth, selectedModel);
 		} catch (err) {
 			if (err instanceof Error && err.name === 'AbortError') return;
 			errorMessage.set(err instanceof Error ? err.message : 'An error occurred');
@@ -204,7 +224,37 @@
 		{/if}
 	</div>
 
-	<p class="text-xs text-slate-700 text-right pr-1">
-		Enter to send · Shift+Enter for new line
-	</p>
+	<!-- Depth + model controls -->
+	{#if !$isStreaming}
+		<div class="flex items-center gap-3 flex-wrap">
+			<!-- Depth selector -->
+			<div class="flex rounded-lg border border-navy-600 overflow-hidden text-xs">
+				{#each ['fast', 'balanced', 'deep'] as d}
+					<button
+						onclick={() => (depth = d as 'fast' | 'balanced' | 'deep')}
+						class="flex-1 px-3 py-1.5 transition-colors
+							{depth === d ? 'bg-navy-700 text-gold' : 'text-slate-500 hover:text-slate-300'}"
+					>
+						{d.charAt(0).toUpperCase() + d.slice(1)}
+					</button>
+				{/each}
+			</div>
+
+			<!-- Model picker (only when multiple models available) -->
+			{#if models.length > 1}
+				<select
+					bind:value={selectedModel}
+					class="input-base text-xs py-1.5 px-3 w-auto"
+				>
+					{#each models as m}
+						<option value={m.id}>{m.label} — {m.description}</option>
+					{/each}
+				</select>
+			{/if}
+
+			<p class="text-xs text-slate-700 ml-auto">
+				Enter to send · Shift+Enter for new line
+			</p>
+		</div>
+	{/if}
 </div>

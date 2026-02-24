@@ -7,6 +7,8 @@
 	import { isStreaming } from '$lib/stores/reportStore';
 	import type { TraceStep } from '$lib/stores/traceStore';
 
+	let { onclose }: { onclose?: () => void } = $props();
+
 	// ── Search ────────────────────────────────────────────────────────────────
 	let searchQuery = $state('');
 	const filteredSessions = $derived(
@@ -105,10 +107,19 @@
 	}
 </script>
 
-<aside class="flex flex-col h-full border-r border-navy-700 bg-navy-950 overflow-hidden w-[220px] flex-shrink-0">
+<aside class="flex flex-col h-full border-r border-navy-700 bg-navy-950 overflow-hidden w-64 md:w-[220px]">
 	<!-- Header -->
-	<div class="px-4 py-4 border-b border-navy-700 flex-shrink-0">
+	<div class="px-4 py-4 border-b border-navy-700 flex-shrink-0 flex items-center justify-between">
 		<h2 class="font-serif text-sm text-gold tracking-wide uppercase">Sessions</h2>
+		{#if onclose}
+			<button
+				onclick={onclose}
+				class="md:hidden text-slate-500 hover:text-slate-300 text-xl leading-none p-1"
+				aria-label="Close sidebar"
+			>
+				×
+			</button>
+		{/if}
 	</div>
 
 	<!-- New Research button -->

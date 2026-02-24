@@ -6,6 +6,7 @@
 	import { traceStore } from '$lib/stores/traceStore';
 	import { isStreaming } from '$lib/stores/reportStore';
 	import { newResearch } from '$lib/stores/sessionStore';
+	import { sidebarOpen } from '$lib/stores/uiStore';
 
 	let traceVisible = $state(true);
 
@@ -20,20 +21,35 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div
-	class="h-full grid divide-x divide-navy-700 overflow-hidden"
-	style="grid-template-columns: 220px 1fr{traceVisible ? ' 1fr' : ''};"
->
-	<!-- ── SIDEBAR: Past Sessions ──────────────────────────────────────── -->
-	<SessionSidebar />
+<div class="h-full flex overflow-hidden">
+	<!-- Mobile overlay backdrop -->
+	{#if $sidebarOpen}
+		<div
+			class="fixed inset-0 bg-black/50 z-30 md:hidden"
+			onclick={() => sidebarOpen.set(false)}
+			role="button"
+			tabindex="-1"
+			aria-label="Close sidebar"
+			onkeydown={() => {}}
+		></div>
+	{/if}
+
+	<!-- Sidebar: drawer on mobile, static column on desktop -->
+	<div
+		class="fixed inset-y-0 left-0 z-40 md:relative md:z-auto md:flex-shrink-0
+		       transition-transform duration-200
+		       {$sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}"
+	>
+		<SessionSidebar onclose={() => sidebarOpen.set(false)} />
+	</div>
 
 	<!-- ── CENTRE PANE: Chat ──────────────────────────────────────────── -->
-	<section class="flex flex-col overflow-hidden">
+	<section class="flex-1 flex flex-col overflow-hidden min-w-0 border-l border-navy-700 md:border-l-0">
 		<!-- Top bar with trace toggle -->
 		<div class="flex items-center justify-end px-4 py-2 border-b border-navy-700 flex-shrink-0">
 			<button
 				onclick={() => (traceVisible = !traceVisible)}
-				class="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-300 transition-colors px-2 py-1 rounded hover:bg-navy-800"
+				class="hidden md:flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-300 transition-colors px-2 py-1 rounded hover:bg-navy-800"
 				title={traceVisible ? 'Hide agent trace' : 'Show agent trace'}
 			>
 				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -52,14 +68,14 @@
 		<ChatThread />
 
 		<!-- Sticky input at bottom -->
-		<div class="border-t border-navy-700 px-6 py-4 flex-shrink-0">
+		<div class="border-t border-navy-700 px-4 sm:px-6 py-4 flex-shrink-0">
 			<ChatInput />
 		</div>
 	</section>
 
 	<!-- ── RIGHT PANE: Live Agent Trace ────────────────────────────────── -->
 	{#if traceVisible}
-		<section class="flex flex-col overflow-hidden p-8 gap-4">
+		<section class="hidden md:flex flex-col overflow-hidden p-8 gap-4 w-[40%] flex-shrink-0 border-l border-navy-700">
 			<div class="flex items-center justify-between flex-shrink-0">
 				<div>
 					<h2 class="font-serif text-2xl text-gold tracking-wide">Agent Trace</h2>
@@ -93,3 +109,13 @@
 		</section>
 	{/if}
 </div>
+
+<!-- Floating Trace toggle button on mobile -->
+{#if !traceVisible}
+	<button
+		class="fixed bottom-20 right-4 md:hidden z-20 px-3 py-2 bg-navy-800 border border-navy-600 hover:border-gold/40 rounded-lg text-xs text-slate-400 hover:text-gold shadow-lg transition-all"
+		onclick={() => (traceVisible = true)}
+	>
+		Show trace
+	</button>
+{/if}

@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 from typing import Any, AsyncIterator
+from urllib.parse import urlparse
 
 from pydantic import TypeAdapter
 from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent
@@ -115,6 +116,7 @@ async def stream_research(
     deps: AgentDeps,
     message_history: list[Any] | None = None,
     session_id: str | None = None,
+    model: str | None = None,
 ) -> AsyncIterator[str]:
     """
     Core SSE generator. Drives agent.iter() node by node, emitting structured
@@ -140,8 +142,11 @@ async def stream_research(
             prior = None
 
     try:
+        iter_kwargs: dict = {}
+        if model:
+            iter_kwargs["model"] = model
         async with research_agent.iter(
-            query, deps=deps, message_history=prior
+            query, deps=deps, message_history=prior, **iter_kwargs
         ) as agent_run:
             async for node in agent_run:
 
@@ -273,12 +278,23 @@ async def stream_research(
             if conflict_warnings:
                 yield _sse("conflict_warning", {"warnings": conflict_warnings})
 
+            # Build structured sources list
+            sources = [
+                {
+                    "url": url,
+                    "title": deps.source_titles.get(url, url),
+                    "domain": urlparse(url).netloc,
+                }
+                for url in sorted(deps.source_urls)
+            ]
+
             yield _sse("final_report", {
                 "markdown": final_text,
                 "usage": usage_data,
                 "messages": all_messages,
                 "citation_warnings": citation_warnings,
                 "conflict_warnings": conflict_warnings,
+                "sources": sources,
             })
 
             # Trigger memory extraction non-blocking

@@ -1,5 +1,6 @@
 from pydantic_ai import Agent
 
+from app.config import settings
 from app.dependencies import AgentDeps
 
 SYSTEM_PROMPT = """
@@ -185,7 +186,19 @@ You have access to:
 """
 
 research_agent = Agent(
-    "openai:gpt-4o",
+    settings.default_model,
     deps_type=AgentDeps,
     system_prompt=SYSTEM_PROMPT,
 )
+
+
+def make_agent(model_str: str | None = None) -> Agent:
+    """Factory that creates an agent with a specific model.
+    Note: tools are registered on the module-level research_agent.
+    Use research_agent.iter(model=model_str) instead for model overrides.
+    """
+    return Agent(
+        model_str or settings.default_model,
+        deps_type=AgentDeps,
+        system_prompt=SYSTEM_PROMPT,
+    )

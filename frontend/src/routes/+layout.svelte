@@ -1,9 +1,10 @@
 <script lang="ts">
 	import '../app.css';
-	import { theme } from '$lib/stores/themeStore';
+	import { theme, initTheme } from '$lib/stores/themeStore';
 	import { currentUser } from '$lib/stores/authStore';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 	import NotificationBell from '$lib/components/NotificationBell.svelte';
+	import { sidebarOpen } from '$lib/stores/uiStore';
 	import type { LayoutData } from './$types';
 
 	let { children, data }: { children: import('svelte').Snippet; data: LayoutData } = $props();
@@ -11,6 +12,7 @@
 	// Hydrate store from SSR — runs on every page in the app
 	$effect(() => {
 		currentUser.set(data.user ?? null);
+		initTheme((data.user as { theme?: string } | null)?.theme);
 	});
 </script>
 
@@ -20,8 +22,18 @@
 
 <div class="min-h-screen bg-navy flex flex-col" class:light={$theme === 'light'}>
 	<!-- Header -->
-	<header class="border-b border-navy-700 px-8 py-4 flex items-center justify-between flex-shrink-0">
+	<header class="border-b border-navy-700 px-4 sm:px-8 py-4 flex items-center justify-between flex-shrink-0">
 		<div class="flex items-center gap-3">
+			<!-- Hamburger (mobile only) -->
+			<button
+				class="md:hidden text-slate-400 hover:text-gold p-1 transition-colors"
+				onclick={() => sidebarOpen.update((v) => !v)}
+				aria-label="Toggle sidebar"
+			>
+				<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h7" />
+				</svg>
+			</button>
 			<!-- Logo mark -->
 			<a href="/" class="flex items-center gap-3">
 				<div
