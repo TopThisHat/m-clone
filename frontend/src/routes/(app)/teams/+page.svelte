@@ -59,7 +59,7 @@
 </script>
 
 <svelte:head>
-	<title>Teams — Manus Research</title>
+	<title>Teams — Playbook Research</title>
 </svelte:head>
 
 <svelte:window onkeydown={handleKeydown} />

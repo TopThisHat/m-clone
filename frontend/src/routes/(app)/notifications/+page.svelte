@@ -19,7 +19,7 @@
 </script>
 
 <svelte:head>
-	<title>Notifications — Manus Research</title>
+	<title>Notifications — Playbook Research</title>
 </svelte:head>
 
 <div class="max-w-2xl mx-auto px-6 py-8">

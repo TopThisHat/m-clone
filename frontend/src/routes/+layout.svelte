@@ -17,7 +17,7 @@
 </script>
 
 <svelte:head>
-	<title>Manus Research — Private Intelligence</title>
+	<title>Playbook Research — Private Intelligence</title>
 </svelte:head>
 
 <div class="min-h-screen bg-navy flex flex-col" class:light={$theme === 'light'}>
@@ -42,8 +42,8 @@
 					<span class="text-navy font-serif font-bold text-sm select-none">M</span>
 				</div>
 				<div>
-					<h1 class="font-serif text-gold text-lg leading-none tracking-wide">Manus Research</h1>
-					<p class="text-navy-500 text-xs tracking-widest uppercase mt-0.5">Private Intelligence</p>
+					<h1 class="font-serif text-gold text-lg leading-none tracking-wide">Playbook Research</h1>
+					<p class="text-navy-500 text-xs tracking-widest uppercase mt-0.5">Powered by DaVinci</p>
 				</div>
 			</a>
 		</div>
@@ -94,7 +94,7 @@
 			{#if $currentUser}
 				<a href="/teams" class="text-xs text-slate-600 hover:text-gold transition-colors">Teams</a>
 			{/if}
-			<span class="text-xs text-slate-700 font-light">Powered by pydantic-ai</span>
+			<span class="text-xs text-slate-700 font-light">AWM AI Engineering</span>
 		</div>
 	</footer>
 </div>

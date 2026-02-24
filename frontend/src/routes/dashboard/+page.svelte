@@ -122,7 +122,7 @@
 </script>
 
 <svelte:head>
-	<title>Usage Dashboard — Manus Research</title>
+	<title>Usage Dashboard — Playbook Research</title>
 </svelte:head>
 
 <div class="max-w-5xl mx-auto px-6 py-8">

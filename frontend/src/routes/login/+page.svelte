@@ -37,7 +37,7 @@
 </script>
 
 <svelte:head>
-	<title>Sign In — Manus Research</title>
+	<title>Sign In — Playbook Research</title>
 </svelte:head>
 
 <div class="min-h-screen bg-navy flex items-center justify-center p-6">
@@ -48,8 +48,8 @@
 				<span class="text-navy font-serif font-bold">M</span>
 			</div>
 			<div>
-				<h1 class="font-serif text-gold text-xl leading-none">Manus Research</h1>
-				<p class="text-navy-500 text-xs tracking-widest uppercase mt-0.5">Private Intelligence</p>
+				<h1 class="font-serif text-gold text-xl leading-none">Playbook Research</h1>
+				<p class="text-navy-500 text-xs tracking-widest uppercase mt-0.5">Powered by DaVinci</p>
 			</div>
 		</div>
 

@@ -15,7 +15,7 @@
 </script>
 
 <svelte:head>
-	<title>{session.title} — Manus Research</title>
+	<title>{session.title} — Playbook Research</title>
 </svelte:head>
 
 <div class="max-w-4xl mx-auto px-6 py-8">
@@ -25,7 +25,7 @@
 			<div class="w-6 h-6 bg-gold rounded-sm flex items-center justify-center">
 				<span class="text-navy font-serif font-bold text-xs">M</span>
 			</div>
-			<span class="text-xs text-gold font-medium tracking-wide uppercase">Manus Research</span>
+			<span class="text-xs text-gold font-medium tracking-wide uppercase">Playbook Research</span>
 			<span class="text-xs text-slate-600 ml-auto">
 				Shared report · {new Date(session.created_at).toLocaleDateString()}
 			</span>
