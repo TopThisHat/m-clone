@@ -1,3 +1,5 @@
+from datetime import date
+
 from pydantic_ai import Agent
 
 from app.config import settings
@@ -190,6 +192,17 @@ research_agent = Agent(
     deps_type=AgentDeps,
     system_prompt=SYSTEM_PROMPT,
 )
+
+
+@research_agent.system_prompt
+def inject_current_date() -> str:
+    """Appended to the system prompt at runtime so the agent always knows today's date."""
+    today = date.today().strftime("%B %d, %Y")
+    return (
+        f"Today's date is {today}. "
+        "When searching for recent information, prioritise sources published within the last 30–90 days. "
+        "If a source appears outdated relative to today's date, note that explicitly in your report."
+    )
 
 
 def make_agent(model_str: str | None = None) -> Agent:
