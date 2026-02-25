@@ -1,6 +1,7 @@
 # Load .env into environment BEFORE any module-level Agent instantiation
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 import app.agent  # noqa: F401 — registers @research_agent.tool decorators
 from fastapi import FastAPI
