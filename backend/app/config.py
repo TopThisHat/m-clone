@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     default_model: str = "openai:gpt-4o"
 
+    # AWS Secrets Manager (set in dev/uat/prod instead of DATABASE_URL / REDIS_URL)
+    aws_secret_name: str = ""              # e.g. "prod/myapp/db"
+    aws_elasticache_secret_name: str = ""  # e.g. "prod/myapp/redis"
+    aws_region: str = "us-east-1"
+
     # Auth / SSO
     oidc_issuer: str = ""
     oidc_client_id: str = "m-clone"

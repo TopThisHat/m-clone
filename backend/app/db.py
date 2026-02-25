@@ -1,30 +1,124 @@
 """
 PostgreSQL connection pool and CRUD helpers for research sessions.
 Uses asyncpg directly (no ORM) for simplicity and performance.
+
+In dev, set DATABASE_URL.
+In dev/uat/prod, set AWS_SECRET_NAME (and optionally AWS_REGION) instead;
+the secret must be a JSON object with keys: host, port, username, password, dbname.
+SSL is automatically enabled when using AWS Secrets Manager.
+
+Password rotation is handled transparently: if a connection attempt raises an
+authentication error (which is how rotation surfaces — you don't know until the
+next new connection fails), the pool is torn down, the cached secret is evicted,
+a fresh secret is fetched from Secrets Manager, and the pool is rebuilt.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 _pool: asyncpg.Pool | None = None
+_pool_lock: asyncio.Lock | None = None
+
+
+def _get_lock() -> asyncio.Lock:
+    global _pool_lock
+    if _pool_lock is None:
+        _pool_lock = asyncio.Lock()
+    return _pool_lock
 
 
 class DatabaseNotConfigured(RuntimeError):
     pass
 
 
+def _resolve_connection() -> tuple[str, str | None]:
+    """Return (dsn, ssl_mode). Prefers AWS secret over DATABASE_URL."""
+    if settings.aws_secret_name:
+        from app.secrets import build_dsn, get_db_secret
+        secret = get_db_secret(settings.aws_secret_name, settings.aws_region)
+        return build_dsn(secret), "require"
+    if settings.database_url:
+        return settings.database_url, None
+    raise DatabaseNotConfigured(
+        "No database configured. Set DATABASE_URL or AWS_SECRET_NAME."
+    )
+
+
 async def get_pool() -> asyncpg.Pool:
     global _pool
-    if not settings.database_url:
-        raise DatabaseNotConfigured("DATABASE_URL is not set")
-    if _pool is None:
-        _pool = await asyncpg.create_pool(dsn=settings.database_url)
-    return _pool
+    if _pool is not None:
+        return _pool
+    async with _get_lock():
+        if _pool is not None:  # another coroutine beat us here
+            return _pool
+        dsn, ssl_mode = _resolve_connection()
+        kwargs: dict[str, Any] = {"dsn": dsn}
+        if ssl_mode:
+            kwargs["ssl"] = ssl_mode
+        _pool = await asyncpg.create_pool(**kwargs)
+        logger.info("DB pool created (ssl=%s)", ssl_mode or "off")
+        return _pool
+
+
+async def _reset_pool() -> None:
+    """
+    Tear down the current pool and evict the cached secret so that the next
+    get_pool() call re-fetches credentials and creates a fresh pool.
+    Called automatically when a credential-rotation auth error is detected.
+    """
+    global _pool
+    async with _get_lock():
+        old_pool, _pool = _pool, None
+        if settings.aws_secret_name:
+            from app.secrets import invalidate_db_secret
+            invalidate_db_secret()
+    if old_pool is not None:
+        try:
+            await old_pool.close()
+        except Exception:
+            pass
+    logger.warning("DB pool reset — fresh credentials will be fetched on next request")
+
+
+# Errors that indicate the password has changed (rotation).
+# asyncpg raises InvalidPasswordError when it can't authenticate a new connection.
+_AUTH_ERRORS = (
+    asyncpg.exceptions.InvalidPasswordError,
+    asyncpg.exceptions.PostgresConnectionError,
+)
+
+
+@asynccontextmanager
+async def _acquire():
+    """
+    Async context manager that yields a DB connection from the pool.
+
+    On the first auth error (InvalidPasswordError / PostgresConnectionError) it
+    assumes the secret was rotated, resets the pool, re-fetches the secret, and
+    retries the acquire once before re-raising.
+    """
+    pool = await get_pool()
+    try:
+        conn = await pool.acquire()
+    except _AUTH_ERRORS as exc:
+        logger.warning("DB auth error — attempting rotation recovery: %s", exc)
+        await _reset_pool()
+        pool = await get_pool()
+        conn = await pool.acquire()
+    try:
+        yield conn
+    finally:
+        await pool.release(conn)
 
 
 async def close_pool() -> None:
@@ -35,8 +129,7 @@ async def close_pool() -> None:
 
 
 async def init_schema() -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         # Advisory lock prevents concurrent hot-reload workers from deadlocking
         # on simultaneous ALTER TABLE statements. Lock is session-scoped and
         # released automatically when the connection returns to the pool.
@@ -197,8 +290,7 @@ def _row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
 
 
 async def db_list_sessions(owner_sid: str | None = None) -> list[dict[str, Any]]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         if owner_sid:
             rows = await conn.fetch(
                 "SELECT id, title, query, created_at, updated_at, "
@@ -219,8 +311,7 @@ async def db_list_sessions(owner_sid: str | None = None) -> list[dict[str, Any]]
 
 
 async def db_get_session(session_id: str) -> dict[str, Any] | None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(
             "SELECT *, COALESCE(is_public, FALSE) AS is_public, "
             "COALESCE(usage_tokens, 0) AS usage_tokens, "
@@ -233,8 +324,7 @@ async def db_get_session(session_id: str) -> dict[str, Any] | None:
 
 async def db_get_public_session(session_id: str) -> dict[str, Any] | None:
     """Return session only if is_public=true."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(
             "SELECT *, COALESCE(is_public, FALSE) AS is_public, "
             "COALESCE(usage_tokens, 0) AS usage_tokens, "
@@ -246,8 +336,7 @@ async def db_get_public_session(session_id: str) -> dict[str, Any] | None:
 
 
 async def db_create_session(data: dict[str, Any]) -> dict[str, Any]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO sessions (title, query, report_markdown, message_history, trace_steps, owner_sid, visibility)
@@ -295,15 +384,13 @@ async def db_update_session(session_id: str, patch: dict[str, Any]) -> dict[str,
         "COALESCE(visibility, 'private') AS visibility"
     )
 
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(sql, *values)
     return _row_to_dict(row) if row else None
 
 
 async def db_delete_session(session_id: str) -> bool:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         result = await conn.execute("DELETE FROM sessions WHERE id = $1", session_id)
     return result.endswith("1")
 
@@ -320,8 +407,7 @@ def _job_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
 
 
 async def db_create_job(job_id: str, query: str, webhook_url: str) -> dict[str, Any]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO research_jobs (id, query, webhook_url, status)
@@ -352,15 +438,13 @@ async def db_update_job(job_id: str, patch: dict[str, Any]) -> dict[str, Any] | 
     values.append(job_id)
     sql = f"UPDATE research_jobs SET {', '.join(set_parts)} WHERE id = ${idx} RETURNING *"
 
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(sql, *values)
     return _job_row_to_dict(row) if row else None
 
 
 async def db_get_job(job_id: str) -> dict[str, Any] | None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM research_jobs WHERE id = $1::uuid", job_id)
     return _job_row_to_dict(row) if row else None
 
@@ -368,8 +452,7 @@ async def db_get_job(job_id: str) -> dict[str, Any] | None:
 # ── Users ──────────────────────────────────────────────────────────────────────
 
 async def db_upsert_user(sid: str, display_name: str, email: str = "") -> dict[str, Any]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO users (sid, display_name, email, last_login)
@@ -386,15 +469,13 @@ async def db_upsert_user(sid: str, display_name: str, email: str = "") -> dict[s
 
 
 async def db_get_user(sid: str) -> dict[str, Any] | None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM users WHERE sid = $1", sid)
     return _row_to_dict(row) if row else None
 
 
 async def db_update_user_theme(sid: str, theme: str) -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         await conn.execute(
             "UPDATE users SET theme = $1 WHERE sid = $2",
             theme, sid,
@@ -404,8 +485,7 @@ async def db_update_user_theme(sid: str, theme: str) -> None:
 # ── Teams ──────────────────────────────────────────────────────────────────────
 
 async def db_create_team(slug: str, display_name: str, description: str, created_by: str) -> dict[str, Any]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO teams (slug, display_name, description, created_by)
@@ -424,22 +504,19 @@ async def db_create_team(slug: str, display_name: str, description: str, created
 
 
 async def db_get_team(slug: str) -> dict[str, Any] | None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM teams WHERE slug = $1", slug)
     return _row_to_dict(row) if row else None
 
 
 async def db_get_team_by_id(team_id: str) -> dict[str, Any] | None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM teams WHERE id = $1::uuid", team_id)
     return _row_to_dict(row) if row else None
 
 
 async def db_list_user_teams(sid: str) -> list[dict[str, Any]]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT t.*, tm.role, tm.joined_at
@@ -461,15 +538,13 @@ async def db_update_team(slug: str, patch: dict[str, Any]) -> dict[str, Any] | N
     set_parts = [f"{k} = ${i+1}" for i, k in enumerate(fields)]
     values = list(fields.values()) + [slug]
     sql = f"UPDATE teams SET {', '.join(set_parts)} WHERE slug = ${len(values)} RETURNING *"
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(sql, *values)
     return _row_to_dict(row) if row else None
 
 
 async def db_delete_team(slug: str) -> bool:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         result = await conn.execute("DELETE FROM teams WHERE slug = $1", slug)
     return result.endswith("1")
 
@@ -477,8 +552,7 @@ async def db_delete_team(slug: str) -> bool:
 # ── Team Members ───────────────────────────────────────────────────────────────
 
 async def db_list_team_members(team_id: str) -> list[dict[str, Any]]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT u.sid, u.display_name, u.email, u.avatar_url,
@@ -494,8 +568,7 @@ async def db_list_team_members(team_id: str) -> list[dict[str, Any]]:
 
 
 async def db_get_member_role(team_id: str, sid: str) -> str | None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(
             "SELECT role FROM team_members WHERE team_id = $1::uuid AND sid = $2",
             team_id, sid,
@@ -504,8 +577,7 @@ async def db_get_member_role(team_id: str, sid: str) -> str | None:
 
 
 async def db_add_member(team_id: str, sid: str, role: str = "member") -> dict[str, Any]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         await conn.execute(
             """
             INSERT INTO team_members (team_id, sid, role)
@@ -518,8 +590,7 @@ async def db_add_member(team_id: str, sid: str, role: str = "member") -> dict[st
 
 
 async def db_update_member_role(team_id: str, sid: str, role: str) -> bool:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         result = await conn.execute(
             "UPDATE team_members SET role = $1 WHERE team_id = $2::uuid AND sid = $3",
             role, team_id, sid,
@@ -528,8 +599,7 @@ async def db_update_member_role(team_id: str, sid: str, role: str) -> bool:
 
 
 async def db_remove_member(team_id: str, sid: str) -> bool:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         result = await conn.execute(
             "DELETE FROM team_members WHERE team_id = $1::uuid AND sid = $2",
             team_id, sid,
@@ -540,8 +610,7 @@ async def db_remove_member(team_id: str, sid: str) -> bool:
 # ── Session ↔ Team sharing ─────────────────────────────────────────────────────
 
 async def db_share_session_to_team(session_id: str, team_id: str) -> dict[str, Any]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO session_teams (session_id, team_id)
@@ -555,8 +624,7 @@ async def db_share_session_to_team(session_id: str, team_id: str) -> dict[str, A
 
 
 async def db_unshare_session(session_id: str, team_id: str) -> bool:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         result = await conn.execute(
             "DELETE FROM session_teams WHERE session_id = $1::uuid AND team_id = $2::uuid",
             session_id, team_id,
@@ -565,8 +633,7 @@ async def db_unshare_session(session_id: str, team_id: str) -> bool:
 
 
 async def db_get_team_sessions(team_id: str, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT s.id, s.title, s.query, s.created_at, s.updated_at,
@@ -587,8 +654,7 @@ async def db_get_team_sessions(team_id: str, limit: int = 50, offset: int = 0) -
 
 async def db_get_session_teams(session_id: str) -> list[str]:
     """Return list of team_ids this session is shared to."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         rows = await conn.fetch(
             "SELECT team_id::text FROM session_teams WHERE session_id = $1::uuid",
             session_id,
@@ -599,8 +665,7 @@ async def db_get_session_teams(session_id: str) -> list[str]:
 # ── Pinned sessions ────────────────────────────────────────────────────────────
 
 async def db_pin_session(sid: str, session_id: str, team_id: str) -> dict[str, Any]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         await conn.execute(
             """
             INSERT INTO pinned_sessions (sid, session_id, team_id)
@@ -613,8 +678,7 @@ async def db_pin_session(sid: str, session_id: str, team_id: str) -> dict[str, A
 
 
 async def db_unpin_session(sid: str, session_id: str, team_id: str) -> bool:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         result = await conn.execute(
             "DELETE FROM pinned_sessions WHERE sid = $1 AND session_id = $2::uuid AND team_id = $3::uuid",
             sid, session_id, team_id,
@@ -623,8 +687,7 @@ async def db_unpin_session(sid: str, session_id: str, team_id: str) -> bool:
 
 
 async def db_get_pinned_sessions(sid: str, team_id: str) -> list[dict[str, Any]]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT s.id, s.title, s.query, s.created_at, s.updated_at,
@@ -645,8 +708,7 @@ async def db_get_pinned_sessions(sid: str, team_id: str) -> list[dict[str, Any]]
 # ── Comments ───────────────────────────────────────────────────────────────────
 
 async def db_create_comment(session_id: str, author_sid: str, body: str, mentions: list[str], parent_id: str | None = None) -> dict[str, Any]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO comments (session_id, author_sid, body, mentions, parent_id)
@@ -660,8 +722,7 @@ async def db_create_comment(session_id: str, author_sid: str, body: str, mention
 
 
 async def db_list_comments(session_id: str) -> list[dict[str, Any]]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT c.*, u.display_name AS author_name, u.avatar_url AS author_avatar
@@ -690,15 +751,13 @@ async def db_list_comments(session_id: str) -> list[dict[str, Any]]:
 
 
 async def db_get_comment(comment_id: str) -> dict[str, Any] | None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM comments WHERE id = $1::uuid", comment_id)
     return _row_to_dict(row) if row else None
 
 
 async def db_delete_comment(comment_id: str) -> bool:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         result = await conn.execute("DELETE FROM comments WHERE id = $1::uuid", comment_id)
     return result.endswith("1")
 
@@ -706,8 +765,7 @@ async def db_delete_comment(comment_id: str) -> bool:
 # ── Notifications ──────────────────────────────────────────────────────────────
 
 async def db_create_notification(recipient_sid: str, type_: str, payload: dict[str, Any]) -> dict[str, Any]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO notifications (recipient_sid, type, payload)
@@ -720,8 +778,7 @@ async def db_create_notification(recipient_sid: str, type_: str, payload: dict[s
 
 
 async def db_list_notifications(recipient_sid: str, limit: int = 50) -> list[dict[str, Any]]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT * FROM notifications
@@ -745,8 +802,7 @@ async def db_list_notifications(recipient_sid: str, limit: int = 50) -> list[dic
 
 
 async def db_mark_notification_read(notification_id: str) -> bool:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         result = await conn.execute(
             "UPDATE notifications SET read = TRUE WHERE id = $1::uuid",
             notification_id,
@@ -755,8 +811,7 @@ async def db_mark_notification_read(notification_id: str) -> bool:
 
 
 async def db_mark_all_notifications_read(recipient_sid: str) -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         await conn.execute(
             "UPDATE notifications SET read = TRUE WHERE recipient_sid = $1 AND read = FALSE",
             recipient_sid,
@@ -766,8 +821,7 @@ async def db_mark_all_notifications_read(recipient_sid: str) -> None:
 # ── Team activity ──────────────────────────────────────────────────────────────
 
 async def db_record_activity(team_id: str, actor_sid: str, action: str, payload: dict[str, Any]) -> None:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         await conn.execute(
             """
             INSERT INTO team_activity (team_id, actor_sid, action, payload)
@@ -778,8 +832,7 @@ async def db_record_activity(team_id: str, actor_sid: str, action: str, payload:
 
 
 async def db_list_team_activity(team_id: str, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with _acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT ta.*, u.display_name AS actor_name, u.avatar_url AS actor_avatar
