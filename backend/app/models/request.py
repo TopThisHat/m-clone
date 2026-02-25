@@ -9,3 +9,4 @@ class ResearchRequest(BaseModel):
     message_history: list[Any] | None = None
     depth: str = "balanced"   # "fast" | "balanced" | "deep"
     model: str | None = None
+    rules: list[str] = []

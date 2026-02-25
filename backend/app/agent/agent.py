@@ -1,6 +1,6 @@
 from datetime import date
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 
 from app.config import settings
 from app.dependencies import AgentDeps
@@ -192,6 +192,21 @@ research_agent = Agent(
     deps_type=AgentDeps,
     system_prompt=SYSTEM_PROMPT,
 )
+
+
+@research_agent.system_prompt
+def inject_user_rules(ctx: RunContext[AgentDeps]) -> str:
+    """Inject user-defined domain rules when present. The agent decides relevance."""
+    if not ctx.deps.user_rules:
+        return ""
+    rules_text = "\n".join(f"- {r}" for r in ctx.deps.user_rules)
+    return (
+        "\n## User-Defined Domain Rules\n\n"
+        "The user has provided the following domain-specific rules and facts. "
+        "**Apply ONLY the rules that are directly relevant to this query** — ignore rules about unrelated topics. "
+        "When a rule is relevant, explicitly check for compliance or violations and note findings in your report.\n\n"
+        f"{rules_text}"
+    )
 
 
 @research_agent.system_prompt

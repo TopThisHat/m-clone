@@ -51,6 +51,7 @@ async def research_endpoint(body: ResearchRequest, request: Request):
         uploaded_filenames=filenames,
         memory_context=memory_ctx,
         depth=body.depth,
+        user_rules=body.rules,
     )
 
     return StreamingResponse(

@@ -3,12 +3,15 @@
 	import SessionSidebar from '$lib/components/SessionSidebar.svelte';
 	import ChatThread from '$lib/components/ChatThread.svelte';
 	import ChatInput from '$lib/components/ChatInput.svelte';
+	import RulesPanel from '$lib/components/RulesPanel.svelte';
 	import { traceStore } from '$lib/stores/traceStore';
 	import { isStreaming } from '$lib/stores/reportStore';
 	import { newResearch } from '$lib/stores/sessionStore';
 	import { sidebarOpen } from '$lib/stores/uiStore';
+	import { rules } from '$lib/stores/rulesStore';
 
 	let traceVisible = $state(true);
+	let rulesOpen = $state(false);
 
 	function handleKeydown(e: KeyboardEvent) {
 		// Cmd+Shift+N (Mac) or Ctrl+Shift+N (Win/Linux) → new research
@@ -45,8 +48,23 @@
 
 	<!-- ── CENTRE PANE: Chat ──────────────────────────────────────────── -->
 	<section class="flex-1 flex flex-col overflow-hidden min-w-0 border-l border-navy-700 md:border-l-0">
-		<!-- Top bar with trace toggle -->
-		<div class="flex items-center justify-end px-4 py-2 border-b border-navy-700 flex-shrink-0">
+		<!-- Top bar with rules + trace toggles -->
+		<div class="flex items-center justify-end gap-1 px-4 py-2 border-b border-navy-700 flex-shrink-0">
+			<!-- Rules button -->
+			<button
+				onclick={() => (rulesOpen = true)}
+				class="flex items-center gap-1.5 text-xs transition-colors px-2 py-1 rounded hover:bg-navy-800
+				       {$rules.length > 0 ? 'text-gold hover:text-gold' : 'text-slate-600 hover:text-slate-300'}"
+				title="Manage research rules"
+			>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+						d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+				</svg>
+				Rules{$rules.length > 0 ? ` (${$rules.length})` : ''}
+			</button>
+
+			<!-- Trace toggle (desktop only) -->
 			<button
 				onclick={() => (traceVisible = !traceVisible)}
 				class="hidden md:flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-300 transition-colors px-2 py-1 rounded hover:bg-navy-800"
@@ -109,6 +127,11 @@
 		</section>
 	{/if}
 </div>
+
+<!-- Rules panel slide-over -->
+{#if rulesOpen}
+	<RulesPanel onclose={() => (rulesOpen = false)} />
+{/if}
 
 <!-- Floating Trace toggle button on mobile -->
 {#if !traceVisible}

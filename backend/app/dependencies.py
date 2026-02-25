@@ -21,6 +21,7 @@ class AgentDeps:
     chart_payloads: list[dict] = field(default_factory=list)
     source_claims: dict[str, list[str]] = field(default_factory=dict)
     memory_context: str = ""
+    user_rules: list[str] = field(default_factory=list)
 
 
 _DEPTH_MAP = {"fast": "simple", "balanced": "standard", "deep": "deep"}
@@ -31,6 +32,7 @@ def get_agent_deps(
     uploaded_filenames: list[str] | None = None,
     memory_context: str = "",
     depth: str = "balanced",
+    user_rules: list[str] | None = None,
 ) -> AgentDeps:
     return AgentDeps(
         tavily_api_key=settings.tavily_api_key,
@@ -42,4 +44,5 @@ def get_agent_deps(
         uploaded_filenames=uploaded_filenames or [],
         memory_context=memory_context,
         query_complexity=_DEPTH_MAP.get(depth, "standard"),
+        user_rules=user_rules or [],
     )

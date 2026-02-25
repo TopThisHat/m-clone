@@ -15,6 +15,7 @@ import type { ChartPayload, ChatSource } from '$lib/stores/reportStore';
 import { activeSessionId, sessionList } from '$lib/stores/sessionStore';
 import { createSession, updateSession, listSessions } from '$lib/api/sessions';
 import type { ToolIconType } from '$lib/stores/traceStore';
+import { rules } from '$lib/stores/rulesStore';
 
 let controller: AbortController | null = null;
 
@@ -81,7 +82,8 @@ export async function startResearch(
 		query,
 		pdf_session_key: pdfSessionKey ?? null,
 		depth: depth ?? 'balanced',
-		model: model ?? null
+		model: model ?? null,
+		rules: get(rules).map((r) => r.text)
 	};
 	if (isFollowUp) body.message_history = msgHistory;
 
