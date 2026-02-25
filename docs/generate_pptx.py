@@ -1,662 +1,784 @@
 """
-Generates Playbook-Research-Architecture.pptx
+Generates Playbook-Research-Architecture.pptx  — polished redesign.
 Run: python3 docs/generate_pptx.py
 """
+from __future__ import annotations
+import os
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches, Pt
-import os
 
-# ── Palette ────────────────────────────────────────────────────────────────────
-NAVY   = RGBColor(0x0a, 0x16, 0x28)
-NAVY2  = RGBColor(0x0f, 0x20, 0x40)
-NAVY3  = RGBColor(0x16, 0x2d, 0x50)
-GOLD   = RGBColor(0xc9, 0xa8, 0x4c)
-GOLD2  = RGBColor(0xe8, 0xc7, 0x6a)
-WHITE  = RGBColor(0xf1, 0xf5, 0xf9)
-SLATE  = RGBColor(0x94, 0xa3, 0xb8)
-GREEN  = RGBColor(0x22, 0xc5, 0x5e)
-PURPLE = RGBColor(0xa8, 0x55, 0xf7)
-ORANGE = RGBColor(0xf9, 0x73, 0x16)
-TEAL   = RGBColor(0x14, 0xb8, 0xa6)
-BLUE   = RGBColor(0x60, 0xa5, 0xfa)
-RED    = RGBColor(0xef, 0x44, 0x44)
+# ── Design tokens ──────────────────────────────────────────────────────────────
+BG     = RGBColor(0x0B, 0x16, 0x29)   # page background
+S1     = RGBColor(0x0F, 0x20, 0x40)   # card surface
+S2     = RGBColor(0x14, 0x29, 0x52)   # raised surface
+BORD   = RGBColor(0x1E, 0x3A, 0x6E)   # subtle border
+GOLD   = RGBColor(0xD4, 0xAA, 0x50)   # primary accent
+GOLDL  = RGBColor(0xF0, 0xC9, 0x6B)   # lighter gold
+WT     = RGBColor(0xF1, 0xF5, 0xF9)   # primary text
+T2     = RGBColor(0x94, 0xA3, 0xB8)   # secondary text
+T3     = RGBColor(0x47, 0x55, 0x69)   # muted text / footer
+EME    = RGBColor(0x10, 0xB9, 0x81)   # emerald  — backend / data
+SKY    = RGBColor(0x38, 0xBD, 0xF8)   # sky blue — frontend
+AMB    = RGBColor(0xF5, 0x9E, 0x0B)   # amber    — agent
+VIO    = RGBColor(0x8B, 0x5C, 0xF6)   # violet   — infra / auth
+TEA    = RGBColor(0x06, 0xB6, 0xD4)   # teal     — AWS / secrets
+ROS    = RGBColor(0xF4, 0x3F, 0x5E)   # rose     — warnings
+WHITE  = RGBColor(0xFF, 0xFF, 0xFF)
 
-W = Inches(13.33)   # widescreen 16:9
-H = Inches(7.5)
+FT  = "Calibri Light"   # titles
+FB  = "Calibri"         # body
+FM  = "Consolas"        # code / mono
+
+SW = Inches(13.33)
+SH = Inches(7.5)
+TOTAL = 14
 
 prs = Presentation()
-prs.slide_width  = W
-prs.slide_height = H
+prs.slide_width  = SW
+prs.slide_height = SH
+blank = prs.slide_layouts[6]
+_n = [0]
 
-blank = prs.slide_layouts[6]   # completely blank
+# ── Primitives ─────────────────────────────────────────────────────────────────
 
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-def add_slide():
+def new_slide():
+    _n[0] += 1
     return prs.slides.add_slide(blank)
 
-def bg(slide, color=NAVY):
-    sh = slide.shapes.add_shape(1, 0, 0, W, H)
-    sh.fill.solid()
-    sh.fill.fore_color.rgb = color
-    sh.line.fill.background()
-
-def rect(slide, l, t, w, h, fill, line=None, lw=Pt(0)):
-    sh = slide.shapes.add_shape(1, Inches(l), Inches(t), Inches(w), Inches(h))
-    sh.fill.solid()
-    sh.fill.fore_color.rgb = fill
-    if line:
-        sh.line.color.rgb = line
-        sh.line.width = lw
-    else:
-        sh.line.fill.background()
+def box(sl, l, t, w, h, fill, lc=None, lw=Pt(0.75)):
+    sh = sl.shapes.add_shape(1, Inches(l), Inches(t), Inches(w), Inches(h))
+    sh.fill.solid(); sh.fill.fore_color.rgb = fill
+    if lc:  sh.line.color.rgb = lc; sh.line.width = lw
+    else:   sh.line.fill.background()
     return sh
 
-def txt(slide, text, l, t, w, h, color=WHITE, size=18, bold=False,
-        align=PP_ALIGN.LEFT, wrap=True):
-    tb = slide.shapes.add_textbox(Inches(l), Inches(t), Inches(w), Inches(h))
-    tf = tb.text_frame
-    tf.word_wrap = wrap
-    p = tf.paragraphs[0]
-    p.alignment = align
-    run = p.add_run()
-    run.text = text
-    run.font.size = Pt(size)
-    run.font.bold = bold
-    run.font.color.rgb = color
-    return tb
+def t(sl, text, l, top, w, h, color=WT, size=11, bold=False,
+      align=PP_ALIGN.LEFT, font=FB, italic=False, wrap=True):
+    tb = sl.shapes.add_textbox(Inches(l), Inches(top), Inches(w), Inches(h))
+    tf = tb.text_frame; tf.word_wrap = wrap
+    p = tf.paragraphs[0]; p.alignment = align
+    r = p.add_run(); r.text = text
+    r.font.size = Pt(size); r.font.bold = bold
+    r.font.color.rgb = color; r.font.name = font
+    r.font.italic = italic
 
-def htxt(slide, text, t, color=WHITE, size=28, bold=True):
-    """Full-width centered heading."""
-    txt(slide, text, 0.3, t, 12.7, 0.6, color=color, size=size,
-        bold=bold, align=PP_ALIGN.CENTER)
+def hline(sl, l, top, w, color=BORD, width=Pt(0.6)):
+    """Thin horizontal rule."""
+    sh = sl.shapes.add_connector(1, Inches(l), Inches(top),
+                                 Inches(l + w), Inches(top))
+    sh.line.color.rgb = color; sh.line.width = width
 
-def accent_bar(slide, color=GOLD):
-    rect(slide, 0, 0, 13.33, 0.08, fill=color)
-    rect(slide, 0, 7.42, 13.33, 0.08, fill=color)
+def chrome(sl, title, category="", accent=GOLD):
+    """Standard slide chrome: background, header bar, separator, footer."""
+    box(sl, 0, 0, 13.33, 7.5, BG)           # background
+    box(sl, 0, 0, 13.33, 0.055, accent)      # top accent strip
+    box(sl, 0, 0.055, 13.33, 0.88, S1)       # header surface
+    hline(sl, 0, 0.935, 13.33, color=BORD)   # separator below header
+    if category:
+        t(sl, category.upper(), 0.45, 0.10, 9, 0.28,
+          color=accent, size=8.5, bold=True, font=FB)
+    t(sl, title, 0.45, 0.37, 11.5, 0.54,
+      color=WHITE, size=27, bold=True, font=FT)
+    # Footer
+    hline(sl, 0, 7.17, 13.33, color=accent, width=Pt(0.4))
+    box(sl, 0, 7.18, 13.33, 0.32, S1)
+    t(sl, "PLAYBOOK RESEARCH", 0.45, 7.2, 3.5, 0.28,
+      color=accent, size=8, bold=True)
+    t(sl, "CONFIDENTIAL  ·  DO NOT DISTRIBUTE", 4.5, 7.2, 4.5, 0.28,
+      color=T3, size=7.5, align=PP_ALIGN.CENTER)
+    t(sl, str(_n[0]), 12.3, 7.2, 0.65, 0.28,
+      color=T2, size=8, align=PP_ALIGN.RIGHT)
 
-def bullet_box(slide, title, items, l, t, w, h,
-               title_color=GOLD, item_color=WHITE,
-               box_color=NAVY2, item_size=13, title_size=14,
-               dot_color=None):
-    rect(slide, l, t, w, h, fill=box_color, line=NAVY3, lw=Pt(1))
-    txt(slide, title, l+0.1, t+0.05, w-0.2, 0.35,
-        color=title_color, size=title_size, bold=True)
-    item_h = (h - 0.45) / max(len(items), 1)
+def card(sl, l, top, w, h, accent, title, items,
+         ts=11.5, is_=10.5, fill=S1, icon=None):
+    """Left-border accent card with title + bullet list."""
+    box(sl, l, top, w, h, fill, lc=BORD, lw=Pt(0.5))
+    box(sl, l, top, 0.045, h, accent)          # left accent strip
+    x0 = l + 0.14
+    if icon:
+        t(sl, icon, x0, top + 0.08, 0.4, 0.32, color=accent, size=ts, bold=True)
+        t(sl, title, x0 + 0.38, top + 0.08, w - 0.6, 0.32, color=accent, size=ts, bold=True)
+    else:
+        t(sl, title, x0, top + 0.08, w - 0.22, 0.32, color=accent, size=ts, bold=True)
+    hline(sl, l + 0.14, top + 0.44, w - 0.22, color=BORD, width=Pt(0.4))
+    row_h = max((h - 0.55) / max(len(items), 1), 0.3)
     for i, item in enumerate(items):
-        dot = (dot_color or title_color)
-        bullet = "▸ "
-        txt(slide, bullet + item,
-            l+0.15, t+0.45 + i*item_h, w-0.25, item_h,
-            color=item_color, size=item_size)
+        t(sl, item, x0, top + 0.5 + i * row_h, w - 0.22, row_h,
+          color=WT if i % 2 == 0 else T2, size=is_)
 
+def step_badge(sl, l, top, num, color, sz=0.52):
+    """Filled square badge with a number (simulates a circle badge)."""
+    box(sl, l, top, sz, sz, color)
+    t(sl, str(num), l, top + 0.02, sz, sz - 0.04,
+      color=BG, size=18, bold=True, font=FT, align=PP_ALIGN.CENTER)
+
+def tag(sl, l, top, w, h, text, fill, text_color=BG):
+    box(sl, l, top, w, h, fill)
+    t(sl, text, l, top, w, h, color=text_color, size=9,
+      bold=True, align=PP_ALIGN.CENTER)
+
+def method_pill(sl, l, top, method, path, desc, mc):
+    tag(sl, l, top, 0.78, 0.38, method, mc)
+    t(sl, path, l + 0.84, top + 0.01, 3.6, 0.22, color=GOLDL, size=8.5, bold=True, font=FM)
+    t(sl, desc, l + 0.84, top + 0.21, 6.0, 0.18, color=T2, size=8)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SLIDE 1 — TITLE
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, GOLD)
+sl = new_slide()
+box(sl, 0, 0, 13.33, 7.5, BG)
+box(sl, 0, 0, 13.33, 0.055, GOLD)
+box(sl, 0, 7.45, 13.33, 0.055, GOLD)
 
-# Gold P logo box
-rect(sl, 5.92, 1.2, 1.5, 1.5, fill=GOLD)
-txt(sl, "P", 5.92, 1.2, 1.5, 1.5, color=NAVY, size=64, bold=True, align=PP_ALIGN.CENTER)
+# Subtle diagonal accent block (top-right)
+box(sl, 9.5, 0.055, 3.83, 7.4, S1)
+hline(sl, 9.5, 0.055, 0, color=GOLD, width=Pt(1.5))   # left edge of accent block
 
-txt(sl, "Playbook Research",
-    1, 2.95, 11.33, 0.9, color=WHITE, size=44, bold=True, align=PP_ALIGN.CENTER)
-txt(sl, "AI-Powered Research Platform — System Architecture",
-    1, 3.85, 11.33, 0.55, color=GOLD, size=22, bold=False, align=PP_ALIGN.CENTER)
+# P Logo
+box(sl, 1.1, 1.55, 1.55, 1.55, GOLD)
+t(sl, "P", 1.1, 1.55, 1.55, 1.55, color=BG, size=72, bold=True, font=FT, align=PP_ALIGN.CENTER)
 
-# Tagline pills
-for i, (label, color) in enumerate([
-    ("FastAPI Backend", GREEN), ("SvelteKit Frontend", BLUE),
-    ("PydanticAI Agent", ORANGE), ("PostgreSQL + Redis", PURPLE),
-    ("AWS-Ready", TEAL),
-]):
-    x = 1.0 + i * 2.25
-    rect(sl, x, 4.7, 2.1, 0.42, fill=color)
-    txt(sl, label, x, 4.7, 2.1, 0.42, color=NAVY, size=11,
-        bold=True, align=PP_ALIGN.CENTER)
+# Product name
+t(sl, "Playbook Research", 1.1, 3.28, 8.2, 0.78,
+  color=WHITE, size=46, bold=True, font=FT)
+t(sl, "AI-Powered Deep Research Platform", 1.1, 4.08, 8.0, 0.45,
+  color=GOLD, size=20, font=FT)
+hline(sl, 1.1, 4.65, 7.5, color=BORD)
+t(sl, "System Architecture Overview", 1.1, 4.75, 7.5, 0.38,
+  color=T2, size=14, font=FB)
 
-txt(sl, "Version 1.0  ·  Confidential",
-    1, 6.9, 11.33, 0.35, color=SLATE, size=11, align=PP_ALIGN.CENTER)
+# Stats row
+stats = [("7", "Agent Tools"), ("12", "DB Tables"), ("8", "API Routers"), ("14", "Frontend Routes")]
+for i, (val, lbl) in enumerate(stats):
+    x = 1.1 + i * 1.85
+    box(sl, x, 5.4, 1.65, 0.95, S1, lc=BORD, lw=Pt(0.5))
+    box(sl, x, 5.4, 1.65, 0.04, GOLD)
+    t(sl, val, x, 5.45, 1.65, 0.5, color=GOLD, size=22, bold=True, font=FT, align=PP_ALIGN.CENTER)
+    t(sl, lbl, x, 5.92, 1.65, 0.3, color=T2, size=9, align=PP_ALIGN.CENTER)
+
+t(sl, "Confidential  ·  Version 1.0", 1.1, 6.55, 8.0, 0.3, color=T3, size=10)
+
+# Accent column content
+t(sl, "Stack", 9.75, 0.7, 3.2, 0.3, color=GOLD, size=9, bold=True)
+hline(sl, 9.75, 1.05, 3.1, color=BORD)
+stack = [
+    (EME,  "FastAPI  ·  Python 3.12"),
+    (SKY,  "SvelteKit  ·  TypeScript"),
+    (AMB,  "PydanticAI  ·  GPT-4o"),
+    (VIO,  "PostgreSQL  ·  asyncpg"),
+    (TEA,  "Redis  ·  ElastiCache"),
+    (GOLDL,"AWS Secrets Manager"),
+]
+for i, (c, s) in enumerate(stack):
+    y = 1.15 + i * 0.82
+    box(sl, 9.75, y, 0.06, 0.55, c)
+    t(sl, s, 9.87, y + 0.04, 3.0, 0.5, color=WT, size=11)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SLIDE 2 — PLATFORM OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, GOLD)
-htxt(sl, "Platform Overview", 0.12, color=GOLD, size=26)
+sl = new_slide()
+chrome(sl, "Platform Overview", "Introduction", GOLD)
 
-boxes = [
-    ("🔬  Research Agent", GREEN,
-     ["Mandatory 4-phase research loop",
-      "6 specialised tools (web, wiki, finance, docs)",
-      "Real-time SSE streaming to browser",
-      "Self-evaluation & confidence scoring",
-      "Inline citation detection & conflict warnings"]),
-    ("👥  Team Collaboration", BLUE,
-     ["Create & manage teams with RBAC",
-      "Share sessions privately, to team, or public",
+pillars = [
+    ("Research Engine", EME,
+     ["Mandatory 4-phase agent loop enforces depth",
+      "7 specialised tools: web, wiki, finance, SEC, docs",
+      "Real-time SSE streaming — tokens as they're generated",
+      "Self-evaluation & confidence scoring before writing",
+      "Inline citations + numeric conflict detection"]),
+    ("Team Collaboration", SKY,
+     ["Create teams with role-based access (owner/admin/member)",
+      "Share sessions: private → team → public",
       "Threaded comments with @mention notifications",
       "Pin sessions to team workspace",
-      "Team activity feed"]),
-    ("🧠  Memory & Learning", ORANGE,
+      "Full team activity feed"]),
+    ("Memory & Intelligence", AMB,
      ["Post-research entity extraction (GPT-4o-mini)",
       "Cross-session context enrichment",
       "User-defined domain research rules",
       "BM25 full-text search over uploaded PDFs",
       "Usage tracking & cost dashboard"]),
-    ("☁️  Production Infrastructure", PURPLE,
-     ["AWS Secrets Manager credential rotation",
-      "PostgreSQL RDS + ElastiCache Redis",
-      "OIDC SSO (any provider)",
-      "Docker Compose for local dev",
+    ("Production Infrastructure", VIO,
+     ["AWS Secrets Manager with live credential rotation",
+      "PostgreSQL RDS + ElastiCache Redis (TLS)",
+      "OIDC SSO — any OpenID Connect provider",
+      "Docker Compose for zero-config local dev",
       "Async webhook jobs for external integrations"]),
 ]
 
-for i, (title, color, items) in enumerate(boxes):
-    col = i % 2
-    row = i // 2
-    bullet_box(sl, title, items,
-               l=0.3 + col*6.7, t=0.85 + row*3.05,
-               w=6.5, h=2.9,
-               title_color=color, box_color=NAVY2)
+for i, (title, color, items) in enumerate(pillars):
+    col, row = i % 2, i // 2
+    card(sl, 0.38 + col * 6.55, 1.02 + row * 2.95,
+         6.32, 2.82, color, title, items, ts=12, is_=10.5)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SLIDE 3 — SYSTEM ARCHITECTURE DIAGRAM
+# SLIDE 3 — ARCHITECTURE DIAGRAM
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, GOLD)
-htxt(sl, "System Architecture", 0.12, color=GOLD, size=26)
+sl = new_slide()
+chrome(sl, "System Architecture", "Overview", GOLD)
 
-diagram_path = os.path.join(os.path.dirname(__file__), "architecture-diagram.png")
-if os.path.exists(diagram_path):
-    sl.shapes.add_picture(diagram_path, Inches(0.15), Inches(0.75),
-                          Inches(13.0), Inches(6.55))
+diagram = os.path.join(os.path.dirname(os.path.abspath(__file__)), "architecture-diagram.png")
+if os.path.exists(diagram):
+    sl.shapes.add_picture(diagram, Inches(0.25), Inches(0.98),
+                          Inches(12.83), Inches(6.12))
 else:
-    txt(sl, "⚠ Run generate_diagram.py first to embed the diagram image.",
-        1, 3.5, 11, 0.5, color=RED, size=16, align=PP_ALIGN.CENTER)
+    t(sl, "Run generate_diagram.py first.", 2, 3.5, 9, 0.5,
+      color=ROS, size=16, align=PP_ALIGN.CENTER)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SLIDE 4 — RESEARCH AGENT DEEP DIVE
+# SLIDE 4 — RESEARCH AGENT
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, ORANGE)
-htxt(sl, "Research Agent — Mandatory 4-Phase Loop", 0.12, color=ORANGE, size=24)
+sl = new_slide()
+chrome(sl, "Research Agent — Mandatory 4-Phase Loop", "Backend · PydanticAI", AMB)
 
 phases = [
-    ("0", "PLAN", GOLD,
-     "create_research_plan tool called first — always.\nStructures scope, key questions, and source strategy."),
-    ("1", "EXECUTE", GREEN,
-     "Minimum 4 research tool calls with different queries.\nweb_search · wiki_lookup · get_financials · search_docs · sec_edgar"),
-    ("2", "EVALUATE", BLUE,
-     "evaluate_research_completeness self-assessment.\nScores confidence 0–100 across breadth, depth, recency, conflict."),
-    ("3", "DIG DEEPER", ORANGE,
-     "If confidence < 85% → targeted follow-up searches.\nFills identified gaps before writing begins."),
-    ("4", "REPORT", PURPLE,
-     "Final markdown report with inline citations.\nConflict warnings flagged if >25% numeric variance detected."),
+    ("0", "PLAN",     AMB,  "create_research_plan\ncalled first — always.\nScopes questions\nand source strategy."),
+    ("1", "EXECUTE",  EME,  "Minimum 4 tool calls\nwith distinct queries:\nweb · wiki · finance\ndocs · SEC EDGAR"),
+    ("2", "EVALUATE", SKY,  "evaluate_research_\ncompleteness scores\nbreadth, depth,\nrecency 0–100"),
+    ("3", "DEEPER",   GOLDL,"If confidence < 85%:\ntargeted follow-up\nsearches fill\nidentified gaps"),
+    ("4", "REPORT",   VIO,  "Final markdown with\ninline citations.\nConflict warnings\nif >25% variance"),
 ]
 
-for i, (num, phase, color, desc) in enumerate(phases):
-    x = 0.3 + i * 2.6
-    rect(sl, x, 0.85, 2.4, 0.55, fill=color)
-    txt(sl, f"Phase {num}", x, 0.85, 2.4, 0.55,
-        color=NAVY, size=14, bold=True, align=PP_ALIGN.CENTER)
-    txt(sl, phase, x, 1.4, 2.4, 0.4,
-        color=color, size=12, bold=True, align=PP_ALIGN.CENTER)
-    rect(sl, x, 1.8, 2.4, 3.8, fill=NAVY2, line=color, lw=Pt(1.5))
-    txt(sl, desc, x+0.08, 1.9, 2.25, 3.6,
-        color=WHITE, size=11, wrap=True)
+gap = 2.48
+for i, (num, label, color, desc) in enumerate(phases):
+    x = 0.38 + i * gap
+    # Connector arrow (except last)
     if i < 4:
-        txt(sl, "→", x+2.4, 1.5, 0.2, 0.4, color=SLATE, size=18, bold=True)
+        box(sl, x + 2.04, 1.72, 0.44, 0.06, T3)   # arrow body
+        box(sl, x + 2.42, 1.65, 0.06, 0.2, T3)     # arrowhead right side
+    # Phase box
+    box(sl, x, 1.02, 2.0, 0.72, color)
+    t(sl, f"Phase {num}  ·  {label}", x + 0.08, 1.08, 1.85, 0.28,
+      color=BG, size=11.5, bold=True, font=FT)
+    # Detail card
+    box(sl, x, 1.78, 2.0, 2.55, S1, lc=color, lw=Pt(1.0))
+    box(sl, x, 1.78, 2.0, 0.04, color)
+    t(sl, desc, x + 0.1, 1.88, 1.82, 2.38,
+      color=WT, size=10.5, wrap=True)
 
-# SSE Events section
-rect(sl, 0.3, 5.75, 12.7, 1.5, fill=NAVY2, line=GOLD, lw=Pt(1))
-txt(sl, "Real-time SSE Events streamed to browser:",
-    0.45, 5.78, 5, 0.35, color=GOLD, size=12, bold=True)
-events = [
-    "start", "tool_call_start", "tool_executing", "tool_result",
-    "text_delta", "chart_data", "conflict_warning", "final_report", "done",
-]
+# SSE Events strip
+hline(sl, 0.38, 4.5, 12.57, color=BORD)
+t(sl, "Real-time SSE Events", 0.38, 4.6, 3.0, 0.28, color=GOLD, size=10, bold=True)
+events = ["start", "tool_call_start", "tool_executing", "tool_result",
+          "text_delta", "chart_data", "conflict_warning", "final_report", "done"]
 for i, ev in enumerate(events):
-    col = i % 5
-    row = i // 5
-    rect(sl, 0.45 + col*2.5, 6.2 + row*0.45, 2.3, 0.38, fill=NAVY3, line=ORANGE, lw=Pt(1))
-    txt(sl, ev, 0.45 + col*2.5, 6.2 + row*0.45, 2.3, 0.38,
-        color=ORANGE, size=10, bold=True, align=PP_ALIGN.CENTER)
+    x = 0.38 + i * 1.38
+    box(sl, x, 5.0, 1.28, 0.32, S2, lc=AMB, lw=Pt(0.6))
+    t(sl, ev, x + 0.06, 5.01, 1.18, 0.3, color=AMB, size=8.5, bold=True)
+
+t(sl, "Agent streams each event type progressively — browser receives tokens and tool steps in real time without polling.",
+  0.38, 5.45, 12.57, 0.3, color=T2, size=9.5, italic=True)
+
+# Model options
+t(sl, "Supported models:", 0.38, 5.9, 2.0, 0.28, color=T2, size=9.5)
+for i, m in enumerate(["OpenAI GPT-4o (default)", "Anthropic Claude Sonnet 4.6"]):
+    box(sl, 2.4 + i * 4.5, 5.87, 4.2, 0.3, S2, lc=BORD, lw=Pt(0.5))
+    t(sl, m, 2.5 + i * 4.5, 5.88, 4.0, 0.28, color=WT, size=9.5)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SLIDE 5 — AGENT TOOLS
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, ORANGE)
-htxt(sl, "Agent Tools", 0.12, color=ORANGE, size=26)
+sl = new_slide()
+chrome(sl, "Agent Tools", "Backend · Research Capabilities", AMB)
 
 tools = [
-    ("create_research_plan",       GOLD,   "Structures investigation scope, key questions, and source strategy before any research begins."),
-    ("web_search",                  GREEN,  "Tavily API — up-to-date web results with automatic snippet extraction and URL tracking."),
-    ("wiki_lookup",                 BLUE,   "Wikipedia API — encyclopedic background on companies, industries, and concepts."),
-    ("get_financials",              TEAL,   "Yahoo Finance (yfinance) — price history, fundamentals, and chart payloads streamed to UI."),
-    ("search_uploaded_documents",   ORANGE, "BM25 Okapi full-text search over user-uploaded PDFs extracted and cached in Redis."),
-    ("sec_edgar_search",            PURPLE, "SEC EDGAR filing lookup — 10-K, 10-Q, 8-K for public company regulatory data."),
-    ("evaluate_research_completeness", RED, "Self-assessment tool. Scores breadth, depth, recency, source diversity (0–100)."),
+    ("create_research_plan",        AMB,  "◎", "Structures investigation scope, key questions, and source strategy before any research begins. Called first — mandatory."),
+    ("evaluate_research_completeness", ROS, "◈", "Self-assessment scores breadth, depth, recency, and source diversity 0–100. Triggers dig-deeper phase if below 85%."),
+    ("web_search",                  EME,  "⊙", "Tavily API integration. Returns up-to-date web results with snippets. All source URLs tracked for citation validation."),
+    ("wiki_lookup",                 SKY,  "◉", "Wikipedia API for encyclopedic background on companies, industries, concepts, and historical context."),
+    ("get_financials",              GOLDL,"◆", "Yahoo Finance (yfinance). Price history, fundamentals, earnings, ratios. Chart payloads streamed live to the browser."),
+    ("search_uploaded_documents",   VIO,  "▣", "BM25 Okapi full-text search over user-uploaded PDFs. Text extracted by pdfplumber, cached in Redis with 24h TTL."),
+    ("sec_edgar_search",            TEA,  "◧", "SEC EDGAR filing lookup. 10-K, 10-Q, 8-K for public company regulatory filings and official disclosures."),
 ]
 
-for i, (name, color, desc) in enumerate(tools):
-    row = i % 4
-    col = i // 4
-    y = 0.85 + row * 1.62
-    x = 0.3  + col * 6.55
-    rect(sl, x, y, 6.3, 1.5, fill=NAVY2, line=color, lw=Pt(1.5))
-    rect(sl, x, y, 6.3, 0.42, fill=color)
-    txt(sl, name, x+0.1, y, 6.1, 0.42, color=NAVY, size=12, bold=True)
-    txt(sl, desc, x+0.1, y+0.46, 6.1, 1.0, color=WHITE, size=11, wrap=True)
+cols = 2
+for i, (name, color, icon, desc) in enumerate(tools):
+    col = i % cols
+    row = i // cols
+    x = 0.38 + col * 6.55
+    y = 1.02 + row * 1.48
+    h = 1.35
+    box(sl, x, y, 6.32, h, S1, lc=BORD, lw=Pt(0.5))
+    box(sl, x, y, 0.045, h, color)
+    t(sl, icon, x + 0.12, y + 0.07, 0.42, 0.38, color=color, size=18)
+    t(sl, name, x + 0.58, y + 0.08, 5.55, 0.3, color=color, size=11, bold=True, font=FM)
+    hline(sl, x + 0.14, y + 0.42, 6.0, color=BORD, width=Pt(0.4))
+    t(sl, desc, x + 0.14, y + 0.5, 6.0, 0.75, color=T2, size=10, wrap=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SLIDE 6 — DATA MODEL
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, PURPLE)
-htxt(sl, "Database Schema — 12 Tables (PostgreSQL)", 0.12, color=PURPLE, size=24)
+sl = new_slide()
+chrome(sl, "Database Schema", "Data · PostgreSQL · 12 Tables", VIO)
 
-tables = [
-    ("users",            GOLD,   ["sid (PK)", "display_name, email", "avatar_url, theme", "last_login"]),
-    ("sessions",         GREEN,  ["id UUID (PK)", "title, query", "report_markdown (TEXT)", "message_history (JSONB)", "trace_steps (JSONB)", "owner_sid (FK→users)", "visibility: private|team|public", "is_public, usage_tokens"]),
-    ("agent_memory",     ORANGE, ["id UUID (PK)", "session_id (FK→sessions)", "entity, entity_type", "facts (JSONB array)"]),
-    ("research_jobs",    TEAL,   ["id UUID (PK)", "query, webhook_url", "status: queued|running|done|failed", "result_markdown, error"]),
-    ("teams",            BLUE,   ["id UUID (PK)", "slug (UNIQUE)", "display_name, description", "created_by (FK→users)"]),
-    ("team_members",     PURPLE, ["team_id + sid (PK)", "role: owner|admin|member|viewer", "joined_at"]),
-    ("session_teams",    RED,    ["session_id + team_id (PK)", "shared_at"]),
-    ("comments",         GOLD,   ["id UUID (PK)", "session_id (FK)", "author_sid (FK)", "body, mentions (JSONB)", "parent_id (self-FK for threads)"]),
-    ("pinned_sessions",  GREEN,  ["sid + session_id + team_id (PK)", "pinned_at"]),
-    ("notifications",    ORANGE, ["id UUID (PK)", "recipient_sid (FK)", "type, payload (JSONB)", "read (BOOLEAN)"]),
-    ("team_activity",    BLUE,   ["id UUID (PK)", "team_id (FK)", "actor_sid (FK)", "action, payload (JSONB)"]),
+groups = [
+    ("Core", VIO, [
+        ("sessions",  ["id UUID (PK)", "title · query", "report_markdown (TEXT)", "message_history / trace_steps (JSONB)", "owner_sid → users", "visibility: private | team | public"]),
+        ("users",     ["sid (PK)", "display_name · email", "avatar_url · theme", "created_at · last_login"]),
+        ("agent_memory",["session_id → sessions", "entity · entity_type", "facts (JSONB array)"]),
+    ]),
+    ("Collaboration", SKY, [
+        ("teams",      ["id UUID (PK)", "slug (UNIQUE)", "display_name · description", "created_by → users"]),
+        ("team_members",["team_id + sid (composite PK)", "role: owner | admin | member | viewer", "joined_at"]),
+        ("session_teams",["session_id + team_id (PK)", "shared_at — many-to-many"]),
+    ]),
+    ("Engagement", EME, [
+        ("comments",   ["session_id → sessions", "author_sid → users", "body · mentions (JSONB)", "parent_id (threading)"]),
+        ("pinned_sessions",["sid + session_id + team_id (PK)", "pinned_at"]),
+        ("notifications",["recipient_sid → users", "type · payload (JSONB)", "read (BOOLEAN)"]),
+    ]),
+    ("Operations", AMB, [
+        ("team_activity",["team_id → teams", "actor_sid → users", "action · payload (JSONB)", "created_at"]),
+        ("research_jobs",["id UUID (PK)", "query · webhook_url", "status: queued|running|done|failed", "result_markdown · error"]),
+    ]),
 ]
 
-cols = 4
-for i, (name, color, fields) in enumerate(tables):
-    row = i // cols
-    col = i % cols
-    x = 0.25 + col * 3.28
-    y = 0.85 + row * 2.2
-    h = 2.05
-    rect(sl, x, y, 3.1, h, fill=NAVY2, line=color, lw=Pt(1.5))
-    rect(sl, x, y, 3.1, 0.38, fill=color)
-    txt(sl, name, x+0.08, y+0.02, 2.95, 0.36, color=NAVY, size=12, bold=True)
-    for j, f in enumerate(fields[:6]):
-        txt(sl, "· " + f, x+0.1, y+0.42+j*0.26, 2.9, 0.26, color=WHITE, size=9)
+col_x = [0.38, 3.72, 7.05, 10.38]
+for gi, (group_name, gcolor, tables) in enumerate(groups):
+    x = col_x[gi]
+    w = 3.18
+    box(sl, x, 1.02, w, 0.36, gcolor)
+    t(sl, group_name.upper(), x, 1.02, w, 0.36,
+      color=BG, size=10.5, bold=True, align=PP_ALIGN.CENTER)
+    y = 1.42
+    for tname, fields in tables:
+        th = 0.34 + len(fields) * 0.3
+        box(sl, x, y, w, th, S1, lc=BORD, lw=Pt(0.5))
+        box(sl, x, y, w, 0.3, S2)
+        box(sl, x, y, 0.04, th, gcolor)
+        t(sl, tname, x + 0.1, y + 0.03, w - 0.15, 0.26,
+          color=gcolor, size=10, bold=True, font=FM)
+        for fi, f in enumerate(fields):
+            t(sl, f, x + 0.1, y + 0.33 + fi * 0.3, w - 0.15, 0.28, color=T2, size=8.5)
+        y += th + 0.1
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SLIDE 7 — SESSION SHARING & TEAMS
+# SLIDE 7 — COLLABORATION MODEL
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, BLUE)
-htxt(sl, "Session Sharing Model & Team RBAC", 0.12, color=BLUE, size=24)
+sl = new_slide()
+chrome(sl, "Session Sharing & Team RBAC", "Collaboration Model", SKY)
 
-# Visibility model
-rect(sl, 0.3, 0.85, 8.3, 6.4, fill=NAVY2, line=BLUE, lw=Pt(1.5))
-txt(sl, "Session Visibility Model", 0.45, 0.88, 8.0, 0.4,
-    color=BLUE, size=14, bold=True)
+# ── Left: Visibility funnel
+t(sl, "Session Visibility", 0.38, 1.08, 6.0, 0.32, color=SKY, size=13, bold=True)
+hline(sl, 0.38, 1.44, 6.0, color=BORD)
 
 vis = [
-    ("private", SLATE, "Only the owner can access.\nDefault state for new sessions."),
-    ("team",    GOLD,  "Shared to one or more teams.\nAny team member can view via /share/{id}.\nRequires JWT auth + team membership check."),
-    ("public",  GREEN, "is_public=TRUE.\nAccessible by anyone without auth.\nPermanent URL: /share/{uuid}"),
+    ("private",  T3,   S1,  "Owner only. Default state for all new sessions."),
+    ("team",     GOLDL, S2, "Shared to one or more teams. Accessible to any\nmember via /share/{uuid} with JWT auth."),
+    ("public",   EME,  S2,  "is_public = TRUE. Anyone can read via /share/{uuid}\nwithout authentication. Permanent URL."),
 ]
-
-for i, (state, color, desc) in enumerate(vis):
-    y = 1.5 + i * 1.75
-    rect(sl, 0.5, y, 2.0, 1.5, fill=color)
-    txt(sl, state.upper(), 0.5, y, 2.0, 1.5,
-        color=NAVY, size=20, bold=True, align=PP_ALIGN.CENTER)
-    txt(sl, desc, 2.65, y+0.1, 5.7, 1.35, color=WHITE, size=12, wrap=True)
+for i, (state, sc, bg_, desc) in enumerate(vis):
+    y = 1.55 + i * 1.6
+    w = 5.7 - i * 0.5
+    x = 0.38 + i * 0.25
+    box(sl, x, y, w, 1.42, bg_, lc=sc, lw=Pt(1.2))
+    box(sl, x, y, w, 0.34, sc)
+    t(sl, state.upper(), x + 0.12, y + 0.04, w - 0.2, 0.28,
+      color=BG if sc != T3 else WT, size=11, bold=True)
+    t(sl, desc, x + 0.12, y + 0.42, w - 0.2, 0.9, color=WT, size=10, wrap=True)
     if i < 2:
-        txt(sl, "↓", 1.5, y+1.5, 1.0, 0.25, color=SLATE, size=14, align=PP_ALIGN.CENTER)
+        t(sl, "↓", x + w / 2 - 0.15, y + 1.44, 0.3, 0.2, color=T3, size=13, align=PP_ALIGN.CENTER)
 
-# RBAC roles
-rect(sl, 8.8, 0.85, 4.2, 6.4, fill=NAVY2, line=PURPLE, lw=Pt(1.5))
-txt(sl, "Team RBAC Roles", 8.95, 0.88, 3.9, 0.4,
-    color=PURPLE, size=14, bold=True)
+# Share endpoints
+t(sl, "POST /api/sessions/{id}/share  →  is_public=TRUE",
+  0.38, 6.45, 6.0, 0.25, color=T2, size=9, font=FM)
+t(sl, "POST /api/sessions/{id}/teams  →  visibility='team'",
+  0.38, 6.72, 6.0, 0.25, color=T2, size=9, font=FM)
+
+# ── Right: RBAC
+hline(sl, 6.8, 1.02, 0, color=BORD)   # visual divider
+t(sl, "Team Role Hierarchy", 7.0, 1.08, 6.0, 0.32, color=SKY, size=13, bold=True)
+hline(sl, 7.0, 1.44, 6.0, color=BORD)
 
 roles = [
-    ("owner",  GOLD,   "Full control: edit team,\nmanage members, delete sessions"),
-    ("admin",  ORANGE, "Manage members, share/unshare\nsessions, moderate comments"),
-    ("member", GREEN,  "View team sessions, share\nown sessions to team, comment"),
-    ("viewer", BLUE,   "Read-only: view shared sessions\nand comments, no write access"),
+    ("OWNER",  GOLD,  "Full control: edit team settings, manage all members,\ndelete or unshare any session."),
+    ("ADMIN",  AMB,   "Manage members, share/unshare sessions, moderate\ncomments. Cannot delete team."),
+    ("MEMBER", EME,   "View team sessions, share own sessions to the team,\npost comments and @mentions."),
+    ("VIEWER", SKY,   "Read-only access. Can view shared sessions and\ncomments. No write access."),
 ]
 for i, (role, color, desc) in enumerate(roles):
-    y = 1.5 + i * 1.4
-    rect(sl, 8.95, y, 1.5, 1.25, fill=color)
-    txt(sl, role.upper(), 8.95, y, 1.5, 1.25,
-        color=NAVY, size=13, bold=True, align=PP_ALIGN.CENTER)
-    txt(sl, desc, 10.55, y+0.1, 2.3, 1.1, color=WHITE, size=11, wrap=True)
+    y = 1.55 + i * 1.36
+    w = 5.0 - i * 0.35
+    box(sl, 7.0, y, w, 1.2, S1, lc=color, lw=Pt(1.2))
+    box(sl, 7.0, y, 1.1, 1.2, color)
+    t(sl, role, 7.0, y, 1.1, 1.2, color=BG, size=10.5, bold=True,
+      align=PP_ALIGN.CENTER, font=FT)
+    t(sl, desc, 8.18, y + 0.22, w - 1.28, 0.8, color=WT, size=10, wrap=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SLIDE 8 — FRONTEND ARCHITECTURE
+# SLIDE 8 — FRONTEND
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, BLUE)
-htxt(sl, "Frontend Architecture — SvelteKit", 0.12, color=BLUE, size=26)
+sl = new_slide()
+chrome(sl, "Frontend Architecture", "SvelteKit · TypeScript", SKY)
 
 # Route tree
-bullet_box(sl, "Route Structure", [
-    "+layout.server.ts  →  JWT guard, user hydration, redirect to /login",
-    "/(app)/+page.svelte  →  Research workspace (main chat + session list)",
-    "/(app)/teams/[slug]  →  Team dashboard, members, pinned sessions",
-    "/(app)/notifications  →  Notification inbox (polled every 30s)",
-    "/share/[id]/+page.ts  →  SvelteKit fetch (cookies forwarded) → read-only report",
-    "/login  +  /auth/callback  →  OIDC redirect & token exchange",
-    "/dashboard  →  Usage stats: tokens, cost, top queries",
-], 0.3, 0.85, 6.3, 3.9, title_color=BLUE, item_size=11)
+t(sl, "Route Structure", 0.38, 1.08, 5.8, 0.3, color=SKY, size=12, bold=True)
+hline(sl, 0.38, 1.42, 5.8, color=BORD)
+
+routes = [
+    (0, "+layout.server.ts",  GOLD,  "JWT guard · user hydration · redirect to /login"),
+    (1, "+layout.svelte",     SKY,   "App shell: sidebar, nav, notification badge"),
+    (1, "/(app)/+page.svelte",SKY,   "Research workspace — chat + session list"),
+    (2, "/teams/[slug]",      GOLDL, "Team dashboard, members, pinned sessions"),
+    (2, "/notifications",     VIO,   "Notification inbox (polled every 30 s)"),
+    (0, "/share/[id]",        EME,   "Read-only report — team members + public"),
+    (0, "/login",             T2,    "OIDC redirect trigger"),
+    (0, "/dashboard",         AMB,   "Usage stats: tokens, cost, top queries"),
+]
+for i, (indent, path, color, desc) in enumerate(routes):
+    y = 1.52 + i * 0.57
+    if indent > 0:
+        box(sl, 0.38 + (indent - 1) * 0.3, y + 0.13, 0.2, 0.04, BORD)
+        box(sl, 0.38 + indent * 0.3, y + 0.04, 0.04, 0.26, BORD)
+    box(sl, 0.38 + indent * 0.3, y, 3.5 - indent * 0.18, 0.46, S1, lc=BORD, lw=Pt(0.5))
+    box(sl, 0.38 + indent * 0.3, y, 0.04, 0.46, color)
+    t(sl, path, 0.52 + indent * 0.3, y + 0.07, 2.85, 0.28, color=color, size=9.5, bold=True, font=FM)
+    t(sl, desc, 4.1, y + 0.07, 2.1, 0.28, color=T2, size=9)
 
 # Key components
-bullet_box(sl, "Key Components", [
-    "ChatThread.svelte  →  SSE listener, streaming tokens, trace steps",
-    "ResearchSwimlane.svelte  →  Visual tool-call timeline",
-    "$lib/api/sessions.ts  →  Typed REST client (credentials: include)",
-    "$lib/stores/  →  Svelte stores: chat messages, trace, session state",
-    "Polling  →  setInterval 30s → GET /api/notifications",
-], 6.75, 0.85, 6.3, 3.9, title_color=BLUE, item_size=11)
+t(sl, "Key Components & Patterns", 6.5, 1.08, 6.5, 0.3, color=SKY, size=12, bold=True)
+hline(sl, 6.5, 1.42, 6.5, color=BORD)
 
-# Auth flow
-bullet_box(sl, "Authentication Flow", [
-    "1. +layout.server.ts reads jwt cookie on every request",
-    "2. No JWT → redirect to /login (public paths exempt)",
-    "3. /login → GET /api/auth/login → OIDC provider redirect",
-    "4. OIDC callback → exchange code → upsert user → set jwt cookie",
-    "5. All fetch() calls use credentials:'include' (same-origin cookies)",
-    "6. JWT decoded by FastAPI get_current_user / get_optional_user deps",
-], 0.3, 4.9, 12.7, 2.35, title_color=PURPLE, item_size=11)
+comps = [
+    (AMB,  "ChatThread.svelte",
+     "SSE EventSource listener. Streams tool_call_start, text_delta, final_report events and updates reactive stores in real time."),
+    (GOLDL,"ResearchSwimlane.svelte",
+     "Visual timeline of agent tool calls. Shows which tool ran, arguments passed, and a 400-char result preview per step."),
+    (EME,  "api/sessions.ts",
+     "Typed REST client. All fetch() calls use credentials: 'include' so the JWT cookie is forwarded — including on SSR runs via SvelteKit's enhanced fetch."),
+    (VIO,  "Auth guard",
+     "+layout.server.ts checks jwt cookie on every request. PUBLIC_PATHS=['/login','/share','/auth'] are exempt. Authenticated user injected into all page data."),
+    (TEA,  "Notification polling",
+     "setInterval 30 s → GET /api/notifications. Unread count drives the badge. PATCH /api/notifications/{id}/read on open."),
+]
+for i, (color, name, desc) in enumerate(comps):
+    y = 1.52 + i * 1.1
+    box(sl, 6.5, y, 6.5, 1.0, S1, lc=BORD, lw=Pt(0.5))
+    box(sl, 6.5, y, 0.045, 1.0, color)
+    t(sl, name, 6.62, y + 0.06, 6.2, 0.28, color=color, size=10.5, bold=True, font=FM)
+    t(sl, desc, 6.62, y + 0.38, 6.2, 0.56, color=T2, size=9.5, wrap=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SLIDE 9 — AWS INFRASTRUCTURE
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, TEAL)
-htxt(sl, "AWS Infrastructure & Credential Rotation", 0.12, color=TEAL, size=24)
+sl = new_slide()
+chrome(sl, "AWS Infrastructure & Credential Rotation", "Infrastructure · Cloud", TEA)
 
-# Secrets Manager
-rect(sl, 0.3, 0.85, 6.2, 6.4, fill=NAVY2, line=TEAL, lw=Pt(1.5))
-txt(sl, "AWS Secrets Manager", 0.45, 0.88, 5.9, 0.4,
-    color=TEAL, size=14, bold=True)
+# Left: Secret shapes
+t(sl, "Secrets Manager — Secret Shape", 0.38, 1.08, 5.8, 0.3, color=TEA, size=12, bold=True)
+hline(sl, 0.38, 1.42, 5.8, color=BORD)
 
-sm_items = [
-    ("DB Secret", PURPLE,
-     '{\n  "host": "rds.amazonaws.com",\n  "port": 5432,\n  "username": "app",\n  "password": "...",\n  "dbname": "research"\n}'),
-    ("Redis Secret", RED,
-     '{\n  "url": "rediss://cluster:6379",\n  "auth_token": "..."\n}'),
+secrets = [
+    ("DB Secret  (AWS_SECRET_NAME)", VIO, [
+        '  "host":     "mydb.cluster.us-east-1.rds.amazonaws.com"',
+        '  "port":     5432',
+        '  "username": "appuser"',
+        '  "password": "s3cr3t!@#"   // percent-encoded in DSN',
+        '  "dbname":   "research"',
+    ]),
+    ("Redis Secret  (AWS_ELASTICACHE_SECRET_NAME)", ROS, [
+        '  "url":        "rediss://cluster.cache.amazonaws.com:6379"',
+        '  "auth_token": "mytoken"    // passed as password param',
+    ]),
 ]
-for i, (label, color, code) in enumerate(sm_items):
-    y = 1.45 + i * 2.9
-    rect(sl, 0.45, y, 5.9, 2.65, fill=NAVY3, line=color, lw=Pt(1))
-    txt(sl, label, 0.55, y+0.05, 5.7, 0.38, color=color, size=12, bold=True)
-    txt(sl, code, 0.55, y+0.42, 5.7, 2.15, color=SLATE, size=10)
+y = 1.52
+for title, color, lines in secrets:
+    h = 0.38 + len(lines) * 0.36
+    box(sl, 0.38, y, 5.85, h, S1, lc=color, lw=Pt(1.0))
+    box(sl, 0.38, y, 0.045, h, color)
+    t(sl, title, 0.5, y + 0.05, 5.6, 0.28, color=color, size=10, bold=True)
+    box(sl, 0.38, y + 0.36, 5.85, h - 0.36, S2)
+    t(sl, "{", 0.52, y + 0.36, 5.5, 0.28, color=T2, size=9.5, font=FM)
+    for i, line_ in enumerate(lines):
+        t(sl, line_, 0.52, y + 0.62 + i * 0.36, 5.55, 0.34, color=GOLDL, size=9, font=FM)
+    t(sl, "}", 0.52, y + 0.62 + len(lines) * 0.36, 5.5, 0.28, color=T2, size=9.5, font=FM)
+    y += h + 0.25
 
-# Rotation flow
-rect(sl, 6.75, 0.85, 6.3, 6.4, fill=NAVY2, line=GOLD, lw=Pt(1.5))
-txt(sl, "Automatic Rotation Recovery", 6.9, 0.88, 6.0, 0.4,
-    color=GOLD, size=14, bold=True)
+# Right: Rotation flow
+t(sl, "Automatic Rotation Recovery", 6.6, 1.08, 6.5, 0.3, color=TEA, size=12, bold=True)
+hline(sl, 6.6, 1.42, 6.5, color=BORD)
 
 steps = [
-    (GOLD,   "AWS rotates secret (scheduled or on-demand)"),
-    (SLATE,  "Old password still valid during rotation window"),
-    (RED,    "Pool.acquire() → new connection → Postgres rejects"),
-    (ORANGE, "asyncpg raises InvalidPasswordError"),
-    (GREEN,  "_acquire() catches → calls _reset_pool()"),
-    (GREEN,  "Pool closed, secret cache evicted"),
-    (TEAL,   "get_db_secret() → Secrets Manager → fresh creds"),
-    (GREEN,  "New pool created with new DSN + ssl='require'"),
-    (WHITE,  "Request retried — transparent to caller"),
+    (TEA,  "AWS rotates the secret on schedule or on-demand"),
+    (T3,   "Old password still valid during rotation window"),
+    (ROS,  "pool.acquire() → new DB connection → auth rejected"),
+    (AMB,  "asyncpg raises  InvalidPasswordError  (SQLSTATE 28P01)"),
+    (GOLDL,"_acquire() catches → calls  _reset_pool()"),
+    (EME,  "Pool closed · secret cache evicted (invalidate_db_secret)"),
+    (TEA,  "get_db_secret() → Secrets Manager → fresh credentials"),
+    (EME,  "New pool created with new DSN + ssl='require'"),
+    (WT,   "Request retried — fully transparent to the caller"),
 ]
 for i, (color, step) in enumerate(steps):
-    y = 1.45 + i * 0.62
-    rect(sl, 6.9, y, 0.38, 0.5, fill=color)
-    txt(sl, str(i+1), 6.9, y, 0.38, 0.5,
-        color=NAVY, size=11, bold=True, align=PP_ALIGN.CENTER)
-    txt(sl, step, 7.35, y+0.05, 5.55, 0.5, color=WHITE, size=11)
+    y = 1.52 + i * 0.58
+    box(sl, 6.6, y, 0.44, 0.44, color)
+    t(sl, str(i + 1), 6.6, y, 0.44, 0.44, color=BG, size=12, bold=True,
+      font=FT, align=PP_ALIGN.CENTER)
+    box(sl, 7.1, y, 5.9, 0.44, S1, lc=BORD, lw=Pt(0.5))
+    t(sl, step, 7.2, y + 0.07, 5.75, 0.3, color=WT, size=10)
 
-txt(sl, "Same pattern for Redis (AuthenticationError → _reset_client())",
-    6.9, 7.05, 6.15, 0.35, color=TEAL, size=11)
+t(sl, "Redis follows the same pattern — AuthenticationError → _reset_client() → invalidate_redis_secret() → re-fetch.",
+  6.6, 6.82, 6.5, 0.28, color=T2, size=9, italic=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SLIDE 10 — DATA FLOWS
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, GREEN)
-htxt(sl, "Key Data Flows", 0.12, color=GREEN, size=26)
+sl = new_slide()
+chrome(sl, "Key Data Flows", "Runtime Behaviour", EME)
 
 flows = [
-    ("Research Execution", GREEN, [
-        "1. User submits query → POST /api/research",
-        "2. Redis: check for cached PDF context",
-        "3. DB: load agent_memory for context enrichment",
-        "4. Agent executes 4-phase loop with tools",
-        "5. SSE events stream tokens + tool calls to browser",
-        "6. final_report event → client saves session",
-        "7. Background: extract entities → agent_memory",
+    ("Research Execution", EME, [
+        "User submits query → POST /api/research",
+        "Redis: load cached PDF context for session",
+        "DB: fetch agent_memory for context enrichment",
+        "Agent runs 4-phase loop (plan → execute → evaluate → report)",
+        "SSE events stream tokens + tool calls live to browser",
+        "final_report event → client persists session to DB",
+        "Background: entity extraction → agent_memory (non-blocking)",
     ]),
-    ("Comment & Notifications", ORANGE, [
-        "1. User posts comment with @username",
-        "2. Backend regex-parses @mentions",
-        "3. Notification row created per mentioned user",
-        "4. Frontend polls GET /api/notifications every 30s",
-        "5. Badge appears on notification icon",
-        "6. User clicks → reads → PATCH /read",
+    ("Comment & Notification", AMB, [
+        "User posts comment with @username in body",
+        "Backend regex-parses all @mention tokens",
+        "Notification row inserted per mentioned user",
+        "Frontend polls GET /api/notifications every 30 s",
+        "Unread badge increments on the notification icon",
+        "User opens inbox → PATCH /{id}/read or POST /read-all",
     ]),
-    ("PDF Document Search", BLUE, [
-        "1. User uploads PDF → POST /api/documents/upload",
-        "2. pdfplumber extracts text → stored in Redis (24h TTL)",
-        "3. Session key returned to frontend",
-        "4. Research request includes pdf_session_key",
-        "5. search_uploaded_documents tool: BM25 search over text",
-        "6. Relevant chunks injected into agent context",
+    ("PDF Document Search", SKY, [
+        "User uploads PDF → POST /api/documents/upload",
+        "pdfplumber extracts full text → stored in Redis (24h TTL)",
+        "session_key returned; included in subsequent research call",
+        "search_uploaded_documents tool runs BM25 over extracted text",
+        "Top-scoring chunks injected into agent context window",
     ]),
-    ("Async Webhook Jobs", PURPLE, [
-        "1. Caller: POST /api/research/async + webhook_url",
-        "2. Job row created (status: queued) → job_id returned",
-        "3. BackgroundTask: run agent loop async",
-        "4. On complete: POST result_markdown to webhook_url",
-        "5. Caller: GET /api/research/jobs/{id} to poll status",
-        "6. Job statuses: queued → running → done|failed",
+    ("Async Webhook Job", VIO, [
+        "POST /api/research/async  {query, webhook_url}",
+        "Job row created (status: queued) → job_id returned",
+        "FastAPI BackgroundTask runs full agent loop async",
+        "On completion: POST result_markdown to webhook_url",
+        "Caller polls GET /api/research/jobs/{id} for status",
+        "Status lifecycle: queued → running → done | failed",
     ]),
 ]
 
 for i, (title, color, steps) in enumerate(flows):
-    col = i % 2
-    row = i // 2
-    bullet_box(sl, title, steps,
-               l=0.3 + col*6.55, t=0.85 + row*3.2,
-               w=6.3, h=3.05,
-               title_color=color, item_size=11)
+    col, row = i % 2, i // 2
+    x = 0.38 + col * 6.55
+    y = 1.02 + row * 3.1
+    h = 3.0
+    box(sl, x, y, 6.32, h, S1, lc=BORD, lw=Pt(0.5))
+    box(sl, x, y, 0.045, h, color)
+    t(sl, title, x + 0.14, y + 0.08, 6.0, 0.3, color=color, size=12, bold=True)
+    hline(sl, x + 0.14, y + 0.42, 6.0, color=BORD, width=Pt(0.4))
+    for si, step in enumerate(steps):
+        sy = y + 0.5 + si * 0.38
+        t(sl, f"{si + 1}.", x + 0.14, sy, 0.3, 0.35, color=color, size=9.5, bold=True)
+        t(sl, step, x + 0.44, sy, 5.7, 0.35, color=WT if si % 2 == 0 else T2, size=9.5)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SLIDE 11 — API REFERENCE
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, SLATE)
-htxt(sl, "API Reference", 0.12, color=GOLD, size=26)
+sl = new_slide()
+chrome(sl, "API Reference", "Backend · FastAPI", GOLD)
 
+MC = {"GET": EME, "POST": SKY, "PATCH": AMB, "DELETE": ROS}
 endpoints = [
-    # (method, path, desc, color)
-    ("POST",  "/api/research",                     "Stream research SSE  ·  model, query, depth, rules, pdf_session_key",     GREEN),
-    ("POST",  "/api/research/async",               "Async job + webhook  ·  returns job_id for polling",                      GREEN),
-    ("GET",   "/api/research/jobs/{id}",           "Poll async job status",                                                    TEAL),
-    ("GET",   "/api/sessions",                     "List sessions for current user",                                           BLUE),
-    ("POST",  "/api/sessions",                     "Create new session",                                                       BLUE),
-    ("GET",   "/api/sessions/{id}",                "Get session (owner/team check enforced)",                                  BLUE),
-    ("PATCH", "/api/sessions/{id}",                "Update title / report / visibility",                                       BLUE),
-    ("DELETE","/api/sessions/{id}",                "Delete session",                                                           BLUE),
-    ("POST",  "/api/sessions/{id}/share",          "Make session public  →  returns share_url",                                GOLD),
-    ("POST",  "/api/sessions/{id}/teams",          "Share session to team  →  visibility=team",                                GOLD),
-    ("GET",   "/api/share/{id}",                   "Public/team read-only  ·  auth optional (team check if authed)",           GOLD),
-    ("POST",  "/api/documents/upload",             "Upload PDF  →  Redis cached  →  returns session_key",                     ORANGE),
-    ("GET",   "/api/teams",                        "List user's teams",                                                        PURPLE),
-    ("POST",  "/api/teams",                        "Create team (caller becomes owner)",                                       PURPLE),
-    ("GET",   "/api/teams/{slug}",                 "Get team + member list",                                                   PURPLE),
-    ("POST",  "/api/teams/{slug}/members",         "Add member with role",                                                     PURPLE),
-    ("GET",   "/api/notifications",                "Unread notification list (poll every 30s)",                                TEAL),
-    ("PATCH", "/api/notifications/{id}/read",      "Mark single notification read",                                            TEAL),
-    ("GET",   "/api/usage/summary",                "Token usage, cost, top queries dashboard stats",                           SLATE),
-    ("GET",   "/health",                           "Health check  →  {status: ok, version: 1.0.0}",                           GREEN),
+    # col 1
+    ("POST",   "/api/research",                "Stream research (SSE)  ·  model, query, depth, pdf_session_key"),
+    ("POST",   "/api/research/async",          "Async job + webhook  ·  returns job_id"),
+    ("GET",    "/api/research/jobs/{id}",      "Poll async job status and result"),
+    ("GET",    "/api/sessions",                "List sessions owned by current user"),
+    ("POST",   "/api/sessions",                "Create new session"),
+    ("GET",    "/api/sessions/{id}",           "Fetch session (owner / team check)"),
+    ("PATCH",  "/api/sessions/{id}",           "Update title, report, visibility"),
+    ("DELETE", "/api/sessions/{id}",           "Delete session"),
+    ("POST",   "/api/sessions/{id}/share",     "Make public  →  returns share_url"),
+    ("DELETE", "/api/sessions/{id}/share",     "Revoke public access"),
+    # col 2
+    ("POST",   "/api/sessions/{id}/teams",     "Share to team  →  visibility=team"),
+    ("DELETE", "/api/sessions/{id}/teams/{t}", "Unshare from team"),
+    ("GET",    "/api/share/{id}",              "Public/team read-only (auth optional)"),
+    ("POST",   "/api/documents/upload",        "Upload PDF → Redis cache → session_key"),
+    ("GET",    "/api/teams",                   "List user's teams"),
+    ("POST",   "/api/teams",                   "Create team (caller becomes owner)"),
+    ("GET",    "/api/teams/{slug}",            "Get team detail + member list"),
+    ("PATCH",  "/api/teams/{slug}/members/{s}","Update member role"),
+    ("GET",    "/api/notifications",           "Unread notification list"),
+    ("GET",    "/health",                      "Health check  →  {status: ok}"),
 ]
 
-method_colors = {"GET": GREEN, "POST": BLUE, "PATCH": ORANGE, "DELETE": RED}
-rows_per_col = 10
-for i, (method, path, desc, _) in enumerate(endpoints):
-    col = i // rows_per_col
-    row = i % rows_per_col
-    x = 0.25 + col * 6.55
-    y = 0.82 + row * 0.64
-    mc = method_colors.get(method, SLATE)
-    rect(sl, x, y, 0.85, 0.5, fill=mc)
-    txt(sl, method, x, y, 0.85, 0.5,
-        color=NAVY, size=9, bold=True, align=PP_ALIGN.CENTER)
-    txt(sl, path, x+0.9, y+0.02, 2.5, 0.28, color=GOLD2, size=8.5, bold=True)
-    txt(sl, desc, x+0.9, y+0.26, 5.5, 0.28, color=SLATE, size=8)
+split = 10
+for i, (method, path, desc) in enumerate(endpoints):
+    col = i // split
+    row = i % split
+    x = 0.38 + col * 6.52
+    y = 1.02 + row * 0.6
+    method_pill(sl, x, y, method, path, desc, MC.get(method, T3))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SLIDE 12 — KEY ARCHITECTURAL DECISIONS
+# SLIDE 12 — ARCHITECTURAL DECISIONS
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, GOLD)
-htxt(sl, "Key Architectural Decisions", 0.12, color=GOLD, size=26)
+sl = new_slide()
+chrome(sl, "Key Architectural Decisions", "Design Rationale", GOLD)
 
 decisions = [
-    ("SSE over WebSocket", GOLD,
-     ["One-way streaming fits research output perfectly",
-      "Works through all proxies and CDNs without upgrade",
-      "Compatible with serverless (no persistent connection)",
-      "Native browser EventSource API — no extra library"]),
-    ("asyncpg Direct (no ORM)", GREEN,
-     ["Maximum async performance — no sync blocking",
+    ("SSE over WebSocket", GOLDL,
+     ["One-way streaming maps perfectly to research output",
+      "Works through all proxies and CDNs without upgrade headers",
+      "Native EventSource API — zero extra library on client",
+      "Compatible with serverless (no persistent connection needed)"]),
+    ("asyncpg Direct — No ORM", EME,
+     ["Maximum async performance — zero sync blocking overhead",
       "Advisory locks for safe concurrent schema migrations",
-      "Full JSONB support for message_history & trace_steps",
-      "Simple typed queries without abstraction overhead"]),
-    ("Mandatory Research Phases", ORANGE,
-     ["Prevents shallow one-shot responses",
-      "Forces self-evaluation before writing",
-      "Minimum 4 tool calls ensures breadth",
-      "Conflict detection adds credibility signals"]),
-    ("Graceful Degradation", BLUE,
-     ["Redis unavailable → in-memory fallback (app keeps running)",
-      "DB not configured → endpoints return empty (not 500)",
-      "OIDC not set → dev bypass for local development",
-      "Each service fails independently, not catastrophically"]),
-    ("Secret Rotation at Runtime", TEAL,
+      "Native JSONB for message_history and trace_steps",
+      "Simple parameterised queries without abstraction tax"]),
+    ("Mandatory 4-Phase Loop", AMB,
+     ["Prevents shallow single-tool responses",
+      "Forces self-evaluation before writing begins",
+      "Minimum 4 tool calls ensures research breadth",
+      "Confidence scoring and conflict detection built in"]),
+    ("Graceful Degradation", SKY,
+     ["Redis unavailable → in-memory fallback, app keeps running",
+      "DB not configured → endpoints return empty lists (no 500s)",
+      "OIDC not set → dev bypass for friction-free local dev",
+      "Each service fails independently — not catastrophically"]),
+    ("Runtime Secret Rotation", TEA,
      ["No restart required when AWS rotates credentials",
-      "Auth errors detected on next pool.acquire()",
+      "Auth errors detected on next pool.acquire() call",
       "Single retry after re-fetching from Secrets Manager",
-      "asyncio.Lock prevents thundering-herd on reset"]),
-    ("RBAC + Visibility Model", PURPLE,
-     ["3-tier session visibility: private → team → public",
-      "4-tier team roles: owner → admin → member → viewer",
+      "asyncio.Lock prevents thundering-herd on pool reset"]),
+    ("3-Tier Visibility Model", VIO,
+     ["private → team → public: clear escalation path",
       "Permanent share URLs: /share/{uuid} never changes",
-      "Team membership verified server-side on every request"]),
+      "Team membership verified server-side on every request",
+      "4-level RBAC: owner > admin > member > viewer"]),
 ]
 
 for i, (title, color, points) in enumerate(decisions):
-    col = i % 3
-    row = i // 3
-    bullet_box(sl, title, points,
-               l=0.25 + col*4.35, t=0.82 + row*3.1,
-               w=4.2, h=2.95,
-               title_color=color, item_size=11)
+    col, row = i % 3, i // 3
+    card(sl, 0.38 + col * 4.3, 1.02 + row * 3.04,
+         4.18, 2.92, color, title, points, ts=11.5, is_=10.5)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SLIDE 13 — DEPLOYMENT GUIDE
+# SLIDE 13 — DEPLOYMENT
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, GREEN)
-htxt(sl, "Deployment Guide", 0.12, color=GREEN, size=26)
+sl = new_slide()
+chrome(sl, "Deployment Guide", "Infrastructure · Getting Started", EME)
 
-bullet_box(sl, "Local Development (Docker Compose)", [
-    "docker compose up -d  →  starts Postgres 16 + Redis 7",
-    "cp backend/.env.example backend/.env  →  fill in API keys",
-    "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/research",
-    "REDIS_URL=redis://localhost:6379",
-    "DEV_AUTH_BYPASS=true  →  skip OIDC for local testing",
-    "cd backend && uvicorn app.main:app --reload",
-    "cd frontend && npm install && npm run dev",
-], 0.3, 0.85, 6.2, 4.0, title_color=GREEN, item_size=11)
+# Local dev column
+box(sl, 0.38, 1.02, 6.0, 0.38, EME)
+t(sl, "Local Development", 0.52, 1.04, 5.7, 0.32, color=BG, size=12, bold=True)
 
-bullet_box(sl, "AWS Production", [
-    "Set AWS_SECRET_NAME=prod/myapp/db (JSON: host/port/username/password/dbname)",
-    "Set AWS_ELASTICACHE_SECRET_NAME=prod/myapp/redis (JSON: url/auth_token)",
-    "Set AWS_REGION=us-east-1 (or your region)",
-    "SSL auto-enabled for Postgres; TLS (rediss://) auto-enabled for Redis",
-    "DATABASE_URL and REDIS_URL are ignored when AWS secrets are set",
-    "Credential rotation handled automatically — no restarts needed",
-    "Health check: GET /health  →  use for ECS/ALB target group",
-], 6.7, 0.85, 6.3, 4.0, title_color=TEAL, item_size=11)
+local_steps = [
+    ("1", EME,  "docker compose up -d",               "Starts Postgres 16 + Redis 7 with health checks"),
+    ("2", GOLDL,"cp backend/.env.example backend/.env","Fill in OPENAI_API_KEY, TAVILY_API_KEY, JWT_SECRET"),
+    ("3", SKY,  "DATABASE_URL=postgresql://...",       "localhost:5432/research (Docker default)"),
+    ("4", SKY,  "REDIS_URL=redis://localhost:6379",    ""),
+    ("5", VIO,  "DEV_AUTH_BYPASS=true",               "Skip OIDC — any username logs in during dev"),
+    ("6", EME,  "uvicorn app.main:app --reload",       "Backend on :8000  (from backend/ directory)"),
+    ("7", AMB,  "npm run dev",                         "Frontend on :5173  (from frontend/ directory)"),
+]
+for i, (num, color, cmd, desc) in enumerate(local_steps):
+    y = 1.48 + i * 0.73
+    box(sl, 0.38, y, 0.38, 0.55, color)
+    t(sl, num, 0.38, y + 0.03, 0.38, 0.5, color=BG, size=12, bold=True,
+      font=FT, align=PP_ALIGN.CENTER)
+    box(sl, 0.8, y, 5.58, 0.55, S1, lc=BORD, lw=Pt(0.5))
+    t(sl, cmd, 0.9, y + 0.03, 5.4, 0.26, color=GOLDL, size=9.5, bold=True, font=FM)
+    if desc:
+        t(sl, desc, 0.9, y + 0.3, 5.4, 0.22, color=T2, size=9)
 
-bullet_box(sl, "Required Environment Variables", [
-    "OPENAI_API_KEY  —  GPT-4o for research + memory extraction",
-    "TAVILY_API_KEY  —  web search tool",
-    "JWT_SECRET  —  HS256 signing key (change from default in prod!)",
-    "ALLOWED_ORIGINS  —  CORS whitelist (JSON array of URLs)",
-    "OIDC_ISSUER + OIDC_CLIENT_ID + OIDC_CLIENT_SECRET  —  SSO",
-    "APP_BASE_URL  —  used for OIDC redirect URI construction",
-    "ANTHROPIC_API_KEY  —  optional, enables Claude Sonnet model",
-], 0.3, 5.05, 12.7, 2.2, title_color=GOLD, item_size=11)
+# AWS column
+box(sl, 6.95, 1.02, 6.0, 0.38, TEA)
+t(sl, "AWS Production", 7.09, 1.04, 5.7, 0.32, color=BG, size=12, bold=True)
+
+aws_vars = [
+    ("AWS_SECRET_NAME",              "prod/myapp/db",    VIO,  "Postgres credentials (replaces DATABASE_URL)"),
+    ("AWS_ELASTICACHE_SECRET_NAME",  "prod/myapp/redis", ROS,  "Redis token (replaces REDIS_URL)"),
+    ("AWS_REGION",                   "us-east-1",        TEA,  "Shared by both secrets"),
+    ("OPENAI_API_KEY",               "sk-...",           EME,  "GPT-4o research + entity extraction"),
+    ("TAVILY_API_KEY",               "tvly-...",         AMB,  "Web search tool"),
+    ("JWT_SECRET",                   "<strong key>",     GOLDL,"Change from default in all non-dev envs"),
+    ("OIDC_ISSUER",                  "https://...",      SKY,  "Any OpenID Connect provider"),
+    ("ALLOWED_ORIGINS",              '["https://..."]',  T2,   "CORS whitelist (JSON array)"),
+]
+for i, (key, val, color, desc) in enumerate(aws_vars):
+    y = 1.48 + i * 0.72
+    box(sl, 6.95, y, 6.0, 0.62, S1, lc=BORD, lw=Pt(0.5))
+    box(sl, 6.95, y, 0.04, 0.62, color)
+    t(sl, key, 7.06, y + 0.03, 3.4, 0.26, color=color, size=9, bold=True, font=FM)
+    t(sl, val, 7.06, y + 0.32, 3.4, 0.24, color=GOLDL, size=8.5, font=FM)
+    t(sl, desc, 10.55, y + 0.12, 2.25, 0.4, color=T2, size=8.5, wrap=True)
+
+t(sl, "SSL is auto-enabled for Postgres; TLS (rediss://) is auto-enabled for Redis when using AWS secrets.",
+  6.95, 7.05, 6.0, 0.24, color=T2, size=8.5, italic=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SLIDE 14 — THANK YOU / QUESTIONS
+# SLIDE 14 — QUESTIONS
 # ══════════════════════════════════════════════════════════════════════════════
-sl = add_slide()
-bg(sl)
-accent_bar(sl, GOLD)
+sl = new_slide()
+box(sl, 0, 0, 13.33, 7.5, BG)
+box(sl, 0, 0, 13.33, 0.055, GOLD)
+box(sl, 0, 7.45, 13.33, 0.055, GOLD)
 
-rect(sl, 5.42, 1.8, 2.5, 2.5, fill=GOLD)
-txt(sl, "P", 5.42, 1.8, 2.5, 2.5, color=NAVY, size=100, bold=True, align=PP_ALIGN.CENTER)
+# Right accent
+box(sl, 9.8, 0.055, 3.53, 7.4, S1)
 
-txt(sl, "Playbook Research",
-    1, 4.5, 11.33, 0.7, color=WHITE, size=38, bold=True, align=PP_ALIGN.CENTER)
-txt(sl, "Questions?",
-    1, 5.2, 11.33, 0.55, color=GOLD, size=26, align=PP_ALIGN.CENTER)
+# Large P
+box(sl, 1.2, 1.6, 1.55, 1.55, GOLD)
+t(sl, "P", 1.2, 1.6, 1.55, 1.55, color=BG, size=72, bold=True, font=FT, align=PP_ALIGN.CENTER)
 
-for i, (label, val, color) in enumerate([
-    ("Backend",    "FastAPI + PydanticAI + asyncpg", GREEN),
-    ("Frontend",   "SvelteKit + TypeScript",         BLUE),
-    ("AI Models",  "GPT-4o + Claude Sonnet 4.6",     ORANGE),
-    ("Infra",      "PostgreSQL + Redis + AWS",        PURPLE),
-]):
-    x = 0.6 + i * 3.1
-    rect(sl, x, 6.1, 2.95, 0.85, fill=NAVY2, line=color, lw=Pt(1.5))
-    txt(sl, label, x+0.1, 6.13, 2.75, 0.35, color=color, size=11, bold=True)
-    txt(sl, val,   x+0.1, 6.48, 2.75, 0.4,  color=WHITE, size=10)
+t(sl, "Playbook Research", 1.2, 3.38, 8.0, 0.72, color=WHITE, size=42, bold=True, font=FT)
+t(sl, "Questions?", 1.2, 4.12, 8.0, 0.52, color=GOLD, size=24, font=FT)
+hline(sl, 1.2, 4.75, 7.0, color=BORD)
+
+t(sl, "Thank you for your time.", 1.2, 4.88, 7.0, 0.38, color=T2, size=14)
+
+summary = [
+    (EME,  "Backend",   "FastAPI · Python 3.12 · asyncpg"),
+    (SKY,  "Frontend",  "SvelteKit · TypeScript"),
+    (AMB,  "AI Models", "GPT-4o + Claude Sonnet 4.6"),
+    (VIO,  "Data",      "PostgreSQL · Redis · 12 tables"),
+    (TEA,  "Infra",     "AWS RDS · ElastiCache · Secrets Manager"),
+]
+for i, (color, label, val) in enumerate(summary):
+    x = 1.2 + i * 1.6
+    box(sl, x, 5.5, 1.52, 0.82, S1, lc=BORD, lw=Pt(0.5))
+    box(sl, x, 5.5, 1.52, 0.04, color)
+    t(sl, label, x + 0.06, 5.55, 1.4, 0.25, color=color, size=9, bold=True)
+    t(sl, val,   x + 0.06, 5.78, 1.4, 0.48, color=T2, size=8, wrap=True)
+
+# Stack list in accent column
+t(sl, "Architecture at a glance", 10.0, 0.7, 3.1, 0.3, color=GOLD, size=9, bold=True)
+hline(sl, 10.0, 1.04, 3.05, color=BORD)
+items = [
+    "14 slides", "8 API routers", "7 agent tools",
+    "12 DB tables", "4 sharing phases", "3 visibility tiers",
+    "4 team roles", "1 permanent share URL",
+]
+for i, item in enumerate(items):
+    box(sl, 10.0, 1.14 + i * 0.8, 0.04, 0.55, GOLD)
+    t(sl, item, 10.12, 1.2 + i * 0.8, 3.0, 0.42, color=WT, size=11)
 
 
 # ── Save ───────────────────────────────────────────────────────────────────────
-out = "docs/Playbook-Research-Architecture.pptx"
+out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   "Playbook-Research-Architecture.pptx")
 prs.save(out)
-print(f"Saved {out}  ({len(prs.slides)} slides)")
+print(f"✓  Saved  {out}  ({len(prs.slides)} slides)")
