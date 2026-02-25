@@ -9,9 +9,11 @@ from app.db import (
     db_delete_session,
     db_get_public_session,
     db_get_session,
+    db_get_session_teams,
     db_get_team,
     db_get_member_role,
     db_list_sessions,
+    db_list_user_teams,
     db_pin_session,
     db_share_session_to_team,
     db_unpin_session,
@@ -45,10 +47,20 @@ async def get_session(session_id: str, user=Depends(get_optional_user)):
         raise _no_db()
     if row is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    # Allow access if: public, no owner, or owner matches
-    if row.get("visibility") == "private":
+    visibility = row.get("visibility", "private")
+    if visibility == "private":
+        # Only the owner can access private sessions
         if not user or row.get("owner_sid") != user.get("sub"):
             raise HTTPException(status_code=403, detail="Access denied")
+    elif visibility == "team":
+        # Any member of a team the session was shared to can access it
+        if not user:
+            raise HTTPException(status_code=403, detail="Access denied")
+        session_team_ids = set(await db_get_session_teams(session_id))
+        user_team_ids = {t["id"] for t in await db_list_user_teams(user["sub"])}
+        if not session_team_ids & user_team_ids:
+            raise HTTPException(status_code=403, detail="Access denied")
+    # visibility == "public" or no owner → open access
     return row
 
 
@@ -196,12 +208,23 @@ router_public = APIRouter(prefix="/api/share", tags=["share"])
 
 
 @router_public.get("/{session_id}", response_model=SessionFull)
-async def get_public_session(session_id: str):
+async def get_public_session(session_id: str, user=Depends(get_optional_user)):
     """Retrieve a publicly shared session (read-only)."""
     try:
+        # Case 1: publicly shared — no auth required
         row = await db_get_public_session(session_id)
+        if row:
+            return row
+
+        # Case 2: team-shared — requires auth + team membership
+        if user:
+            row = await db_get_session(session_id)
+            if row and row.get("visibility") == "team":
+                session_team_ids = set(await db_get_session_teams(session_id))
+                user_team_ids = {t["id"] for t in await db_list_user_teams(user["sub"])}
+                if session_team_ids & user_team_ids:
+                    return row
     except DatabaseNotConfigured:
         raise _no_db()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Session not found or not public")
-    return row
+
+    raise HTTPException(status_code=404, detail="Session not found or not accessible")

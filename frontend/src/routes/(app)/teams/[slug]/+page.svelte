@@ -117,7 +117,9 @@
 				{:else}
 					{#each sessions as session (session.id)}
 						<a
-							href="/?session={session.id}"
+							href="/share/{session.id}"
+							target="_blank"
+							rel="noopener noreferrer"
 							class="block p-4 bg-navy-900 border border-navy-700 rounded-lg hover:border-gold/30 transition-colors"
 						>
 							<h3 class="text-sm font-medium text-slate-200 truncate">{session.title}</h3>

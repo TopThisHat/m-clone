@@ -1,12 +1,11 @@
 import type { PageLoad } from './$types';
-import { getPublicSession } from '$lib/api/sessions';
 import { error } from '@sveltejs/kit';
 
-export const load: PageLoad = async ({ params }) => {
-	try {
-		const session = await getPublicSession(params.id);
-		return { session };
-	} catch {
+export const load: PageLoad = async ({ params, fetch }) => {
+	const res = await fetch(`/api/share/${params.id}`).catch(() => null);
+	if (!res || !res.ok) {
 		throw error(404, 'This research report is not publicly available');
 	}
+	const session = await res.json();
+	return { session };
 };

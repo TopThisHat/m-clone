@@ -90,6 +90,6 @@ export async function unshareSession(id: string): Promise<void> {
 }
 
 export async function getPublicSession(id: string): Promise<SessionFull> {
-	const res = await fetch(`/api/share/${id}`);
+	const res = await fetch(`/api/share/${id}`, { credentials: 'include' });
 	return handleResponse<SessionFull>(res);
 }
