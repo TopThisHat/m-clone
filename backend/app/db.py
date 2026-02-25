@@ -37,7 +37,12 @@ async def close_pool() -> None:
 async def init_schema() -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute("""
+        # Advisory lock prevents concurrent hot-reload workers from deadlocking
+        # on simultaneous ALTER TABLE statements. Lock is session-scoped and
+        # released automatically when the connection returns to the pool.
+        await conn.execute("SELECT pg_advisory_lock(8675309)")
+        try:
+            await conn.execute("""
             -- Users (populated on first SSO login or dev-login)
             CREATE TABLE IF NOT EXISTS users (
                 sid          TEXT PRIMARY KEY,
@@ -164,6 +169,8 @@ async def init_schema() -> None:
             CREATE INDEX IF NOT EXISTS team_activity_team_idx
                 ON team_activity (team_id, created_at DESC);
         """)
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock(8675309)")
 
 
 def _row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
