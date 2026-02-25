@@ -45,7 +45,7 @@
 		<!-- Logo -->
 		<div class="flex items-center gap-3 mb-8 justify-center">
 			<div class="w-10 h-10 bg-gold rounded flex items-center justify-center shadow-lg shadow-gold/10">
-				<span class="text-navy font-serif font-bold">M</span>
+				<span class="text-navy font-serif font-bold">P</span>
 			</div>
 			<div>
 				<h1 class="font-serif text-gold text-xl leading-none">Playbook Research</h1>

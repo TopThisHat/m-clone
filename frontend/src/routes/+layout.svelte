@@ -39,7 +39,7 @@
 				<div
 					class="w-8 h-8 bg-gold rounded-sm flex items-center justify-center shadow-lg shadow-gold/10"
 				>
-					<span class="text-navy font-serif font-bold text-sm select-none">M</span>
+					<span class="text-navy font-serif font-bold text-sm select-none">P</span>
 				</div>
 				<div>
 					<h1 class="font-serif text-gold text-lg leading-none tracking-wide">Playbook Research</h1>

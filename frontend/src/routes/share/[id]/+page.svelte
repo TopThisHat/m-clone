@@ -23,7 +23,7 @@
 	<div class="mb-6">
 		<div class="flex items-center gap-2 mb-2">
 			<div class="w-6 h-6 bg-gold rounded-sm flex items-center justify-center">
-				<span class="text-navy font-serif font-bold text-xs">M</span>
+				<span class="text-navy font-serif font-bold text-xs">P</span>
 			</div>
 			<span class="text-xs text-gold font-medium tracking-wide uppercase">Playbook Research</span>
 			<span class="text-xs text-slate-600 ml-auto">

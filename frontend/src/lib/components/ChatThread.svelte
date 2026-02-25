@@ -188,7 +188,7 @@
 					<div
 						class="w-12 h-12 bg-gold rounded-sm flex items-center justify-center shadow-lg shadow-gold/10 mx-auto mb-4"
 					>
-						<span class="text-navy font-serif font-bold text-lg select-none">M</span>
+						<span class="text-navy font-serif font-bold text-lg select-none">P</span>
 					</div>
 					<h2 class="font-serif text-2xl text-gold tracking-wide">Playbook Research</h2>
 					<p class="text-slate-500 text-sm mt-2 font-light">Ask a research question to begin</p>
@@ -233,7 +233,7 @@
 							<div
 								class="w-6 h-6 bg-gold rounded-sm flex items-center justify-center flex-shrink-0"
 							>
-								<span class="text-navy font-serif font-bold text-xs select-none">M</span>
+								<span class="text-navy font-serif font-bold text-xs select-none">P</span>
 							</div>
 							<span class="text-xs text-gold font-medium tracking-wide">Playbook Research</span>
 
