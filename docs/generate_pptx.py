@@ -33,7 +33,7 @@ FM  = "Consolas"        # code / mono
 
 SW = Inches(13.33)
 SH = Inches(7.5)
-TOTAL = 14
+TOTAL = 16
 
 prs = Presentation()
 prs.slide_width  = SW
@@ -217,7 +217,141 @@ for i, (title, color, items) in enumerate(pillars):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SLIDE 3 — ARCHITECTURE DIAGRAM
+# SLIDE 3 — USE CASES
+# ══════════════════════════════════════════════════════════════════════════════
+sl = new_slide()
+chrome(sl, "Use Cases", "Who Uses Playbook Research & Why", GOLD)
+
+use_cases = [
+    ("Investment & Financial Research", GOLDL, "◆",
+     ["Analyze company fundamentals, earnings, and ratios via Yahoo Finance",
+      "Pull SEC 10-K / 10-Q / 8-K filings directly through EDGAR",
+      "Cross-reference web sources with financial data for conflict detection",
+      "Generate cite-backed reports ready to share with stakeholders"]),
+    ("Competitive Intelligence", SKY, "⊙",
+     ["Map competitor product lines, pricing, and market positioning",
+      "Track industry news and analyst commentary in real time",
+      "Upload competitor whitepapers or annual reports for BM25 search",
+      "Share findings to a team workspace with pinned sessions"]),
+    ("Due Diligence", VIO, "◈",
+     ["Deep-dive research across web, wiki, filings, and uploaded docs",
+      "Confidence scoring flags gaps before the report is written",
+      "Inline citations with source URLs — every claim is traceable",
+      "Audit trail preserved in session history for future reference"]),
+    ("Industry & Market Analysis", EME, "◉",
+     ["Broad multi-source synthesis: news, Wikipedia, financials, filings",
+      "Minimum 4 tool calls per query ensures coverage breadth",
+      "Numeric conflict detection flags diverging data across sources",
+      "Export as a shareable read-only report at /share/{uuid}"]),
+    ("Document Analysis", AMB, "▣",
+     ["Upload PDFs — research papers, contracts, earnings transcripts",
+      "BM25 full-text search surfaces the most relevant passages",
+      "Agent combines uploaded doc context with live web research",
+      "Useful for annotating internal reports with external validation"]),
+    ("Team Knowledge Building", TEA, "◎",
+     ["Share sessions to team workspaces; members view at /share/{id}",
+      "Threaded comments with @mentions for async collaboration",
+      "Pin the most valuable sessions to the top of the team dashboard",
+      "Activity feed keeps everyone aligned on what's been researched"]),
+]
+
+for i, (title, color, icon, items) in enumerate(use_cases):
+    col, row = i % 3, i // 3
+    x = 0.38 + col * 4.3
+    y = 1.02 + row * 3.04
+    w, h = 4.18, 2.92
+    box(sl, x, y, w, h, S1, lc=BORD, lw=Pt(0.5))
+    box(sl, x, y, 0.045, h, color)
+    # Icon badge
+    box(sl, x + 0.14, y + 0.1, 0.44, 0.44, color)
+    t(sl, icon, x + 0.14, y + 0.1, 0.44, 0.44,
+      color=BG, size=14, bold=True, align=PP_ALIGN.CENTER)
+    t(sl, title, x + 0.66, y + 0.16, w - 0.8, 0.32,
+      color=color, size=11, bold=True)
+    hline(sl, x + 0.14, y + 0.6, w - 0.22, color=BORD, width=Pt(0.4))
+    for j, item in enumerate(items):
+        t(sl, item, x + 0.18, y + 0.68 + j * 0.5, w - 0.3, 0.46,
+          color=WT if j % 2 == 0 else T2, size=9.5)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SLIDE 4 — HOW TO USE
+# ══════════════════════════════════════════════════════════════════════════════
+sl = new_slide()
+chrome(sl, "How to Use Playbook Research", "User Guide · End-to-End Workflow", SKY)
+
+# ── Top: linear user journey (8 steps across the width)
+steps = [
+    ("Log In",       SKY,  "Sign in via OIDC SSO or use\ndev-bypass locally"),
+    ("Ask",          GOLDL,"Type your research question\nin the chat input"),
+    ("Configure",    AMB,  "Choose model (GPT-4o / Claude)\nand depth (fast · balanced · deep)"),
+    ("Upload",       VIO,  "Optionally attach PDFs —\nearnings reports, whitepapers"),
+    ("Watch",        EME,  "See tool calls + reasoning\nstream live as SSE events"),
+    ("Review",       GOLDL,"Read the final report with\ninline citations and sources"),
+    ("Share",        SKY,  "Share to your team or make\npublic via /share/{uuid}"),
+    ("Collaborate",  TEA,  "Comment, @mention teammates,\npin to team workspace"),
+]
+
+step_w = 1.55
+for i, (label, color, desc) in enumerate(steps):
+    x = 0.38 + i * 1.57
+    # Connector
+    if i < len(steps) - 1:
+        box(sl, x + step_w, 1.47, 0.02, 0.18, T3)
+    # Number badge
+    box(sl, x, 1.3, step_w, 0.52, color)
+    t(sl, f"{i + 1}  {label}", x + 0.06, 1.32, step_w - 0.1, 0.48,
+      color=BG, size=10, bold=True, font=FT)
+    # Description
+    box(sl, x, 1.85, step_w, 0.92, S1, lc=color, lw=Pt(0.8))
+    t(sl, desc, x + 0.08, 1.92, step_w - 0.12, 0.82,
+      color=WT, size=9, wrap=True)
+
+hline(sl, 0.38, 2.9, 12.57, color=BORD)
+
+# ── Bottom: three detailed user scenarios
+scenarios = [
+    ("Analyst: Solo Research Session", GOLDL, [
+        ('Enter query', "e.g. 'Summarise Tesla Q4 2024 earnings and analyst reactions'"),
+        ('Set depth',   "Choose 'deep' for maximum source coverage (6+ tool calls)"),
+        ('Upload docs', "Drop in the earnings PDF — agent will BM25-search it alongside web"),
+        ('Stream',      "Watch web_search, get_financials, wiki_lookup fire in the swimlane"),
+        ('Export',      "Copy the markdown report or share the permanent /share/{uuid} link"),
+    ]),
+    ("Team Lead: Collaborative Research", SKY, [
+        ('Create team', "Settings → Teams → Create → invite colleagues by email"),
+        ('Research',    "Run the session as usual; the report is saved automatically"),
+        ('Share',       "Session card menu → Share to Team → select your team"),
+        ('Notify',      "Team members see it in the team dashboard and activity feed"),
+        ('Discuss',     "@mention teammates in comments; they get an inbox notification"),
+    ]),
+    ("Developer: Async / Webhook Integration", TEA, [
+        ('POST job',    "POST /api/research/async  {query, webhook_url, model, depth}"),
+        ('Poll',        "GET /api/research/jobs/{id}  →  {status: queued|running|done}"),
+        ('Receive',     "On completion your webhook_url receives the full result_markdown"),
+        ('Embed',       "Use GET /api/share/{id} to fetch the structured JSON for your app"),
+        ('Automate',    "Chain queries, set schedules, or trigger on upstream data events"),
+    ]),
+]
+
+for i, (title, color, steps_) in enumerate(scenarios):
+    x = 0.38 + i * 4.32
+    w, h = 4.18, 3.95
+    box(sl, x, 3.05, w, h, S1, lc=BORD, lw=Pt(0.5))
+    box(sl, x, 3.05, 0.045, h, color)
+    t(sl, title, x + 0.14, 3.12, w - 0.2, 0.3, color=color, size=11, bold=True)
+    hline(sl, x + 0.14, 3.46, w - 0.2, color=BORD, width=Pt(0.4))
+    for j, (action, detail) in enumerate(steps_):
+        y = 3.54 + j * 0.7
+        box(sl, x + 0.14, y, 0.22, 0.22, color)
+        t(sl, str(j + 1), x + 0.14, y, 0.22, 0.22,
+          color=BG, size=8, bold=True, align=PP_ALIGN.CENTER)
+        t(sl, action, x + 0.42, y, 0.85, 0.22, color=color, size=9, bold=True)
+        t(sl, detail,  x + 0.42, y + 0.24, w - 0.6, 0.38, color=T2, size=8.8, wrap=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SLIDE 5 — ARCHITECTURE DIAGRAM
 # ══════════════════════════════════════════════════════════════════════════════
 sl = new_slide()
 chrome(sl, "System Architecture", "Overview", GOLD)
