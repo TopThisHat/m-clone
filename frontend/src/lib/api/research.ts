@@ -9,9 +9,10 @@ import {
 	researchPhase,
 	chartData,
 	conflictWarnings,
-	memoryContext
+	memoryContext,
+	pendingClarification
 } from '$lib/stores/reportStore';
-import type { ChartPayload, ChatSource } from '$lib/stores/reportStore';
+import type { ChartPayload, ChatSource, ClarificationData } from '$lib/stores/reportStore';
 import { activeSessionId, sessionList } from '$lib/stores/sessionStore';
 import { createSession, updateSession, listSessions } from '$lib/api/sessions';
 import type { ToolIconType } from '$lib/stores/traceStore';
@@ -263,9 +264,54 @@ function handleSSEEvent(
 			break;
 		}
 
+		case 'chart_trace': {
+			const ticker = data.ticker as string;
+			const payload = data.payload as Record<string, unknown>;
+			if (payload) {
+				traceStore.addStep({
+					id: `chart_${ticker}_${Date.now()}`,
+					toolName: 'chart_data',
+					toolLabel: ticker || 'Chart',
+					icon: 'chart',
+					status: 'done',
+					chart: payload
+				});
+			}
+			break;
+		}
+
 		case 'conflict_warning': {
 			const warnings = data.warnings as string[];
 			if (warnings?.length) conflictWarnings.set(warnings);
+			break;
+		}
+
+		case 'clarification_needed': {
+			const clarif: ClarificationData = {
+				clarification_id: data.clarification_id as string,
+				question: data.question as string,
+				context: (data.context as string | null) ?? null,
+				options: (data.options as string[]) ?? [],
+				answered: false
+			};
+			chatMessages.update((msgs) =>
+				msgs.map((m) => (m.id === asstMsgId ? { ...m, clarification: clarif } : m))
+			);
+			pendingClarification.set(clarif);
+			researchPhase.set(null);
+			break;
+		}
+
+		case 'clarification_answered': {
+			const answer = data.answer as string;
+			chatMessages.update((msgs) =>
+				msgs.map((m) => {
+					if (m.id !== asstMsgId || !m.clarification) return m;
+					return { ...m, clarification: { ...m.clarification, answer, answered: true } };
+				})
+			);
+			pendingClarification.set(null);
+			researchPhase.set('planning');
 			break;
 		}
 
@@ -281,14 +327,13 @@ function handleSSEEvent(
 
 		case 'final_report': {
 			const md = data.markdown as string;
-			const suggestions = generateSuggestions(md);
 			const warnings = (data.conflict_warnings as string[]) || get(conflictWarnings);
 			const sources = (data.sources as ChatSource[]) || [];
 
 			chatMessages.update((msgs) =>
 				msgs.map((m) =>
 					m.id === asstMsgId
-						? { ...m, content: md, isStreaming: false, suggestions, conflictWarnings: warnings, sources }
+						? { ...m, content: md, isStreaming: false, conflictWarnings: warnings, sources }
 						: m
 				)
 			);
@@ -303,6 +348,20 @@ function handleSSEEvent(
 				messageHistory.set(data.messages as unknown[]);
 			}
 			finalReportData = data;
+			break;
+		}
+
+		case 'suggestions': {
+			const suggestions = data.suggestions as string[];
+			if (suggestions?.length) {
+				chatMessages.update((msgs) => {
+					const last = msgs[msgs.length - 1];
+					if (last?.role === 'assistant') {
+						return [...msgs.slice(0, -1), { ...last, suggestions }];
+					}
+					return msgs;
+				});
+			}
 			break;
 		}
 
@@ -324,4 +383,16 @@ function handleSSEEvent(
 export function cancelResearch(): void {
 	controller?.abort();
 	isStreaming.set(false);
+}
+
+export async function submitClarification(
+	clarificationId: string,
+	answer: string
+): Promise<void> {
+	const res = await fetch(`/api/research/clarify/${clarificationId}`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ answer })
+	});
+	if (!res.ok) throw new Error(`Failed to submit clarification: ${res.status}`);
 }

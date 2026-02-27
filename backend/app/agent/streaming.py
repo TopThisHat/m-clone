@@ -10,6 +10,7 @@ from pydantic_ai.messages import ModelMessage, TextPart, TextPartDelta, ToolCall
 from pydantic_graph import End
 
 from app.agent.agent import research_agent
+from app.agent.clarification import clarification_store
 from app.dependencies import AgentDeps
 
 _messages_adapter = TypeAdapter(list[ModelMessage])
@@ -43,6 +44,7 @@ TOOL_METADATA: dict[str, dict[str, str]] = {
     "create_research_plan": {"label": "Research Plan", "icon": "plan"},
     "evaluate_research_completeness": {"label": "Evaluation", "icon": "evaluate"},
     "sec_edgar_search": {"label": "SEC Filing", "icon": "document"},
+    "ask_clarification": {"label": "Clarification Needed", "icon": "tool"},
 }
 
 
@@ -180,8 +182,37 @@ async def stream_research(
 
                 # ── Tool execution ────────────────────────────────────────────
                 elif Agent.is_call_tools_node(node):
-                    async with node.stream(agent_run.ctx) as tools_stream:
-                        async for event in tools_stream:
+                    # Run tool stream in a background task so we can simultaneously drain
+                    # tool_sse_queue. This is the bridge for tool-level clarifications
+                    # (clarify_within_tool).
+                    events_queue: asyncio.Queue = asyncio.Queue()
+
+                    async def _run_tools_node():
+                        async with node.stream(agent_run.ctx) as tools_stream:
+                            async for event in tools_stream:
+                                await events_queue.put(event)
+                        await events_queue.put(None)  # sentinel
+
+                    tools_task = asyncio.create_task(_run_tools_node())
+
+                    try:
+                        while True:
+                            # Drain any mid-tool SSE signals (from clarify_within_tool calls)
+                            while not deps.tool_sse_queue.empty():
+                                yield deps.tool_sse_queue.get_nowait()
+
+                            # Poll for next tool event with a short timeout so we keep draining
+                            try:
+                                event = await asyncio.wait_for(events_queue.get(), timeout=0.1)
+                            except asyncio.TimeoutError:
+                                continue  # loop back to drain sse_queue again
+
+                            if event is None:
+                                # Tools stream finished — final SSE drain
+                                while not deps.tool_sse_queue.empty():
+                                    yield deps.tool_sse_queue.get_nowait()
+                                break
+
                             if isinstance(event, FunctionToolCallEvent):
                                 meta = TOOL_METADATA.get(
                                     event.part.tool_name,
@@ -195,6 +226,30 @@ async def stream_research(
                                     )
                                 except Exception:
                                     args = str(event.part.args)
+
+                                # Agent-level clarification: register Future before tool body runs
+                                if event.part.tool_name == "ask_clarification":
+                                    clarification_id = event.tool_call_id
+                                    question = args.get("question", "") if isinstance(args, dict) else str(args)
+                                    context = args.get("context") if isinstance(args, dict) else None
+                                    options = args.get("options") or []
+
+                                    clarification_store.register(
+                                        clarification_id=clarification_id,
+                                        question=question,
+                                        context=context,
+                                        options=options,
+                                    )
+                                    deps.pending_clarification_id = clarification_id
+                                    deps.active_clarification_ids.append(clarification_id)
+
+                                    yield _sse("clarification_needed", {
+                                        "clarification_id": clarification_id,
+                                        "question": question,
+                                        "context": context,
+                                        "options": options,
+                                    })
+                                    # fall through — also emit tool_executing for trace panel
 
                                 # Mark get_financials calls so we can emit chart_data
                                 if event.part.tool_name == "get_financials":
@@ -211,6 +266,16 @@ async def stream_research(
                             elif isinstance(event, FunctionToolResultEvent):
                                 content = str(event.result.content)
                                 preview = content[:400] + "..." if len(content) > 400 else content
+
+                                # Emit clarification_answered for agent-level path
+                                # (detected by "User clarification:" prefix in tool return value)
+                                if content.startswith("User clarification:"):
+                                    answer_text = content.removeprefix("User clarification: ")
+                                    yield _sse("clarification_answered", {
+                                        "clarification_id": event.tool_call_id,
+                                        "answer": answer_text,
+                                    })
+
                                 yield _sse("tool_result", {
                                     "call_id": event.tool_call_id,
                                     "preview": preview,
@@ -219,7 +284,18 @@ async def stream_research(
                                 # Emit chart_data if this was a get_financials call
                                 if event.tool_call_id in _pending_chart_call_ids and deps.chart_payloads:
                                     _pending_chart_call_ids.discard(event.tool_call_id)
-                                    yield _sse("chart_data", {"chart": deps.chart_payloads[-1]})
+                                    chart_payload = deps.chart_payloads[-1]
+                                    yield _sse("chart_data", {"chart": chart_payload})
+                                    # Also emit chart_trace so the chart is saved in trace_steps
+                                    ticker = chart_payload.get("ticker", "") if isinstance(chart_payload, dict) else ""
+                                    yield _sse("chart_trace", {"ticker": ticker, "payload": chart_payload})
+
+                            # Drain SSE queue after each processed event
+                            while not deps.tool_sse_queue.empty():
+                                yield deps.tool_sse_queue.get_nowait()
+
+                    finally:
+                        tools_task.cancel()
 
                 # ── End node ──────────────────────────────────────────────────
                 elif isinstance(node, End):
@@ -297,6 +373,16 @@ async def stream_research(
                 "sources": sources,
             })
 
+            # Emit AI-generated follow-up suggestions
+            try:
+                from app.agent.memory import generate_suggestions
+                original_query = query.removeprefix("[FOLLOW-UP] ")
+                suggestions = await generate_suggestions(original_query, final_text)
+                if suggestions:
+                    yield _sse("suggestions", {"suggestions": suggestions})
+            except Exception:
+                pass
+
             # Trigger memory extraction non-blocking
             if session_id and final_text:
                 try:
@@ -308,5 +394,10 @@ async def stream_research(
 
     except Exception as exc:
         yield _sse("error", {"message": str(exc)})
+    finally:
+        # Cancel any outstanding clarifications for this session so their Futures resolve
+        # and the awaiting tool coroutines can exit cleanly (handles stream disconnect).
+        if deps.active_clarification_ids:
+            clarification_store.cancel_session(deps.active_clarification_ids, reason="stream_closed")
 
     yield _sse("done", {"message": "Research complete"})

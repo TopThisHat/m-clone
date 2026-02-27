@@ -12,8 +12,10 @@
 	} from '$lib/stores/reportStore';
 	import { startResearch, retryResearch } from '$lib/api/research';
 	import ChartCard from './ChartCard.svelte';
+	import ClarificationCard from './ClarificationCard.svelte';
 	import { sourcePreview } from './SourcePreview.svelte';
 	import { traceStore } from '$lib/stores/traceStore';
+	import { pendingClarification } from '$lib/stores/reportStore';
 
 	let threadEl = $state<HTMLDivElement | undefined>();
 	let isAtBottom = true;
@@ -238,7 +240,9 @@
 							<span class="text-xs text-gold font-medium tracking-wide">Playbook Research</span>
 
 							{#if msg.isStreaming}
-								{#if $researchPhase}
+								{#if $pendingClarification && msg.clarification && !msg.clarification.answered}
+									<span class="text-xs text-gold/70 animate-pulse">Waiting for your input…</span>
+								{:else if $researchPhase}
 									<span class="text-xs text-slate-500 font-light">
 										{phaseLabel[$researchPhase] ?? ''}
 									</span>
@@ -253,6 +257,11 @@
 								</span>
 							{/if}
 						</div>
+
+						<!-- Clarification card (renders when agent needs user input) -->
+						{#if msg.clarification}
+							<ClarificationCard clarification={msg.clarification} />
+						{/if}
 
 						<!-- Conflict warning banner -->
 						{#if msg.conflictWarnings?.length}

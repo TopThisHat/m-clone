@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 
 import wikipediaapi
@@ -22,6 +23,13 @@ class AgentDeps:
     source_claims: dict[str, list[str]] = field(default_factory=dict)
     memory_context: str = ""
     user_rules: list[str] = field(default_factory=list)
+    # Clarification fields
+    # Bridge for agent-level ask_clarification (set by FunctionToolCallEvent handler)
+    pending_clarification_id: str | None = None
+    # Bridge for tool-level clarifications (tools put SSE strings here; streaming layer drains it)
+    tool_sse_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    # All clarification IDs created in this session — used for cleanup on stream disconnect
+    active_clarification_ids: list = field(default_factory=list)
 
 
 _DEPTH_MAP = {"fast": "simple", "balanced": "standard", "deep": "deep"}

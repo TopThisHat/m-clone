@@ -8,6 +8,7 @@ from pydantic_ai import RunContext
 from rank_bm25 import BM25Okapi
 
 from app.agent.agent import research_agent
+from app.agent.clarification import clarification_store
 from app.dependencies import AgentDeps
 
 FINANCIAL_DOMAINS = [
@@ -18,6 +19,46 @@ NOISE_DOMAINS = ["pinterest.com", "quora.com"]
 
 # Matches numeric financial claims: $380B, 12.5%, $1,234
 _CLAIM_PATTERN = re.compile(r'\$[\d,]+\.?\d*[BMTKbmtk]?|\d+\.?\d*%')
+
+
+@research_agent.tool
+async def ask_clarification(
+    ctx: RunContext[AgentDeps],
+    question: str,
+    context: str | None = None,
+    options: list[str] | None = None,
+) -> str:
+    """Ask the user a clarifying question before beginning research.
+
+    Use ONLY when the top-level query is genuinely ambiguous in a way that changes
+    the entire research direction. Call at most ONCE, as the very first action —
+    before create_research_plan. Never call mid-research.
+
+    The streaming layer intercepts this call via FunctionToolCallEvent and emits
+    the clarification_needed SSE before this function body even runs.
+
+    Args:
+        question: The clarifying question to ask the user.
+        context: Optional additional context or instructions for the user.
+        options: Optional list of suggested answer choices.
+    """
+    clarification_id = ctx.deps.pending_clarification_id
+    if not clarification_id:
+        return "No clarification available in this context — proceed with best assumptions."
+
+    ctx.deps.pending_clarification_id = None  # consume it
+
+    pending = clarification_store.get_pending(clarification_id)
+    if pending is None:
+        return "Clarification request not found — proceed with best assumptions."
+
+    answer = await pending.future
+
+    if answer.startswith("__CANCELLED__:"):
+        reason = answer.split(":", 1)[1]
+        return f"Clarification timed out ({reason}) — proceed with best assumptions."
+
+    return f"User clarification: {answer}"
 
 
 @research_agent.tool

@@ -10,6 +10,15 @@ export interface ChatSource {
 	domain: string;
 }
 
+export interface ClarificationData {
+	clarification_id: string;
+	question: string;
+	context: string | null;
+	options: string[];
+	answer?: string;
+	answered: boolean;
+}
+
 export interface ChatMessage {
 	id: string;
 	role: 'user' | 'assistant';
@@ -18,6 +27,7 @@ export interface ChatMessage {
 	suggestions?: string[];
 	conflictWarnings?: string[];
 	sources?: ChatSource[];
+	clarification?: ClarificationData;
 }
 
 export interface ChartPayload {
@@ -43,6 +53,7 @@ export const messageHistory = writable<unknown[] | null>(null);
 export const chartData = writable<ChartPayload[]>([]);
 export const conflictWarnings = writable<string[]>([]);
 export const memoryContext = writable<string>('');
+export const pendingClarification = writable<ClarificationData | null>(null);
 
 export const reportHtml = derived(reportMarkdown, ($md) =>
 	$md ? (marked.parse($md) as string) : ''

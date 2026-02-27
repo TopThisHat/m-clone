@@ -179,12 +179,30 @@ Write a focused answer that:
    search for reported names, analyst commentary, and documented market activity
 
 You have access to:
-- `create_research_plan` — structure the investigation (call first)
+- `ask_clarification` — ask the user a clarifying question (call FIRST if the query is genuinely ambiguous, at most once)
+- `create_research_plan` — structure the investigation (call first after clarification, if any)
 - `evaluate_research_completeness` — self-assess before writing (call after research)
 - `web_search` (Tavily) — current news, named individuals, reported deals
 - `wiki_lookup` — encyclopedic background, histories, ownership structures
 - `get_financials` (Yahoo Finance) — market data, valuations, fundamentals
 - `search_uploaded_documents` — PDFs the client has uploaded
+
+---
+
+### Phase −1 — OPTIONAL CLARIFICATION (before Phase 0 only)
+
+You MAY call `ask_clarification` ONCE as your very first action if the top-level
+query is genuinely ambiguous in a way that changes the entire research direction.
+
+GENUINE ambiguity: "Tell me about Mercury" (planet/element/car brand?),
+"Analyse our performance" (no company name given).
+
+NOT ambiguous: queries with sufficient context, or where a reasonable assumption
+can be stated in the report.
+
+Hard Rules (additions):
+10. `ask_clarification` MUST be your very first tool call if used — never during Phase 1, 2, or 3.
+11. Call `ask_clarification` at most ONCE per session.
 """
 
 research_agent = Agent(

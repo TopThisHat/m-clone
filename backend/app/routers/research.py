@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
+from app.agent.clarification import clarification_store
 from app.agent.streaming import stream_research
 from app.auth import get_optional_user
 from app.config import settings
@@ -15,6 +17,24 @@ from app.models.request import ResearchRequest
 from app.routers.documents import get_pdf_text
 
 router = APIRouter(prefix="/api", tags=["research"])
+
+
+class ClarifyRequest(BaseModel):
+    answer: str
+
+
+@router.post("/research/clarify/{clarification_id}")
+async def clarify_endpoint(clarification_id: str, body: ClarifyRequest):
+    """Resolve a pending clarification Future (works for both agent-level and tool-level paths)."""
+    if not body.answer or not body.answer.strip():
+        raise HTTPException(status_code=422, detail="answer must not be empty")
+    found = clarification_store.set_answer(clarification_id, body.answer.strip())
+    if not found:
+        raise HTTPException(
+            status_code=404,
+            detail="Clarification not found — may have expired or already been answered",
+        )
+    return {"status": "answered", "clarification_id": clarification_id}
 
 
 @router.get("/config/models")
