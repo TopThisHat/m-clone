@@ -77,6 +77,38 @@ async def extract_memories(session_id: str, query: str, report: str) -> None:
         logger.warning("extract_memories DB write failed: %s", exc)
 
 
+async def generate_suggestions(query: str, report: str) -> list[str]:
+    """
+    Call GPT-4o-mini to generate 3 follow-up research questions based on the
+    query and completed report. Returns a list of strings (empty on error).
+    """
+    try:
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        prompt = (
+            "Given this research query and report, generate 3 concise follow-up research questions "
+            "the user might want to ask next. Return a JSON array of strings, no other text.\n\n"
+            f"Query: {query}\n\nReport:\n{report[:4000]}"
+        )
+        resp = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+            temperature=0.7,
+        )
+        raw = (resp.choices[0].message.content or "[]").strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        result = json.loads(raw)
+        if isinstance(result, list):
+            return [str(s) for s in result[:3]]
+        return []
+    except Exception as exc:
+        logger.warning("generate_suggestions failed: %s", exc)
+        return []
+
+
 async def retrieve_memories(query: str, limit: int = 5) -> str:
     """
     Fetch rows from agent_memory where query keywords overlap entity names.

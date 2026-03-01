@@ -9,12 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import close_pool, init_schema
+from app import scheduler
 from app.routers import documents, research, sessions, usage
 from app.routers.sessions import router_public
 from app.routers.auth import router as auth_router
 from app.routers.teams import router as teams_router
 from app.routers.comments import router as comments_router
 from app.routers.notifications import router as notifications_router
+from app.routers.monitors import router as monitors_router
 
 app = FastAPI(
     title="m-clone Research Agent",
@@ -39,16 +41,19 @@ app.include_router(usage.router)
 app.include_router(teams_router)
 app.include_router(comments_router)
 app.include_router(notifications_router)
+app.include_router(monitors_router)
 
 
 @app.on_event("startup")
 async def startup():
-    if settings.database_url:
+    if settings.database_url or settings.aws_secret_name:
         await init_schema()
+    scheduler.start()
 
 
 @app.on_event("shutdown")
 async def shutdown():
+    scheduler.stop()
     await close_pool()
 
 

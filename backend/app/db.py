@@ -261,7 +261,29 @@ async def init_schema() -> None:
             );
             CREATE INDEX IF NOT EXISTS team_activity_team_idx
                 ON team_activity (team_id, created_at DESC);
+
+            -- Scheduled monitors
+            CREATE TABLE IF NOT EXISTS monitors (
+                id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                owner_sid   TEXT NOT NULL,
+                label       TEXT NOT NULL,
+                query       TEXT NOT NULL,
+                frequency   TEXT NOT NULL DEFAULT 'daily',
+                last_run_at TIMESTAMPTZ,
+                next_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                created_at  TIMESTAMPTZ DEFAULT NOW()
+            );
         """)
+            # Full-text search on sessions (title + query)
+            await conn.execute("""
+                ALTER TABLE sessions ADD COLUMN IF NOT EXISTS search_vec tsvector
+                    GENERATED ALWAYS AS (
+                        to_tsvector('english', coalesce(title,'') || ' ' || coalesce(query,''))
+                    ) STORED
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS sessions_search_idx ON sessions USING GIN(search_vec)
+            """)
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")
 
@@ -289,24 +311,35 @@ def _row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     return d
 
 
-async def db_list_sessions(owner_sid: str | None = None) -> list[dict[str, Any]]:
+async def db_list_sessions(owner_sid: str | None = None, search: str | None = None) -> list[dict[str, Any]]:
     async with _acquire() as conn:
-        if owner_sid:
+        select = (
+            "SELECT id, title, query, created_at, updated_at, "
+            "COALESCE(is_public, FALSE) AS is_public, COALESCE(usage_tokens, 0) AS usage_tokens, "
+            "owner_sid, COALESCE(visibility, 'private') AS visibility "
+            "FROM sessions "
+        )
+        if owner_sid and search:
             rows = await conn.fetch(
-                "SELECT id, title, query, created_at, updated_at, "
-                "COALESCE(is_public, FALSE) AS is_public, COALESCE(usage_tokens, 0) AS usage_tokens, "
-                "owner_sid, COALESCE(visibility, 'private') AS visibility "
-                "FROM sessions WHERE owner_sid = $1 OR visibility = 'public' "
+                select + "WHERE (owner_sid = $1 OR visibility = 'public') "
+                "AND search_vec @@ plainto_tsquery('english', $2) "
+                "ORDER BY updated_at DESC",
+                owner_sid, search,
+            )
+        elif owner_sid:
+            rows = await conn.fetch(
+                select + "WHERE owner_sid = $1 OR visibility = 'public' "
                 "ORDER BY updated_at DESC",
                 owner_sid,
             )
-        else:
+        elif search:
             rows = await conn.fetch(
-                "SELECT id, title, query, created_at, updated_at, "
-                "COALESCE(is_public, FALSE) AS is_public, COALESCE(usage_tokens, 0) AS usage_tokens, "
-                "owner_sid, COALESCE(visibility, 'private') AS visibility "
-                "FROM sessions ORDER BY updated_at DESC"
+                select + "WHERE search_vec @@ plainto_tsquery('english', $1) "
+                "ORDER BY updated_at DESC",
+                search,
             )
+        else:
+            rows = await conn.fetch(select + "ORDER BY updated_at DESC")
     return [_row_to_dict(r) for r in rows]
 
 
@@ -857,3 +890,64 @@ async def db_list_team_activity(team_id: str, limit: int = 50, offset: int = 0) 
             d["payload"] = json.loads(d["payload"])
         result.append(d)
     return result
+
+
+# ── Monitors ───────────────────────────────────────────────────────────────────
+
+def _monitor_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
+    d = dict(row)
+    if "id" in d and d["id"] is not None:
+        d["id"] = str(d["id"])
+    for ts in ("last_run_at", "next_run_at", "created_at"):
+        if ts in d and d[ts] is not None:
+            d[ts] = d[ts].isoformat()
+    return d
+
+
+async def db_create_monitor(owner_sid: str, label: str, query: str, frequency: str) -> dict[str, Any]:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO monitors (owner_sid, label, query, frequency)
+            VALUES ($1, $2, $3, $4)
+            RETURNING *
+            """,
+            owner_sid, label, query, frequency,
+        )
+    return _monitor_row_to_dict(row)
+
+
+async def db_list_monitors(owner_sid: str) -> list[dict[str, Any]]:
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM monitors WHERE owner_sid = $1 ORDER BY created_at DESC",
+            owner_sid,
+        )
+    return [_monitor_row_to_dict(r) for r in rows]
+
+
+async def db_delete_monitor(monitor_id: str, owner_sid: str) -> bool:
+    async with _acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM monitors WHERE id = $1::uuid AND owner_sid = $2",
+            monitor_id, owner_sid,
+        )
+    return result.endswith("1")
+
+
+async def db_get_due_monitors() -> list[dict[str, Any]]:
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM monitors WHERE next_run_at <= NOW() ORDER BY next_run_at ASC"
+        )
+    return [_monitor_row_to_dict(r) for r in rows]
+
+
+async def db_update_monitor_run(monitor_id: str, frequency: str) -> None:
+    interval = "1 day" if frequency == "daily" else "7 days"
+    async with _acquire() as conn:
+        await conn.execute(
+            f"UPDATE monitors SET last_run_at = NOW(), next_run_at = NOW() + INTERVAL '{interval}' "
+            "WHERE id = $1::uuid",
+            monitor_id,
+        )

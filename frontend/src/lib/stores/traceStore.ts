@@ -11,6 +11,7 @@ export interface TraceStep {
 	status: TraceStepStatus;
 	args?: Record<string, unknown>;
 	preview?: string;
+	chart?: Record<string, unknown>;
 	timestamp: number;
 }
 

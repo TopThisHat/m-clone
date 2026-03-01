@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -31,10 +31,10 @@ def _no_db() -> HTTPException:
 
 
 @router.get("", response_model=list[SessionSummary])
-async def list_sessions(user=Depends(get_optional_user)):
+async def list_sessions(q: str | None = Query(None), user=Depends(get_optional_user)):
     try:
         owner_sid = user["sub"] if user else None
-        return await db_list_sessions(owner_sid=owner_sid)
+        return await db_list_sessions(owner_sid=owner_sid, search=q if q else None)
     except DatabaseNotConfigured:
         return []
 

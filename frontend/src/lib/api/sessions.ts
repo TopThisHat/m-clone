@@ -37,8 +37,9 @@ async function handleResponse<T>(res: Response): Promise<T> {
 	return res.json() as Promise<T>;
 }
 
-export async function listSessions(): Promise<SessionSummary[]> {
-	const res = await fetch('/api/sessions');
+export async function listSessions(search?: string): Promise<SessionSummary[]> {
+	const url = search ? `/api/sessions?q=${encodeURIComponent(search)}` : '/api/sessions';
+	const res = await fetch(url);
 	return handleResponse<SessionSummary[]>(res);
 }
 

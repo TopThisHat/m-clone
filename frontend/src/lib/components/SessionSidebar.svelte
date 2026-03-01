@@ -1,23 +1,30 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { traceStore } from '$lib/stores/traceStore';
-	import { chatMessages, reportMarkdown, errorMessage, messageHistory } from '$lib/stores/reportStore';
+	import { chatMessages, reportMarkdown, errorMessage, messageHistory, chartData } from '$lib/stores/reportStore';
 	import { activeSessionId, sessionList, newResearch } from '$lib/stores/sessionStore';
 	import { listSessions, getSession, deleteSession, updateSession } from '$lib/api/sessions';
 	import { isStreaming } from '$lib/stores/reportStore';
 	import type { TraceStep } from '$lib/stores/traceStore';
+	import type { ChartPayload } from '$lib/stores/reportStore';
 
 	let { onclose }: { onclose?: () => void } = $props();
 
 	// ── Search ────────────────────────────────────────────────────────────────
 	let searchQuery = $state('');
-	const filteredSessions = $derived(
-		searchQuery.trim()
-			? $sessionList.filter((s) =>
-					s.title.toLowerCase().includes(searchQuery.toLowerCase())
-				)
-			: $sessionList
-	);
+	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+	$effect(() => {
+		const q = searchQuery;
+		if (searchDebounce) clearTimeout(searchDebounce);
+		searchDebounce = setTimeout(async () => {
+			try {
+				sessionList.set(await listSessions(q.trim() || undefined));
+			} catch {
+				// ignore
+			}
+		}, 300);
+	});
 
 	// ── Rename ────────────────────────────────────────────────────────────────
 	let renamingId = $state<string | null>(null);
@@ -81,15 +88,21 @@
 		if ($isStreaming) return;
 		try {
 			const s = await getSession(id);
+			const steps = s.trace_steps as TraceStep[];
 			reportMarkdown.set(s.report_markdown);
 			messageHistory.set(s.message_history);
-			traceStore.restore(s.trace_steps as TraceStep[]);
+			traceStore.restore(steps);
 			errorMessage.set(null);
 			activeSessionId.set(id);
 			chatMessages.set([
 				{ id: crypto.randomUUID(), role: 'user', content: s.query },
 				{ id: crypto.randomUUID(), role: 'assistant', content: s.report_markdown }
 			]);
+			// Restore persisted charts from trace steps
+			const charts = steps
+				.filter((step) => step.chart)
+				.map((step) => step.chart as ChartPayload);
+			chartData.set(charts);
 		} catch {
 			// silently ignore
 		}
@@ -146,7 +159,7 @@
 
 	<!-- Session list -->
 	<div class="flex-1 overflow-y-auto px-2 pb-4 space-y-0.5">
-		{#each filteredSessions as session (session.id)}
+		{#each $sessionList as session (session.id)}
 			{@const isActive = $activeSessionId === session.id}
 			<div
 				role="button"
@@ -196,10 +209,20 @@
 			</div>
 		{/each}
 
-		{#if filteredSessions.length === 0}
+		{#if $sessionList.length === 0}
 			<p class="text-[11px] text-slate-700 px-3 pt-4 text-center leading-relaxed">
 				{searchQuery ? 'No matching sessions.' : 'No saved sessions yet.\nSubmit a query to begin.'}
 			</p>
 		{/if}
+	</div>
+
+	<!-- Monitors nav link -->
+	<div class="px-3 py-2 border-t border-navy-700 flex-shrink-0">
+		<a
+			href="/monitors"
+			class="block px-3 py-2 text-xs text-slate-500 hover:text-gold transition-colors rounded hover:bg-navy-800/50"
+		>
+			Monitors
+		</a>
 	</div>
 </aside>
