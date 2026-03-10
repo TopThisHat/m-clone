@@ -17,6 +17,10 @@ from app.routers.teams import router as teams_router
 from app.routers.comments import router as comments_router
 from app.routers.notifications import router as notifications_router
 from app.routers.monitors import router as monitors_router
+from app.routers.campaigns import router as campaigns_router
+from app.routers.entities import router as entities_router
+from app.routers.attributes import router as attributes_router
+from app.routers.jobs import router as jobs_router
 
 app = FastAPI(
     title="m-clone Research Agent",
@@ -42,6 +46,10 @@ app.include_router(teams_router)
 app.include_router(comments_router)
 app.include_router(notifications_router)
 app.include_router(monitors_router)
+app.include_router(campaigns_router)
+app.include_router(entities_router)
+app.include_router(attributes_router)
+app.include_router(jobs_router)
 
 
 @app.on_event("startup")
@@ -49,6 +57,17 @@ async def startup():
     if settings.database_url or settings.aws_secret_name:
         await init_schema()
     scheduler.start()
+    # Initialize DBOS for start_workflow capability (no executor — worker handles execution)
+    try:
+        import os
+        from dbos import DBOS, DBOSConfig
+        db_url = settings.database_url or os.environ.get("DATABASE_URL", "")
+        if db_url:
+            DBOS(config=DBOSConfig(name="scout-api", database_url=db_url))
+    except ImportError:
+        pass  # DBOS not installed; job enqueueing will warn but not fail
+    except Exception:
+        pass  # DBOS config errors are non-fatal for API startup
 
 
 @app.on_event("shutdown")

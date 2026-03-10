@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
+
+from app.auth import get_current_user
+from app.db import (
+    DatabaseNotConfigured,
+    db_create_validation_job,
+    db_get_campaign,
+    db_get_knowledge_for_campaign,
+    db_get_scores,
+    db_get_validation_job,
+    db_list_results,
+    db_list_validation_jobs,
+)
+from app.models.campaign import JobCreate, JobOut, KnowledgeOut, ResultOut, ScoreOut
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["jobs"])
+
+
+def _no_db() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="A database connection is required for this action. Please configure DATABASE_URL.",
+    )
+
+
+async def _get_owned_campaign(campaign_id: str, user_sid: str):
+    try:
+        campaign = await db_get_campaign(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign["owner_sid"] != user_sid:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return campaign
+
+
+@router.post("/api/campaigns/{campaign_id}/jobs", response_model=JobOut, status_code=201)
+async def create_job(campaign_id: str, body: JobCreate, user=Depends(get_current_user)):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        job = await db_create_validation_job(
+            campaign_id=campaign_id,
+            triggered_by="user",
+            triggered_sid=user["sub"],
+            entity_filter=body.entity_ids,
+            attribute_filter=body.attribute_ids,
+        )
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+    # Enqueue via DBOS if available
+    try:
+        from dbos import DBOS
+        from worker.workflows import validate_job_workflow
+        DBOS.start_workflow(validate_job_workflow, job["id"])
+        logger.info("DBOS workflow started for job %s", job["id"])
+    except ImportError:
+        logger.warning("DBOS not installed — job %s queued but no worker will process it", job["id"])
+    except Exception as exc:
+        logger.error("Failed to start DBOS workflow for job %s: %s", job["id"], exc)
+
+    return job
+
+
+@router.get("/api/campaigns/{campaign_id}/jobs", response_model=list[JobOut])
+async def list_jobs(campaign_id: str, user=Depends(get_current_user)):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_list_validation_jobs(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/api/jobs/{job_id}", response_model=JobOut)
+async def get_job(job_id: str, user=Depends(get_current_user)):
+    try:
+        job = await db_get_validation_job(job_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    # Verify campaign ownership
+    await _get_owned_campaign(job["campaign_id"], user["sub"])
+    return job
+
+
+@router.get("/api/jobs/{job_id}/results", response_model=list[ResultOut])
+async def get_results(
+    job_id: str,
+    entity_id: str | None = Query(default=None),
+    attribute_id: str | None = Query(default=None),
+    present: bool | None = Query(default=None),
+    limit: int = Query(default=100, le=500),
+    offset: int = Query(default=0),
+    user=Depends(get_current_user),
+):
+    try:
+        job = await db_get_validation_job(job_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await _get_owned_campaign(job["campaign_id"], user["sub"])
+    try:
+        return await db_list_results(
+            job_id=job_id,
+            entity_id=entity_id,
+            attribute_id=attribute_id,
+            present=present,
+            limit=limit,
+            offset=offset,
+        )
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/api/campaigns/{campaign_id}/scores", response_model=list[ScoreOut])
+async def get_scores(campaign_id: str, user=Depends(get_current_user)):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_get_scores(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/api/campaigns/{campaign_id}/knowledge", response_model=list[KnowledgeOut])
+async def get_knowledge(campaign_id: str, user=Depends(get_current_user)):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_get_knowledge_for_campaign(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()

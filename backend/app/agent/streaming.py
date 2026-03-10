@@ -392,6 +392,14 @@ async def stream_research(
                 except Exception:
                     pass
 
+            # Publish report to knowledge graph extraction pipeline
+            if session_id and final_text:
+                try:
+                    from app.queue import publish_for_extraction
+                    asyncio.create_task(publish_for_extraction(session_id, final_text))
+                except Exception:
+                    pass
+
     except Exception as exc:
         yield _sse("error", {"message": str(exc)})
     finally:
