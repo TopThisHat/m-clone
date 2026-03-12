@@ -25,6 +25,15 @@
 	let importing = $state(false);
 	let importResult = $state('');
 
+	// Inline edit state
+	let editingId = $state<string | null>(null);
+	let editForm = $state({ label: '', gwm_id: '', description: '' });
+	let editSaving = $state(false);
+
+	// Bulk select state
+	let selectedIds = $state<Set<string>>(new Set());
+	let bulkDeleting = $state(false);
+
 	async function load() {
 		try {
 			entities = await entitiesApi.list(campaignId);
@@ -93,8 +102,65 @@
 		try {
 			await entitiesApi.delete(campaignId, id);
 			entities = entities.filter((e) => e.id !== id);
+			const next = new Set(selectedIds);
+			next.delete(id);
+			selectedIds = next;
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to delete');
+		}
+	}
+
+	function startEdit(entity: Entity) {
+		editingId = entity.id;
+		editForm = { label: entity.label, gwm_id: entity.gwm_id ?? '', description: entity.description ?? '' };
+	}
+
+	function cancelEdit() {
+		editingId = null;
+	}
+
+	async function saveEdit(entity: Entity) {
+		editSaving = true;
+		try {
+			const updated = await entitiesApi.update(campaignId, entity.id, {
+				label: editForm.label,
+				gwm_id: editForm.gwm_id || undefined,
+				description: editForm.description || undefined,
+			});
+			entities = entities.map((e) => (e.id === entity.id ? updated : e));
+			editingId = null;
+		} catch (err: unknown) {
+			alert(err instanceof Error ? err.message : 'Failed to save');
+		} finally {
+			editSaving = false;
+		}
+	}
+
+	function toggleSelect(id: string) {
+		const next = new Set(selectedIds);
+		if (next.has(id)) next.delete(id); else next.add(id);
+		selectedIds = next;
+	}
+
+	function toggleSelectAll() {
+		if (selectedIds.size === entities.length) {
+			selectedIds = new Set();
+		} else {
+			selectedIds = new Set(entities.map((e) => e.id));
+		}
+	}
+
+	async function bulkDelete() {
+		if (!confirm(`Delete ${selectedIds.size} selected entities?`)) return;
+		bulkDeleting = true;
+		try {
+			await Promise.all([...selectedIds].map((id) => entitiesApi.delete(campaignId, id)));
+			entities = entities.filter((e) => !selectedIds.has(e.id));
+			selectedIds = new Set();
+		} catch (err: unknown) {
+			alert(err instanceof Error ? err.message : 'Failed to delete');
+		} finally {
+			bulkDeleting = false;
 		}
 	}
 </script>
@@ -105,7 +171,18 @@
 	</div>
 
 	<div class="flex items-center justify-between mb-6">
-		<h2 class="font-serif text-gold text-xl font-bold">Entities ({entities.length})</h2>
+		<div class="flex items-center gap-3">
+			<h2 class="font-serif text-gold text-xl font-bold">Entities ({entities.length})</h2>
+			{#if selectedIds.size > 0}
+				<button
+					onclick={bulkDelete}
+					disabled={bulkDeleting}
+					class="text-xs bg-red-950 border border-red-800 text-red-400 px-3 py-1 rounded-lg hover:bg-red-900 transition-colors disabled:opacity-50"
+				>
+					{bulkDeleting ? 'Deleting…' : `Delete selected (${selectedIds.size})`}
+				</button>
+			{/if}
+		</div>
 		<div class="flex gap-2">
 			<button
 				onclick={openImport}
@@ -225,26 +302,72 @@
 			<table class="w-full text-sm">
 				<thead>
 					<tr class="border-b border-navy-700 text-slate-400">
+						<th class="px-4 py-3 w-8">
+							<input
+								type="checkbox"
+								checked={selectedIds.size === entities.length && entities.length > 0}
+								onchange={toggleSelectAll}
+								class="accent-gold"
+							/>
+						</th>
 						<th class="text-left px-4 py-3">Label</th>
 						<th class="text-left px-4 py-3">GWM ID</th>
 						<th class="text-left px-4 py-3">Description</th>
-						<th class="px-4 py-3 w-16"></th>
+						<th class="px-4 py-3 w-24"></th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each entities as entity (entity.id)}
 						<tr class="border-t border-navy-700 hover:bg-navy-700/50">
-							<td class="px-4 py-3 text-slate-200 font-medium">{entity.label}</td>
-							<td class="px-4 py-3 text-slate-400 font-mono text-xs">{entity.gwm_id ?? '—'}</td>
-							<td class="px-4 py-3 text-slate-500 truncate max-w-xs">{entity.description ?? '—'}</td>
-							<td class="px-4 py-3 text-right">
-								<button
-									onclick={() => deleteEntity(entity.id)}
-									class="text-red-400/60 hover:text-red-400 transition-colors text-xs"
-								>
-									Delete
-								</button>
+							<td class="px-4 py-3">
+								<input
+									type="checkbox"
+									checked={selectedIds.has(entity.id)}
+									onchange={() => toggleSelect(entity.id)}
+									class="accent-gold"
+								/>
 							</td>
+							{#if editingId === entity.id}
+								<td class="px-4 py-2">
+									<input bind:value={editForm.label} class="input-field w-full" />
+								</td>
+								<td class="px-4 py-2">
+									<input bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs" />
+								</td>
+								<td class="px-4 py-2">
+									<input bind:value={editForm.description} class="input-field w-full" />
+								</td>
+								<td class="px-4 py-2 text-right whitespace-nowrap">
+									<button
+										onclick={() => saveEdit(entity)}
+										disabled={editSaving}
+										class="text-gold hover:text-gold-light text-xs mr-2 disabled:opacity-50"
+									>
+										{editSaving ? '…' : 'Save'}
+									</button>
+									<button onclick={cancelEdit} class="text-slate-500 hover:text-slate-300 text-xs">
+										Cancel
+									</button>
+								</td>
+							{:else}
+								<td class="px-4 py-3 text-slate-200 font-medium">{entity.label}</td>
+								<td class="px-4 py-3 text-slate-400 font-mono text-xs">{entity.gwm_id ?? '—'}</td>
+								<td class="px-4 py-3 text-slate-500 truncate max-w-xs">{entity.description ?? '—'}</td>
+								<td class="px-4 py-3 text-right whitespace-nowrap">
+									<button
+										onclick={() => startEdit(entity)}
+										class="text-slate-500 hover:text-slate-300 transition-colors text-xs mr-2"
+									>
+										Edit
+									</button>
+									<button
+										onclick={() => deleteEntity(entity.id)}
+										class="text-red-400/60 hover:text-red-400 transition-colors text-xs"
+									>
+										Delete
+									</button>
+								</td>
+							{/if}
 						</tr>
 					{/each}
 				</tbody>

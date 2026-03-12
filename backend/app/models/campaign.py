@@ -41,6 +41,13 @@ class EntityCreate(BaseModel):
     metadata: dict[str, Any] = {}
 
 
+class EntityUpdate(BaseModel):
+    label: str | None = None
+    description: str | None = None
+    gwm_id: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
 class EntityOut(BaseModel):
     id: str
     campaign_id: str

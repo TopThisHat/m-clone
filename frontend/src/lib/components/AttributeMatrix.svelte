@@ -9,12 +9,16 @@
 		results,
 		knowledge = [],
 		campaignId = '',
+		minConfidence = 0,
+		oncellclick,
 	}: {
 		entities: Entity[];
 		attributes: Attribute[];
 		results: Result[];
 		knowledge?: Knowledge[];
 		campaignId?: string;
+		minConfidence?: number;
+		oncellclick?: (result: Result) => void;
 	} = $props();
 
 	// Build a lookup map: "entityId:attributeId" → Result
@@ -40,12 +44,13 @@
 		return knowledgeMap.get(`${entity.gwm_id}:${attr.label}`);
 	}
 
-	function cellClass(result: Result | undefined, cached: Knowledge | undefined): string {
-		if (cached) return 'bg-yellow-950 text-yellow-300 border-2 border-yellow-500';
+	function cellClass(result: Result | undefined, cached: Knowledge | undefined, lowConf: boolean): string {
+		const base = lowConf ? 'opacity-40 ' : '';
+		if (cached) return base + 'bg-yellow-950 text-yellow-300 border-2 border-yellow-500';
 		if (!result) return 'bg-navy-700 text-slate-600';
-		return result.present
+		return base + (result.present
 			? 'bg-green-900 text-green-300 border border-green-700'
-			: 'bg-red-950 text-red-400 border border-red-900';
+			: 'bg-red-950 text-red-400 border border-red-900');
 	}
 
 	function cellLabel(result: Result | undefined, cached: Knowledge | undefined): string {
@@ -54,11 +59,8 @@
 		return result.present ? '✓' : '✗';
 	}
 
-	let tooltip = $state<{ result: Result; cached: Knowledge | undefined; x: number; y: number } | null>(null);
-
-	function showTooltip(e: MouseEvent, result: Result | undefined, cached: Knowledge | undefined) {
-		if (!result && !cached) { tooltip = null; return; }
-		if (result) tooltip = { result, cached, x: e.clientX, y: e.clientY };
+	function handleClick(result: Result | undefined, cached: Knowledge | undefined) {
+		if (result && oncellclick) oncellclick(result);
 	}
 </script>
 
@@ -89,11 +91,12 @@
 					{#each attributes as attr (attr.id)}
 						{@const cell = getCell(entity.id, attr.id)}
 						{@const cached = getCachedKnowledge(entity, attr)}
+						{@const lowConf = minConfidence > 0 && cell != null && cell.confidence != null && cell.confidence < minConfidence}
 						<td class="px-2 py-2 text-center">
 							<button
-								class="w-8 h-8 rounded text-sm font-bold transition-all hover:opacity-80 {cellClass(cell, cached)}"
-								onmouseenter={(e) => showTooltip(e, cell, cached)}
-								onmouseleave={() => (tooltip = null)}
+								class="w-8 h-8 rounded text-sm font-bold transition-all hover:opacity-80 {cellClass(cell, cached, lowConf)}
+								       {(cell || cached) ? 'cursor-pointer' : 'cursor-default'}"
+								onclick={() => handleClick(cell, cached)}
 								title={cached ? `Cached from ${cached.source_campaign_name}` : (cell?.evidence ?? '')}
 							>
 								{cellLabel(cell, cached)}
@@ -111,24 +114,3 @@
 		</tbody>
 	</table>
 </div>
-
-<!-- Tooltip -->
-{#if tooltip}
-	<div
-		class="fixed z-50 bg-navy-800 border border-navy-600 rounded-lg shadow-xl p-3 max-w-xs text-sm pointer-events-none"
-		style="left: {tooltip.x + 12}px; top: {tooltip.y - 8}px"
-	>
-		{#if tooltip.cached}
-			<p class="font-medium text-yellow-400">⚡ Cached from {tooltip.cached.source_campaign_name}</p>
-		{/if}
-		<p class="font-medium {tooltip.result.present ? 'text-green-400' : 'text-red-400'} {tooltip.cached ? 'mt-1' : ''}">
-			{tooltip.result.present ? 'Present' : 'Absent'}
-			{#if tooltip.result.confidence !== null}
-				({(tooltip.result.confidence * 100).toFixed(0)}% confidence)
-			{/if}
-		</p>
-		{#if tooltip.result.evidence}
-			<p class="text-slate-400 mt-1">{tooltip.result.evidence}</p>
-		{/if}
-	</div>
-{/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
 	import { entitiesApi } from '$lib/api/entities';
@@ -14,7 +15,17 @@
 	let jobs = $state<Job[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let runError = $state('');
 	let runningJobId = $state<string | null>(null);
+
+	// Edit panel
+	let showEdit = $state(false);
+	let editName = $state('');
+	let editDesc = $state('');
+	let editSchedule = $state('');
+	let editActive = $state(true);
+	let saving = $state(false);
+	let saveError = $state('');
 
 	onMount(async () => {
 		try {
@@ -33,13 +44,59 @@
 		}
 	});
 
+	function openEdit() {
+		if (!campaign) return;
+		editName = campaign.name;
+		editDesc = campaign.description ?? '';
+		editSchedule = campaign.schedule ?? '';
+		editActive = campaign.is_active;
+		saveError = '';
+		showEdit = true;
+	}
+
+	async function saveEdit(e: Event) {
+		e.preventDefault();
+		if (!campaign) return;
+		saving = true;
+		saveError = '';
+		try {
+			campaign = await campaignsApi.update(campaign.id, {
+				name: editName,
+				description: editDesc || undefined,
+				schedule: editSchedule || undefined,
+				is_active: editActive,
+			});
+			showEdit = false;
+		} catch (err: unknown) {
+			saveError = err instanceof Error ? err.message : 'Failed to save';
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function deleteCampaign() {
+		if (!campaign) return;
+		if (!confirm(`Delete campaign "${campaign.name}"? This cannot be undone.`)) return;
+		try {
+			await campaignsApi.delete(campaign.id);
+			goto('/campaigns');
+		} catch (err: unknown) {
+			saveError = err instanceof Error ? err.message : 'Failed to delete';
+		}
+	}
+
 	async function runNow() {
+		runError = '';
+		if (entityCount === 0 || attributeCount === 0) {
+			runError = 'Add entities and attributes before running.';
+			return;
+		}
 		try {
 			const job = await jobsApi.create(campaignId, {});
 			jobs = [job, ...jobs];
 			runningJobId = job.id;
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to start job');
+			runError = err instanceof Error ? err.message : 'Failed to start job';
 		}
 	}
 
@@ -50,11 +107,21 @@
 
 	let latestJob = $derived(jobs[0] ?? null);
 
+	let nextRunCountdown = $derived(() => {
+		if (!campaign?.next_run_at) return null;
+		const diff = new Date(campaign.next_run_at).getTime() - Date.now();
+		if (diff <= 0) return 'soon';
+		const h = Math.floor(diff / 3600000);
+		const m = Math.floor((diff % 3600000) / 60000);
+		return h > 0 ? `${h}h ${m}m` : `${m}m`;
+	});
+
 	const tabs = [
 		{ label: 'Entities', href: 'entities' },
 		{ label: 'Attributes', href: 'attributes' },
 		{ label: 'Jobs', href: 'jobs' },
 		{ label: 'Results', href: 'results' },
+		{ label: 'Knowledge', href: 'knowledge' },
 	];
 </script>
 
@@ -68,25 +135,88 @@
 	{:else if error}
 		<p class="text-red-400">{error}</p>
 	{:else if campaign}
-		<div class="flex items-start justify-between mb-6">
+		<div class="flex items-start justify-between mb-4">
 			<div>
 				<h1 class="font-serif text-gold text-2xl font-bold">{campaign.name}</h1>
 				{#if campaign.description}
 					<p class="text-slate-400 mt-1">{campaign.description}</p>
 				{/if}
 				{#if campaign.schedule}
-					<p class="text-xs text-slate-500 mt-1 font-mono">⏰ {campaign.schedule}</p>
+					<p class="text-xs text-slate-500 mt-1 font-mono">⏰ {campaign.schedule}
+						{#if nextRunCountdown()}
+							<span class="ml-2 text-slate-400">Next run in {nextRunCountdown()}</span>
+						{/if}
+					</p>
 				{/if}
 			</div>
-			<button
-				onclick={runNow}
-				disabled={runningJobId !== null}
-				class="bg-gold text-navy font-semibold px-4 py-2 rounded-lg hover:bg-gold-light
-				       transition-colors disabled:opacity-50 text-sm"
-			>
-				{runningJobId ? 'Running…' : 'Run Now'}
-			</button>
+			<div class="flex items-center gap-2">
+				<button
+					onclick={openEdit}
+					class="text-slate-500 hover:text-slate-300 p-1.5 rounded transition-colors"
+					title="Edit campaign"
+				>
+					⚙
+				</button>
+				<button
+					onclick={runNow}
+					disabled={runningJobId !== null}
+					class="bg-gold text-navy font-semibold px-4 py-2 rounded-lg hover:bg-gold-light
+					       transition-colors disabled:opacity-50 text-sm"
+				>
+					{runningJobId ? 'Running…' : 'Run Now'}
+				</button>
+			</div>
 		</div>
+
+		{#if runError}
+			<p class="text-red-400 text-sm mb-4">{runError}</p>
+		{/if}
+
+		<!-- Edit panel -->
+		{#if showEdit}
+			<form onsubmit={saveEdit} class="bg-navy-800 border border-navy-600 rounded-xl p-5 mb-6">
+				<h3 class="font-medium text-slate-200 mb-4">Edit Campaign</h3>
+				{#if saveError}
+					<p class="text-red-400 text-sm mb-3">{saveError}</p>
+				{/if}
+				<div class="grid grid-cols-2 gap-4 mb-4">
+					<div>
+						<label class="block text-xs text-slate-400 mb-1">Name *</label>
+						<input bind:value={editName} required class="input-field w-full" />
+					</div>
+					<div>
+						<label class="block text-xs text-slate-400 mb-1">Schedule (cron)</label>
+						<input bind:value={editSchedule} placeholder="0 9 * * 1" class="input-field w-full font-mono" />
+					</div>
+					<div class="col-span-2">
+						<label class="block text-xs text-slate-400 mb-1">Description</label>
+						<input bind:value={editDesc} class="input-field w-full" />
+					</div>
+				</div>
+				<div class="flex items-center gap-4 mb-4">
+					<label class="flex items-center gap-2 cursor-pointer text-sm text-slate-300">
+						<input type="checkbox" bind:checked={editActive} class="accent-gold" />
+						Active
+					</label>
+				</div>
+				<div class="flex items-center justify-between">
+					<div class="flex gap-2">
+						<button type="submit" disabled={saving}
+						        class="bg-gold text-navy font-semibold px-4 py-1.5 rounded-lg text-sm hover:bg-gold-light disabled:opacity-50">
+							{saving ? 'Saving…' : 'Save'}
+						</button>
+						<button type="button" onclick={() => (showEdit = false)}
+						        class="bg-navy-700 text-slate-300 px-4 py-1.5 rounded-lg text-sm border border-navy-600">
+							Cancel
+						</button>
+					</div>
+					<button type="button" onclick={deleteCampaign}
+					        class="text-red-400 hover:text-red-300 text-sm px-3 py-1.5 rounded-lg border border-red-900 hover:bg-red-950 transition-colors">
+						Delete Campaign
+					</button>
+				</div>
+			</form>
+		{/if}
 
 		<!-- Stats row -->
 		<div class="grid grid-cols-3 gap-4 mb-6">
@@ -140,3 +270,10 @@
 		<p class="text-slate-500 text-sm">Select a tab to manage this campaign.</p>
 	{/if}
 </div>
+
+<style>
+	.input-field {
+		@apply bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
+		       placeholder-slate-500 focus:outline-none focus:border-gold;
+	}
+</style>

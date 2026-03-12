@@ -5,7 +5,7 @@ export interface Job {
 	campaign_id: string;
 	triggered_by: string | null;
 	triggered_sid: string | null;
-	status: 'queued' | 'running' | 'done' | 'failed';
+	status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 	entity_filter: string[] | null;
 	attribute_filter: string[] | null;
 	total_pairs: number;
@@ -91,4 +91,7 @@ export const jobsApi = {
 
 	getKnowledge: (campaignId: string): Promise<Knowledge[]> =>
 		apiFetch(`/api/campaigns/${campaignId}/knowledge`),
+
+	cancel: (jobId: string): Promise<{ cancelled: boolean }> =>
+		apiFetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' }),
 };

@@ -47,4 +47,7 @@ export const campaignsApi = {
 
 	delete: (id: string): Promise<null> =>
 		apiFetch(`/api/campaigns/${id}`, { method: 'DELETE' }),
+
+	clone: (id: string): Promise<Campaign> =>
+		apiFetch(`/api/campaigns/${id}/clone`, { method: 'POST' }),
 };

@@ -7,11 +7,11 @@
 	let latestJobs = $state<Record<string, Job | null>>({});
 	let loading = $state(true);
 	let error = $state('');
+	let cloning = $state<Set<string>>(new Set());
 
 	onMount(async () => {
 		try {
 			campaigns = await campaignsApi.list();
-			// Load latest job for each campaign
 			await Promise.all(
 				campaigns.map(async (c) => {
 					try {
@@ -39,12 +39,46 @@
 		}
 	}
 
+	async function toggleActive(c: Campaign, e: Event) {
+		e.preventDefault();
+		e.stopPropagation();
+		const updated = await campaignsApi.update(c.id, { is_active: !c.is_active });
+		campaigns = campaigns.map((x) => (x.id === c.id ? updated : x));
+	}
+
+	async function cloneCampaign(id: string, e: Event) {
+		e.preventDefault();
+		e.stopPropagation();
+		cloning = new Set([...cloning, id]);
+		try {
+			const newCampaign = await campaignsApi.clone(id);
+			campaigns = [newCampaign, ...campaigns];
+		} catch (err: unknown) {
+			alert(err instanceof Error ? err.message : 'Failed to clone');
+		} finally {
+			cloning = new Set([...cloning].filter((x) => x !== id));
+		}
+	}
+
+	async function deleteCampaign(id: string, name: string, e: Event) {
+		e.preventDefault();
+		e.stopPropagation();
+		if (!confirm(`Delete campaign "${name}"? This cannot be undone.`)) return;
+		try {
+			await campaignsApi.delete(id);
+			campaigns = campaigns.filter((c) => c.id !== id);
+		} catch (err: unknown) {
+			alert(err instanceof Error ? err.message : 'Failed to delete');
+		}
+	}
+
 	function statusColor(status: string) {
 		return {
 			queued: 'text-slate-400',
 			running: 'text-gold',
 			done: 'text-green-400',
 			failed: 'text-red-400',
+			cancelled: 'text-slate-400',
 		}[status] ?? 'text-slate-400';
 	}
 </script>
@@ -77,9 +111,13 @@
 						<a href="/campaigns/{c.id}" class="font-medium text-slate-200 hover:text-gold transition-colors">
 							{c.name}
 						</a>
-						<span class="text-xs px-2 py-0.5 rounded {c.is_active ? 'bg-green-900 text-green-400' : 'bg-navy-700 text-slate-500'}">
+						<button
+							onclick={(e) => toggleActive(c, e)}
+							class="text-xs px-2 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity {c.is_active ? 'bg-green-900 text-green-400' : 'bg-navy-700 text-slate-500'}"
+							title="Toggle active/paused"
+						>
 							{c.is_active ? 'active' : 'paused'}
-						</span>
+						</button>
 					</div>
 
 					{#if c.description}
@@ -111,6 +149,23 @@
 							Jobs
 						</a>
 						<div class="flex-1"></div>
+						<!-- Clone button -->
+						<button
+							onclick={(e) => cloneCampaign(c.id, e)}
+							disabled={cloning.has(c.id)}
+							title="Clone campaign"
+							class="text-xs text-slate-500 hover:text-slate-300 px-1.5 py-1 rounded transition-colors disabled:opacity-50"
+						>
+							{cloning.has(c.id) ? '…' : '⧉'}
+						</button>
+						<!-- Delete button -->
+						<button
+							onclick={(e) => deleteCampaign(c.id, c.name, e)}
+							title="Delete campaign"
+							class="text-xs text-red-400/60 hover:text-red-400 px-1.5 py-1 rounded transition-colors"
+						>
+							🗑
+						</button>
 						<button
 							onclick={(e) => runNow(c.id, e)}
 							class="text-xs bg-navy-700 hover:bg-navy-600 text-slate-300 px-3 py-1 rounded-lg transition-colors border border-navy-600"

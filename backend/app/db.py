@@ -1258,6 +1258,85 @@ async def db_delete_entity(entity_id: str, campaign_id: str) -> bool:
     return result.endswith("1")
 
 
+async def db_update_entity(entity_id: str, campaign_id: str, **kwargs: Any) -> dict[str, Any] | None:
+    allowed = {"label", "description", "gwm_id", "metadata"}
+    fields = {k: v for k, v in kwargs.items() if k in allowed}
+    if not fields:
+        return await db_get_entity(entity_id)
+    set_parts = []
+    values = []
+    for i, (k, v) in enumerate(fields.items(), start=1):
+        if k == "metadata":
+            set_parts.append(f"{k} = ${i}::jsonb")
+            values.append(json.dumps(v))
+        else:
+            set_parts.append(f"{k} = ${i}")
+            values.append(v)
+    values += [entity_id, campaign_id]
+    sql = (
+        f"UPDATE entities SET {', '.join(set_parts)} "
+        f"WHERE id = ${len(values)-1}::uuid AND campaign_id = ${len(values)}::uuid RETURNING *"
+    )
+    async with _acquire() as conn:
+        row = await conn.fetchrow(sql, *values)
+    return _entity_row_to_dict(row) if row else None
+
+
+async def db_clone_campaign(source_id: str, owner_sid: str) -> dict[str, Any]:
+    async with _acquire() as conn:
+        async with conn.transaction():
+            source = await conn.fetchrow("SELECT * FROM campaigns WHERE id = $1::uuid", source_id)
+            new_row = await conn.fetchrow(
+                """
+                INSERT INTO campaigns (owner_sid, name, description, schedule)
+                VALUES ($1, $2, $3, $4)
+                RETURNING *
+                """,
+                owner_sid,
+                (source["name"] or "") + " (copy)",
+                source["description"],
+                source["schedule"],
+            )
+            new_id = new_row["id"]
+            await conn.execute(
+                """
+                INSERT INTO entities (id, campaign_id, label, description, gwm_id, metadata, created_at)
+                SELECT gen_random_uuid(), $1::uuid, label, description, gwm_id, metadata, NOW()
+                FROM entities WHERE campaign_id = $2::uuid
+                """,
+                new_id, source_id,
+            )
+            await conn.execute(
+                """
+                INSERT INTO attributes (id, campaign_id, label, description, weight, created_at)
+                SELECT gen_random_uuid(), $1::uuid, label, description, weight, NOW()
+                FROM attributes WHERE campaign_id = $2::uuid
+                """,
+                new_id, source_id,
+            )
+    return _campaign_row_to_dict(new_row)
+
+
+async def db_cancel_job(job_id: str) -> bool:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE validation_jobs SET status='failed', error='Cancelled by user', completed_at=NOW()
+            WHERE id = $1::uuid AND status IN ('queued', 'running') RETURNING id
+            """,
+            job_id,
+        )
+        if row:
+            await conn.execute(
+                """
+                UPDATE job_queue SET status='dead', completed_at=NOW()
+                WHERE validation_job_id = $1::uuid AND status NOT IN ('done', 'dead')
+                """,
+                job_id,
+            )
+    return row is not None
+
+
 # ── Scout: Attributes ──────────────────────────────────────────────────────────
 
 def _attribute_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:

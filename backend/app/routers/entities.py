@@ -10,8 +10,9 @@ from app.db import (
     db_get_campaign,
     db_import_entities,
     db_list_entities,
+    db_update_entity,
 )
-from app.models.campaign import EntityCreate, EntityOut, ImportBody
+from app.models.campaign import EntityCreate, EntityOut, EntityUpdate, ImportBody
 
 router = APIRouter(prefix="/api/campaigns", tags=["entities"])
 
@@ -80,6 +81,18 @@ async def import_entities(campaign_id: str, body: ImportBody, user=Depends(get_c
         )
     except DatabaseNotConfigured:
         raise _no_db()
+
+
+@router.patch("/{campaign_id}/entities/{entity_id}", response_model=EntityOut)
+async def update_entity(campaign_id: str, entity_id: str, body: EntityUpdate, user=Depends(get_current_user)):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        updated = await db_update_entity(entity_id, campaign_id, **body.model_dump(exclude_none=True))
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not updated:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    return updated
 
 
 @router.delete("/{campaign_id}/entities/{entity_id}", status_code=204)

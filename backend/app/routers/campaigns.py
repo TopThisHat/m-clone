@@ -4,6 +4,7 @@ from fastapi.responses import Response
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
+    db_clone_campaign,
     db_create_campaign,
     db_delete_campaign,
     db_get_campaign,
@@ -77,6 +78,22 @@ async def update_campaign(campaign_id: str, body: CampaignUpdate, user=Depends(g
     patch = body.model_dump(exclude_none=True)
     updated = await db_update_campaign(campaign_id, patch)
     return updated
+
+
+@router.post("/{campaign_id}/clone", response_model=CampaignOut, status_code=201)
+async def clone_campaign(campaign_id: str, user=Depends(get_current_user)):
+    try:
+        campaign = await db_get_campaign(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not campaign:
+        raise _not_found()
+    if campaign["owner_sid"] != user["sub"]:
+        raise _forbidden()
+    try:
+        return await db_clone_campaign(campaign_id, user["sub"])
+    except DatabaseNotConfigured:
+        raise _no_db()
 
 
 @router.delete("/{campaign_id}", status_code=204)

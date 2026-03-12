@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
+    db_cancel_job,
     db_create_and_enqueue_validation_job,
     db_get_campaign,
     db_get_knowledge_for_campaign,
@@ -119,6 +120,22 @@ async def get_scores(campaign_id: str, user=Depends(get_current_user)):
         return await db_get_scores(campaign_id)
     except DatabaseNotConfigured:
         raise _no_db()
+
+
+@router.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str, user=Depends(get_current_user)):
+    try:
+        job = await db_get_validation_job(job_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await _get_owned_campaign(job["campaign_id"], user["sub"])
+    try:
+        cancelled = await db_cancel_job(job_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    return {"cancelled": cancelled}
 
 
 @router.get("/api/campaigns/{campaign_id}/knowledge", response_model=list[KnowledgeOut])

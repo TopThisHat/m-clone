@@ -1,16 +1,21 @@
 <script lang="ts">
 	import type { Score, Result, Knowledge } from '$lib/api/jobs';
+	import type { Attribute } from '$lib/api/attributes';
 
 	let {
 		scores,
 		results = [],
 		knowledge = [],
 		campaignId = '',
+		attributes = [],
+		minConfidence = 0,
 	}: {
 		scores: Score[];
 		results?: Result[];
 		knowledge?: Knowledge[];
 		campaignId?: string;
+		attributes?: Attribute[];
+		minConfidence?: number;
 	} = $props();
 
 	let expanded = $state<Set<string>>(new Set());
@@ -40,6 +45,11 @@
 	}
 
 	let maxScore = $derived(Math.max(...scores.map((s) => s.total_score), 1));
+
+	// Build attribute lookup by label for weight info
+	let attrByLabel = $derived(new Map(attributes.map((a) => [a.label, a])));
+
+	let totalWeight = $derived(attributes.reduce((s, a) => s + a.weight, 0) || 1);
 </script>
 
 <div class="space-y-2">
@@ -92,16 +102,33 @@
 
 			<!-- Expanded attribute breakdown -->
 			{#if expanded.has(score.entity_id)}
-				<div class="border-t border-navy-700 px-4 py-3 space-y-1">
+				<div class="border-t border-navy-700 px-4 py-3 space-y-2">
 					{#each entityResults(score.entity_id) as r (r.id)}
-						<div class="flex items-start gap-2 text-sm">
+						{@const attr = attrByLabel.get(r.attribute_label ?? '')}
+						{@const lowConf = minConfidence > 0 && r.confidence != null && r.confidence < minConfidence}
+						<div class="flex items-start gap-2 text-sm {lowConf ? 'opacity-40' : ''}">
 							<span class="mt-0.5 {r.present ? 'text-green-400' : 'text-red-400'}">
 								{r.present ? '✓' : '✗'}
 							</span>
 							<div class="flex-1 min-w-0">
-								<span class="text-slate-300">{r.attribute_label}</span>
-								{#if r.confidence !== null}
-									<span class="text-slate-500 text-xs ml-2">({(r.confidence * 100).toFixed(0)}%)</span>
+								<div class="flex items-center gap-2 flex-wrap">
+									<span class="text-slate-300">{r.attribute_label}</span>
+									{#if r.confidence !== null}
+										<span class="text-slate-500 text-xs">({(r.confidence * 100).toFixed(0)}%)</span>
+									{/if}
+									{#if attr}
+										<span class="text-xs text-slate-600 bg-navy-700 px-1.5 py-0.5 rounded"
+										      title="Attribute weight">w:{attr.weight.toFixed(1)}</span>
+									{/if}
+								</div>
+								{#if attr && r.present}
+									<!-- Weight contribution bar -->
+									<div class="mt-1 h-1 bg-navy-700 rounded-full w-32">
+										<div
+											class="h-1 rounded-full bg-gold/60 transition-all"
+											style="width: {(attr.weight / totalWeight) * 100}%"
+										></div>
+									</div>
 								{/if}
 								{#if r.evidence}
 									<p class="text-slate-500 text-xs mt-0.5 truncate">{r.evidence}</p>

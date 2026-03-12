@@ -35,6 +35,13 @@ export const entitiesApi = {
 			body: JSON.stringify(entities),
 		}),
 
+	update: (campaignId: string, entityId: string, data: Partial<EntityCreate>): Promise<Entity> =>
+		apiFetch(`/api/campaigns/${campaignId}/entities/${entityId}`, {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(data),
+		}),
+
 	delete: (campaignId: string, entityId: string): Promise<null> =>
 		apiFetch(`/api/campaigns/${campaignId}/entities/${entityId}`, { method: 'DELETE' }),
 
