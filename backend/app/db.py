@@ -1542,9 +1542,21 @@ async def db_get_job_details(job_id: str) -> tuple[list[dict], list[dict]]:
 
 
 async def db_increment_job_progress(job_id: str) -> None:
+    """
+    Set completed_pairs to the actual count of results for this job.
+    Using COUNT instead of += 1 makes this idempotent: if a pair job is
+    reclaimed and re-runs after already inserting its result (ON CONFLICT DO
+    UPDATE), the count stays correct and never exceeds total_pairs.
+    """
     async with _acquire() as conn:
         await conn.execute(
-            "UPDATE validation_jobs SET completed_pairs = completed_pairs + 1 WHERE id = $1::uuid",
+            """
+            UPDATE validation_jobs
+            SET completed_pairs = (
+                SELECT COUNT(*) FROM validation_results WHERE job_id = $1::uuid
+            )
+            WHERE id = $1::uuid
+            """,
             job_id,
         )
 

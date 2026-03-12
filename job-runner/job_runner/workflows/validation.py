@@ -79,7 +79,7 @@ class ValidationCampaignWorkflow(BaseWorkflow):
                     """
                     UPDATE validation_jobs
                     SET status = 'running', total_pairs = $2, started_at = $3
-                    WHERE id = $1::uuid AND status != 'running'
+                    WHERE id = $1::uuid AND status = 'queued'
                     """,
                     job_id, len(pairs), datetime.now(timezone.utc),
                 )
@@ -250,22 +250,20 @@ class ValidationPairWorkflow(BaseWorkflow):
         """
         Called when this pair job exhausted all retries.
         Check if it was the last sibling — if so, finalize the parent validation_job.
+        root_job_id and payload are already in the job dict from dequeue; no extra
+        DB query needed.
         """
         from job_runner.db import get_pool
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            own = await conn.fetchrow(
-                "SELECT root_job_id, payload FROM job_queue WHERE id = $1::uuid",
-                str(job["id"]),
-            )
-        if own is None or own["root_job_id"] is None:
-            return
 
-        root_id = str(own["root_job_id"])
-        validation_job_id = (own["payload"] or {}).get("validation_job_id")
+        root_id = str(job["root_job_id"]) if job.get("root_job_id") else None
+        if not root_id:
+            return
+        payload = job.get("payload") or {}
+        validation_job_id = payload.get("validation_job_id")
         if not validation_job_id:
             return
 
+        pool = await get_pool()
         async with pool.acquire() as conn:
             pending = await conn.fetchval(
                 """
@@ -279,24 +277,33 @@ class ValidationPairWorkflow(BaseWorkflow):
             await finalize_validation_job(validation_job_id, root_id)
 
     async def _maybe_finalize(self, validation_job_id: str) -> None:
-        """Check if all siblings are terminal; if so, finalize the validation_job."""
+        """
+        Check if all siblings are terminal; if so, finalize the validation_job.
+
+        This is called from within run(), before ack(), so the current job is
+        still 'running' in job_queue. We exclude our own job_id from the pending
+        count so that the last pair job can trigger finalization immediately
+        instead of waiting up to 60s for the reconcile loop.
+
+        The result has already been inserted by the time we're called, so
+        finalize_validation_job will see the full, correct result set when it
+        recomputes scores.
+        """
         from job_runner.db import get_pool
         pool = await get_pool()
+        # root_job_id is available in the original job dict from dequeue.
+        root_id = str(self.job["root_job_id"]) if self.job.get("root_job_id") else None
+        if not root_id:
+            return
         async with pool.acquire() as conn:
-            own = await conn.fetchrow(
-                "SELECT root_job_id FROM job_queue WHERE id = $1::uuid",
-                self.job_id,
-            )
-            if own is None or own["root_job_id"] is None:
-                return
-            root_id = str(own["root_job_id"])
             pending = await conn.fetchval(
                 """
                 SELECT COUNT(*) FROM job_queue
                 WHERE root_job_id = $1::uuid
+                  AND id != $2::uuid
                   AND status NOT IN ('done', 'dead')
                 """,
-                root_id,
+                root_id, self.job_id,
             )
         if pending == 0:
             await finalize_validation_job(validation_job_id, root_id)

@@ -105,43 +105,44 @@ async def ack(job_id: str) -> None:
 
 async def fail(job_id: str, error: str, backoff_seconds: float = 0) -> bool:
     """
-    Record a job failure. Returns True if the job went dead (max attempts exceeded),
-    False if it was rescheduled for retry.
+    Record a job failure atomically. Returns True if the job went dead (max
+    attempts exceeded), False if it was rescheduled for retry.
+
+    Uses a single UPDATE with CASE WHEN to avoid a TOCTOU read-then-write:
+    the attempts increment and dead/retry decision happen in one statement.
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT attempts, max_attempts FROM job_queue WHERE id = $1::uuid",
-            job_id,
+            """
+            UPDATE job_queue
+            SET
+                attempts    = attempts + 1,
+                last_error  = $2,
+                status      = CASE
+                                WHEN attempts + 1 >= max_attempts THEN 'dead'
+                                ELSE 'pending'
+                              END,
+                completed_at = CASE
+                                WHEN attempts + 1 >= max_attempts THEN NOW()
+                                ELSE NULL
+                               END,
+                run_at      = CASE
+                                WHEN attempts + 1 >= max_attempts THEN run_at
+                                ELSE NOW() + ($3 || ' seconds')::interval
+                              END,
+                worker_id   = NULL
+            WHERE id = $1::uuid
+            RETURNING attempts, max_attempts, status
+            """,
+            job_id, error, str(int(backoff_seconds)),
         )
         if not row:
             return False
-        new_attempts = row["attempts"] + 1
-        if new_attempts >= row["max_attempts"]:
-            await conn.execute(
-                """
-                UPDATE job_queue
-                SET status = 'dead', attempts = $2, last_error = $3, completed_at = NOW()
-                WHERE id = $1::uuid
-                """,
-                job_id, new_attempts, error,
-            )
-            logger.warning("Job %s moved to dead-letter queue after %d attempts", job_id, new_attempts)
-            return True
-        else:
-            await conn.execute(
-                """
-                UPDATE job_queue
-                SET status = 'pending',
-                    attempts = $2,
-                    last_error = $3,
-                    run_at = NOW() + ($4 || ' seconds')::interval,
-                    worker_id = NULL
-                WHERE id = $1::uuid
-                """,
-                job_id, new_attempts, error, str(int(backoff_seconds)),
-            )
-            return False
+        went_dead = row["status"] == "dead"
+        if went_dead:
+            logger.warning("Job %s moved to dead-letter queue after %d attempts", job_id, row["attempts"])
+        return went_dead
 
 
 async def retry_dead(job_id: str) -> bool:
@@ -211,7 +212,7 @@ async def enqueue_many(
     conn,
 ) -> list[str]:
     """
-    Insert multiple jobs in a single transaction using the provided connection.
+    Insert multiple jobs in a single round-trip using unnest arrays.
     Each entry in `jobs` is a dict with keys matching enqueue() keyword args:
       job_type, payload, parent_job_id, root_job_id, max_attempts,
       priority, run_at, validation_job_id
@@ -219,26 +220,35 @@ async def enqueue_many(
     Caller is responsible for managing the transaction and pg_notify.
     """
     from job_runner.config import settings
-    ids = []
-    for job in jobs:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO job_queue
-                (job_type, payload, parent_job_id, root_job_id,
-                 max_attempts, priority, run_at, validation_job_id)
-            VALUES
-                ($1, $2::jsonb, $3::uuid, $4::uuid,
-                 $5, $6, COALESCE($7::timestamptz, NOW()), $8::uuid)
-            RETURNING id
-            """,
-            job["job_type"],
-            json.dumps(job.get("payload", {})),
-            job.get("parent_job_id"),
-            job.get("root_job_id"),
-            job.get("max_attempts", settings.default_max_attempts),
-            job.get("priority", 0),
-            job.get("run_at"),
-            job.get("validation_job_id"),
-        )
-        ids.append(str(row["id"]))
-    return ids
+    if not jobs:
+        return []
+
+    job_types = [j["job_type"] for j in jobs]
+    payloads = [json.dumps(j.get("payload", {})) for j in jobs]
+    parent_ids = [j.get("parent_job_id") for j in jobs]
+    root_ids = [j.get("root_job_id") for j in jobs]
+    max_attempts_list = [j.get("max_attempts", settings.default_max_attempts) for j in jobs]
+    priorities = [j.get("priority", 0) for j in jobs]
+    run_ats = [j.get("run_at") for j in jobs]
+    validation_job_ids = [j.get("validation_job_id") for j in jobs]
+
+    rows = await conn.fetch(
+        """
+        INSERT INTO job_queue
+            (job_type, payload, parent_job_id, root_job_id,
+             max_attempts, priority, run_at, validation_job_id)
+        SELECT
+            unnest($1::text[]),
+            unnest($2::jsonb[]),
+            unnest($3::uuid[]),
+            unnest($4::uuid[]),
+            unnest($5::int[]),
+            unnest($6::int[]),
+            COALESCE(unnest($7::timestamptz[]), NOW()),
+            unnest($8::uuid[])
+        RETURNING id
+        """,
+        job_types, payloads, parent_ids, root_ids,
+        max_attempts_list, priorities, run_ats, validation_job_ids,
+    )
+    return [str(r["id"]) for r in rows]
