@@ -1,3 +1,5 @@
+import { apiFetch } from './apiFetch';
+
 export interface Campaign {
 	id: string;
 	owner_sid: string;
@@ -22,16 +24,6 @@ export interface CampaignUpdate {
 	description?: string;
 	schedule?: string;
 	is_active?: boolean;
-}
-
-async function apiFetch(path: string, init?: RequestInit) {
-	const res = await fetch(path, { credentials: 'include', ...init });
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: res.statusText }));
-		throw new Error(err.detail ?? 'Request failed');
-	}
-	if (res.status === 204) return null;
-	return res.json();
 }
 
 export const campaignsApi = {

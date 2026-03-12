@@ -405,6 +405,46 @@ async def init_schema() -> None:
                 object_name          TEXT NOT NULL,
                 detected_at          TIMESTAMPTZ DEFAULT NOW()
             );
+
+            -- ── Job Queue (PostgreSQL-native, SKIP LOCKED) ────────────────────
+
+            CREATE TABLE IF NOT EXISTS job_queue (
+                id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                job_type          TEXT NOT NULL,
+                payload           JSONB NOT NULL DEFAULT '{}',
+                parent_job_id     UUID REFERENCES job_queue(id) ON DELETE SET NULL,
+                root_job_id       UUID REFERENCES job_queue(id) ON DELETE SET NULL,
+                status            TEXT NOT NULL DEFAULT 'pending'
+                                      CHECK (status IN ('pending','claimed','running','done','failed','dead')),
+                attempts          INT NOT NULL DEFAULT 0,
+                max_attempts      INT NOT NULL DEFAULT 3,
+                last_error        TEXT,
+                run_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                priority          INT NOT NULL DEFAULT 0,
+                heartbeat_at      TIMESTAMPTZ,
+                worker_id         TEXT,
+                created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                claimed_at        TIMESTAMPTZ,
+                started_at        TIMESTAMPTZ,
+                completed_at      TIMESTAMPTZ,
+                validation_job_id UUID REFERENCES validation_jobs(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS job_queue_dequeue_idx
+                ON job_queue (status, run_at, priority DESC, created_at ASC)
+                WHERE status = 'pending';
+
+            CREATE INDEX IF NOT EXISTS job_queue_heartbeat_idx
+                ON job_queue (status, heartbeat_at)
+                WHERE status IN ('claimed', 'running');
+
+            CREATE INDEX IF NOT EXISTS job_queue_parent_idx
+                ON job_queue (parent_job_id, status)
+                WHERE parent_job_id IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS job_queue_dead_idx
+                ON job_queue (status, job_type, created_at DESC)
+                WHERE status = 'dead';
         """)
             # Full-text search on sessions (title + query)
             await conn.execute("""

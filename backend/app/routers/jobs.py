@@ -56,16 +56,24 @@ async def create_job(campaign_id: str, body: JobCreate, user=Depends(get_current
     except DatabaseNotConfigured:
         raise _no_db()
 
-    # Enqueue via DBOS if available
+    # Enqueue job for job-runner processing
     try:
-        from dbos import DBOS
-        from worker.workflows import validate_job_workflow
-        DBOS.start_workflow(validate_job_workflow, job["id"])
-        logger.info("DBOS workflow started for job %s", job["id"])
-    except ImportError:
-        logger.warning("DBOS not installed — job %s queued but no worker will process it", job["id"])
+        import json as _json
+        from app.db import get_pool
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO job_queue (job_type, payload, validation_job_id)
+                VALUES ('validation_campaign', $1::jsonb, $2::uuid)
+                """,
+                _json.dumps({"validation_job_id": job["id"]}),
+                job["id"],
+            )
+            await conn.execute("SELECT pg_notify('job_available', $1)", job["id"])
+        logger.info("Enqueued validation_campaign job for validation_job %s", job["id"])
     except Exception as exc:
-        logger.error("Failed to start DBOS workflow for job %s: %s", job["id"], exc)
+        logger.error("Failed to enqueue job %s: %s", job["id"], exc)
 
     return job
 

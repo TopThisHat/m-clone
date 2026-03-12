@@ -57,17 +57,6 @@ async def startup():
     if settings.database_url or settings.aws_secret_name:
         await init_schema()
     scheduler.start()
-    # Initialize DBOS for start_workflow capability (no executor — worker handles execution)
-    try:
-        import os
-        from dbos import DBOS, DBOSConfig
-        db_url = settings.database_url or os.environ.get("DATABASE_URL", "")
-        if db_url:
-            DBOS(config=DBOSConfig(name="scout-api", database_url=db_url))
-    except ImportError:
-        pass  # DBOS not installed; job enqueueing will warn but not fail
-    except Exception:
-        pass  # DBOS config errors are non-fatal for API startup
 
 
 @app.on_event("shutdown")

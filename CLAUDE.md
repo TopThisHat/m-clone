@@ -28,11 +28,6 @@ npm run check      # Type checking + Svelte validation
 npm run build      # Production build
 ```
 
-### Scout App (secondary SvelteKit app)
-```bash
-cd scout-app
-npm run dev        # Start on port 5174
-```
 
 ## Environment Configuration
 
@@ -51,8 +46,7 @@ Copy `.env.example` (root) and `backend/.env.example`. Key variables:
 ### System Components
 
 ```
-frontend/         SvelteKit 2 + Svelte 5 + TailwindCSS — main user UI
-scout-app/        SvelteKit — entity validation management UI
+frontend/         SvelteKit 2 + Svelte 5 + TailwindCSS — main user UI (Scout at /campaigns)
 backend/app/      FastAPI — REST API + SSE streaming
 backend/worker/   DBOS durable workflows — async validation orchestration
 PostgreSQL        Primary datastore

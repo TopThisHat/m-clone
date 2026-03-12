@@ -79,14 +79,22 @@ async def _trigger_campaign(campaign: dict) -> None:
         return
 
     try:
-        from dbos import DBOS
-        from worker.workflows import validate_job_workflow
-        DBOS.start_workflow(validate_job_workflow, job["id"])
-        logger.info("Scheduled job %s started for campaign %s", job["id"], campaign["id"])
-    except ImportError:
-        logger.warning("DBOS not installed — scheduled job %s queued but no worker will process it", job["id"])
+        import json as _json
+        from app.db import get_pool
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO job_queue (job_type, payload, validation_job_id)
+                VALUES ('validation_campaign', $1::jsonb, $2::uuid)
+                """,
+                _json.dumps({"validation_job_id": job["id"]}),
+                job["id"],
+            )
+            await conn.execute("SELECT pg_notify('job_available', $1)", job["id"])
+        logger.info("Scheduled job %s enqueued for campaign %s", job["id"], campaign["id"])
     except Exception as exc:
-        logger.error("Campaign %s: failed to start DBOS workflow: %s", campaign["id"], exc)
+        logger.error("Campaign %s: failed to enqueue job: %s", campaign["id"], exc)
 
     try:
         await db_update_campaign_next_run(campaign["id"], next_run)

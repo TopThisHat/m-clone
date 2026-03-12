@@ -69,6 +69,12 @@
 					>
 						Teams
 					</a>
+					<a
+						href="/campaigns"
+						class="text-xs text-slate-500 hover:text-gold transition-colors px-2 py-1 rounded hover:bg-navy-800"
+					>
+						Scout
+					</a>
 					<NotificationBell />
 				{/if}
 				<ThemeToggle />

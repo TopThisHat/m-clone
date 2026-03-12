@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: job-runner
+  labels:
+    app: job-runner
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: job-runner
+  template:
+    metadata:
+      labels:
+        app: job-runner
+    spec:
+      containers:
+      - name: job-runner
+        image: job-runner:latest
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: database-url
+        - name: MAX_CONCURRENCY
+          value: "50"
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: openai-api-key
+        - name: TAVILY_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: tavily-api-key
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "kill -SIGTERM 1 && sleep 60"]
+      terminationGracePeriodSeconds: 90

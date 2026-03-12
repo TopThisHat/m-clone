@@ -29,6 +29,21 @@ services:
       timeout: 5s
       retries: 10
 
+  job-runner:
+    build:
+      context: .
+      dockerfile: job-runner/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/research
+      MAX_CONCURRENCY: "20"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
