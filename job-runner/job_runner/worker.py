@@ -39,6 +39,7 @@ class WorkerPool:
     def __init__(self) -> None:
         self._sem = asyncio.Semaphore(settings.max_concurrency)
         self._shutdown = asyncio.Event()
+        self._poll_finished = asyncio.Event()
         self._wake = asyncio.Event()
         self._active: set[asyncio.Task] = set()
         self._worker_id = f"{socket.gethostname()}:{os.getpid()}"
@@ -59,10 +60,19 @@ class WorkerPool:
             await asyncio.gather(reclaim_task, reconcile_task, listen_task, return_exceptions=True)
 
     async def drain(self) -> None:
-        """Signal shutdown and wait for in-flight jobs to finish."""
-        logger.info("WorkerPool draining %d active jobs…", len(self._active))
+        """
+        Signal shutdown and wait for in-flight jobs to finish.
+
+        We wait for _poll_finished before snapshotting _active to close the
+        race window where _poll_loop has dequeued jobs but not yet added their
+        tasks to _active.
+        """
+        logger.info("WorkerPool draining…")
         self._shutdown.set()
+        self._wake.set()  # unblock any sleeping wait_for
+        await self._poll_finished.wait()
         if self._active:
+            logger.info("Waiting for %d in-flight job(s)…", len(self._active))
             await asyncio.gather(*list(self._active), return_exceptions=True)
         logger.info("WorkerPool drained")
 
@@ -144,23 +154,27 @@ class WorkerPool:
                 logger.warning("Reconcile error: %s", exc)
 
     async def _poll_loop(self) -> None:
-        while not self._shutdown.is_set():
-            free = settings.max_concurrency - len(self._active)
-            if free > 0:
-                jobs = await dequeue(self._worker_id, batch_size=min(free, 10))
-                for job in jobs:
-                    await self._sem.acquire()
-                    task = asyncio.create_task(self._run_job(job))
-                    self._active.add(task)
-                    task.add_done_callback(lambda t: (self._active.discard(t), self._sem.release()))
-                if jobs:
-                    continue  # immediately try for more
+        try:
+            while not self._shutdown.is_set():
+                free = settings.max_concurrency - len(self._active)
+                if free > 0:
+                    jobs = await dequeue(self._worker_id, batch_size=min(free, 10))
+                    for job in jobs:
+                        await self._sem.acquire()
+                        task = asyncio.create_task(self._run_job(job))
+                        self._active.add(task)
+                        task.add_done_callback(lambda t: (self._active.discard(t), self._sem.release()))
+                    if jobs:
+                        continue  # immediately try for more
 
-            try:
-                await asyncio.wait_for(self._wake.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                pass
-            self._wake.clear()
+                try:
+                    await asyncio.wait_for(self._wake.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
+                self._wake.clear()
+        finally:
+            # Signal drain() that no more tasks will be added to _active.
+            self._poll_finished.set()
 
     async def _run_job(self, job: dict) -> None:
         job_id = str(job["id"])

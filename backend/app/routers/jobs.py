@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
-    db_create_validation_job,
+    db_create_and_enqueue_validation_job,
     db_get_campaign,
     db_get_knowledge_for_campaign,
     db_get_scores,
@@ -46,7 +46,7 @@ async def _get_owned_campaign(campaign_id: str, user_sid: str):
 async def create_job(campaign_id: str, body: JobCreate, user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
-        job = await db_create_validation_job(
+        job = await db_create_and_enqueue_validation_job(
             campaign_id=campaign_id,
             triggered_by="user",
             triggered_sid=user["sub"],
@@ -56,25 +56,7 @@ async def create_job(campaign_id: str, body: JobCreate, user=Depends(get_current
     except DatabaseNotConfigured:
         raise _no_db()
 
-    # Enqueue job for job-runner processing
-    try:
-        import json as _json
-        from app.db import get_pool
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO job_queue (job_type, payload, validation_job_id)
-                VALUES ('validation_campaign', $1::jsonb, $2::uuid)
-                """,
-                _json.dumps({"validation_job_id": job["id"]}),
-                job["id"],
-            )
-            await conn.execute("SELECT pg_notify('job_available', $1)", job["id"])
-        logger.info("Enqueued validation_campaign job for validation_job %s", job["id"])
-    except Exception as exc:
-        logger.error("Failed to enqueue job %s: %s", job["id"], exc)
-
+    logger.info("Created and enqueued validation_job %s", job["id"])
     return job
 
 

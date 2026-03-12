@@ -1359,6 +1359,44 @@ async def db_create_validation_job(campaign_id: str, triggered_by: str,
     return _job_vrow_to_dict(row)
 
 
+async def db_create_and_enqueue_validation_job(
+    campaign_id: str,
+    triggered_by: str,
+    triggered_sid: str | None = None,
+    entity_filter: list[str] | None = None,
+    attribute_filter: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Atomically create a validation_job AND insert a job_queue entry in one
+    transaction. If either operation fails nothing is committed, preventing
+    orphaned validation_jobs that no worker will ever process.
+    """
+    import json as _json
+    async with _acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                INSERT INTO validation_jobs
+                    (campaign_id, triggered_by, triggered_sid, entity_filter, attribute_filter)
+                VALUES ($1::uuid, $2, $3, $4::uuid[], $5::uuid[])
+                RETURNING *
+                """,
+                campaign_id, triggered_by, triggered_sid,
+                entity_filter or None, attribute_filter or None,
+            )
+            job_id = str(row["id"])
+            await conn.execute(
+                """
+                INSERT INTO job_queue (job_type, payload, validation_job_id)
+                VALUES ('validation_campaign', $1::jsonb, $2::uuid)
+                """,
+                _json.dumps({"validation_job_id": job_id}),
+                job_id,
+            )
+            await conn.execute("SELECT pg_notify('job_available', $1)", job_id)
+    return _job_vrow_to_dict(row)
+
+
 async def db_list_validation_jobs(campaign_id: str) -> list[dict[str, Any]]:
     async with _acquire() as conn:
         rows = await conn.fetch(

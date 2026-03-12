@@ -27,52 +27,89 @@ class ValidationCampaignWorkflow(BaseWorkflow):
 
     async def run(self) -> None:
         from app.db import db_get_job_details, db_update_validation_job
-        from job_runner.queue import enqueue
+        from job_runner.db import get_pool
+        from job_runner.config import settings as _settings
+        from job_runner.queue import enqueue_many
 
         job_id = self.payload["validation_job_id"]
 
         entities, attributes = await db_get_job_details(job_id)
         pairs = [(str(e["id"]), str(a["id"])) for e in entities for a in attributes]
-
-        await db_update_validation_job(
-            job_id,
-            status="running",
-            total_pairs=len(pairs),
-            started_at=datetime.now(timezone.utc),
-        )
-        logger.info("ValidationCampaign job=%s: fanning out %d pairs", job_id, len(pairs))
-
         campaign_id = str(entities[0]["campaign_id"]) if entities else None
 
-        for entity_id, attribute_id in pairs:
-            await enqueue(
-                "validation_pair",
-                payload={
-                    "validation_job_id": job_id,
-                    "campaign_id": campaign_id,
-                    "entity_id": entity_id,
-                    "attribute_id": attribute_id,
-                },
-                parent_job_id=self.job_id,
-                root_job_id=self.job_id,
-                validation_job_id=job_id,
-                max_attempts=3,
-            )
+        logger.info("ValidationCampaign job=%s: fanning out %d pairs", job_id, len(pairs))
+
+        # All pair enqueues happen in a single transaction along with the
+        # status update. If the process crashes mid-loop nothing is committed,
+        # so on retry we start fresh with a clean fan-out.
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                # Idempotency: skip if pairs already enqueued for this root job
+                # (handles the case where the campaign job itself is retried)
+                existing = await conn.fetchval(
+                    "SELECT COUNT(*) FROM job_queue WHERE root_job_id = $1::uuid",
+                    self.job_id,
+                )
+                if existing > 0:
+                    logger.info(
+                        "ValidationCampaign job=%s: %d pairs already enqueued, skipping fan-out",
+                        job_id, existing,
+                    )
+                else:
+                    pair_jobs = [
+                        {
+                            "job_type": "validation_pair",
+                            "payload": {
+                                "validation_job_id": job_id,
+                                "campaign_id": campaign_id,
+                                "entity_id": entity_id,
+                                "attribute_id": attribute_id,
+                            },
+                            "parent_job_id": self.job_id,
+                            "root_job_id": self.job_id,
+                            "validation_job_id": job_id,
+                            "max_attempts": _settings.default_max_attempts,
+                        }
+                        for entity_id, attribute_id in pairs
+                    ]
+                    await enqueue_many(pair_jobs, conn=conn)
+
+                await conn.execute(
+                    """
+                    UPDATE validation_jobs
+                    SET status = 'running', total_pairs = $2, started_at = $3
+                    WHERE id = $1::uuid AND status != 'running'
+                    """,
+                    job_id, len(pairs), datetime.now(timezone.utc),
+                )
+                # Notify workers about the new batch
+                await conn.execute(
+                    "SELECT pg_notify($1, $2)",
+                    _settings.listen_channel,
+                    job_id,
+                )
 
 
 async def finalize_validation_job(validation_job_id: str, root_queue_job_id: str) -> None:
     """
     Finalize a validation_job once all its pair children have reached a terminal
-    state (done or dead). Determines final status:
-      - 'done'   if all pairs completed successfully
+    state (done or dead).
+
+    Uses a conditional UPDATE (WHERE status = 'running') as an atomic compare-and-swap
+    so that concurrent callers (on_dead hook, _maybe_finalize, reconcile loop) are
+    all safe: exactly one wins the race and proceeds; the rest are silent no-ops.
+
+    Final status:
       - 'failed' if every pair went dead
-      - 'done'   (partial) if some pairs succeeded and some died
-    Called by _maybe_finalize, on_dead, and the reconcile loop.
+      - 'done'   otherwise (with error note if some pairs died)
     """
-    from app.db import db_get_job_combined_report, db_recompute_scores, db_update_validation_job
+    from app.db import db_get_job_combined_report, db_recompute_scores
     from job_runner.db import get_pool
 
     pool = await get_pool()
+
+    # Count terminal outcomes for all pair children
     async with pool.acquire() as conn:
         counts = await conn.fetchrow(
             """
@@ -90,40 +127,55 @@ async def finalize_validation_job(validation_job_id: str, root_queue_job_id: str
     done_count = counts["done_count"] or 0
     total = counts["total"] or 0
 
-    if dead_count == total:
-        # Every pair failed — mark as failed
-        await db_update_validation_job(
+    if dead_count == total and total > 0:
+        final_status = "failed"
+        error = f"All {dead_count} pair job(s) exhausted retries"
+    else:
+        final_status = "done"
+        error = f"{dead_count} of {total} pair(s) failed" if dead_count else None
+
+    # Atomic CAS: only the first caller transitions 'running' → final_status.
+    # If validation_job is already done/failed (another worker beat us), RETURNING
+    # yields no rows and we skip the expensive score recompute + publish.
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE validation_jobs
+            SET status = $2, error = $3, completed_at = NOW()
+            WHERE id = $1::uuid AND status = 'running'
+            RETURNING id
+            """,
             validation_job_id,
-            status="failed",
-            error=f"All {dead_count} pair job(s) exhausted retries",
-            completed_at=datetime.now(timezone.utc),
+            final_status,
+            error,
         )
-        logger.error("Validation job %s FAILED: all %d pairs dead", validation_job_id, dead_count)
+
+    if row is None:
+        # Another worker already finalized this job — nothing to do.
+        logger.debug("Validation job %s already finalized by another worker", validation_job_id)
         return
 
-    # At least some pairs succeeded — compute scores and mark done (partial if any dead)
-    await db_recompute_scores(validation_job_id)
-    final_status = "done"
-    error = f"{dead_count} of {total} pair(s) failed" if dead_count else None
-    await db_update_validation_job(
-        validation_job_id,
-        status=final_status,
-        error=error,
-        completed_at=datetime.now(timezone.utc),
-    )
     logger.info(
-        "Validation job %s finalized: %d done, %d dead of %d total",
-        validation_job_id, done_count, dead_count, total,
+        "Validation job %s finalized → %s (%d done, %d dead of %d total)",
+        validation_job_id, final_status, done_count, dead_count, total,
     )
 
-    try:
-        combined_report = await db_get_job_combined_report(validation_job_id)
-        if combined_report:
-            from app.queue import publish_for_extraction
-            await publish_for_extraction(validation_job_id, combined_report)
-            logger.info("Validation job %s: published combined report for KG extraction", validation_job_id)
-    except Exception as exc:
-        logger.warning("Validation job %s: failed to publish for KG extraction: %s", validation_job_id, exc)
+    if final_status == "done":
+        try:
+            await db_recompute_scores(validation_job_id)
+        except Exception as exc:
+            logger.error("Validation job %s: score recompute failed: %s", validation_job_id, exc)
+
+        try:
+            combined_report = await db_get_job_combined_report(validation_job_id)
+            if combined_report:
+                from app.queue import publish_for_extraction
+                await publish_for_extraction(validation_job_id, combined_report)
+                logger.info("Validation job %s: published combined report for KG extraction", validation_job_id)
+        except Exception as exc:
+            logger.warning("Validation job %s: failed to publish for KG extraction: %s", validation_job_id, exc)
+    else:
+        logger.error("Validation job %s FAILED: all %d pairs dead", validation_job_id, dead_count)
 
 
 @registry.register("validation_pair")

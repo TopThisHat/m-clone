@@ -68,10 +68,15 @@ async def dequeue(worker_id: str, batch_size: int = 1) -> list[dict[str, Any]]:
             if not rows:
                 return []
             ids = [r["id"] for r in rows]
+            # Write heartbeat_at immediately on claim so NULL-safe reclaim
+            # can recover this job if the worker dies before the first heartbeat tick.
             await conn.execute(
                 """
                 UPDATE job_queue
-                SET status = 'claimed', claimed_at = NOW(), worker_id = $1
+                SET status = 'claimed',
+                    claimed_at = NOW(),
+                    heartbeat_at = NOW(),
+                    worker_id = $1
                 WHERE id = ANY($2)
                 """,
                 worker_id,
@@ -186,7 +191,10 @@ async def reclaim_stale(stale_threshold_seconds: int) -> int:
             UPDATE job_queue
             SET status = 'pending', worker_id = NULL, heartbeat_at = NULL
             WHERE status IN ('claimed', 'running')
-              AND heartbeat_at < NOW() - ($1 || ' seconds')::interval
+              AND (
+                  heartbeat_at IS NULL
+                  OR heartbeat_at < NOW() - ($1 || ' seconds')::interval
+              )
             """,
             str(stale_threshold_seconds),
         )
@@ -195,3 +203,42 @@ async def reclaim_stale(stale_threshold_seconds: int) -> int:
             await conn.execute("SELECT pg_notify($1, 'reclaim')", settings.listen_channel)
             logger.info("Reclaimed %d stale jobs", count)
         return count
+
+
+async def enqueue_many(
+    jobs: list[dict],
+    *,
+    conn,
+) -> list[str]:
+    """
+    Insert multiple jobs in a single transaction using the provided connection.
+    Each entry in `jobs` is a dict with keys matching enqueue() keyword args:
+      job_type, payload, parent_job_id, root_job_id, max_attempts,
+      priority, run_at, validation_job_id
+    Returns list of job IDs in insertion order.
+    Caller is responsible for managing the transaction and pg_notify.
+    """
+    from job_runner.config import settings
+    ids = []
+    for job in jobs:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO job_queue
+                (job_type, payload, parent_job_id, root_job_id,
+                 max_attempts, priority, run_at, validation_job_id)
+            VALUES
+                ($1, $2::jsonb, $3::uuid, $4::uuid,
+                 $5, $6, COALESCE($7::timestamptz, NOW()), $8::uuid)
+            RETURNING id
+            """,
+            job["job_type"],
+            json.dumps(job.get("payload", {})),
+            job.get("parent_job_id"),
+            job.get("root_job_id"),
+            job.get("max_attempts", settings.default_max_attempts),
+            job.get("priority", 0),
+            job.get("run_at"),
+            job.get("validation_job_id"),
+        )
+        ids.append(str(row["id"]))
+    return ids
