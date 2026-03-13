@@ -263,6 +263,8 @@ class ValidationPairWorkflow(BaseWorkflow):
         vj = await db_get_validation_job(job_id)
         if vj and vj.get("status") == "failed":
             logger.info("validation_pair job=%s: parent cancelled, skipping", job_id)
+            await db_increment_job_progress(job_id)
+            await self._maybe_finalize(job_id)
             return
 
         # Cache check
@@ -292,6 +294,8 @@ class ValidationPairWorkflow(BaseWorkflow):
         vj = await db_get_validation_job(job_id)
         if vj and vj.get("status") == "failed":
             logger.info("validation_pair job=%s: parent cancelled after research, skipping LLM", job_id)
+            await db_increment_job_progress(job_id)
+            await self._maybe_finalize(job_id)
             return
 
         result = await determine_presence(entity, attribute, report_md)

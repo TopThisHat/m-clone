@@ -9,7 +9,7 @@ import time
 from aiohttp import web
 
 _start_time = time.time()
-_counters: dict[str, int] = {"jobs_processed": 0, "jobs_failed": 0, "jobs_dead": 0}
+_counters: dict[str, int] = {"jobs_processed": 0, "jobs_failed": 0, "jobs_dead": 0, "on_dead_failures": 0}
 _gauges: dict[str, int] = {"active_jobs": 0}
 
 

@@ -63,7 +63,7 @@ class WorkerPool:
             listen_task.cancel()
             await asyncio.gather(reclaim_task, reconcile_task, listen_task, return_exceptions=True)
 
-    async def drain(self) -> None:
+    async def drain(self, timeout: int = 30) -> None:
         """
         Signal shutdown and wait for in-flight jobs to finish.
 
@@ -74,7 +74,10 @@ class WorkerPool:
         logger.info("WorkerPool draining…")
         self._shutdown.set()
         self._wake.set()  # unblock any sleeping wait_for
-        await self._poll_finished.wait()
+        try:
+            await asyncio.wait_for(self._poll_finished.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.error("Poll loop did not finish within %ds during drain", timeout)
         if self._active:
             logger.info("Waiting for %d in-flight job(s)…", len(self._active))
             await asyncio.gather(*list(self._active), return_exceptions=True)
@@ -165,17 +168,23 @@ class WorkerPool:
                     jobs = await dequeue(self._worker_id, batch_size=min(free, 10))
                     for job in jobs:
                         await self._sem.acquire()
-                        task = asyncio.create_task(self._run_job(job))
-                        self._active.add(task)
-                        task.add_done_callback(lambda t: (self._active.discard(t), self._sem.release()))
+                        try:
+                            task = asyncio.create_task(self._run_job(job))
+                            self._active.add(task)
+                            task.add_done_callback(lambda t: (self._active.discard(t), self._sem.release()))
+                        except Exception:
+                            self._sem.release()
+                            raise
                     if jobs:
                         continue  # immediately try for more
 
+                # Clear before waiting to avoid losing notifications that arrive
+                # between the previous iteration and this wait.
+                self._wake.clear()
                 try:
                     await asyncio.wait_for(self._wake.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
                     pass
-                self._wake.clear()
         finally:
             # Signal drain() that no more tasks will be added to _active.
             self._poll_finished.set()

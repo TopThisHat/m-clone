@@ -50,9 +50,20 @@ async def main() -> None:
 
     worker = WorkerPool()
 
+    _shutdown_triggered = False
+
+    def _make_signal_handler(w: WorkerPool):
+        def handler():
+            nonlocal _shutdown_triggered
+            if _shutdown_triggered:
+                return
+            _shutdown_triggered = True
+            asyncio.create_task(_shutdown(w))
+        return handler
+
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown(worker)))
+        loop.add_signal_handler(sig, _make_signal_handler(worker))
 
     try:
         await worker.run()

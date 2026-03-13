@@ -52,6 +52,8 @@ class WorkflowRegistry:
             await handler_cls.on_dead(job)
         except Exception as exc:
             logger.error("on_dead hook failed for job %s (%s): %s", job["id"], job["job_type"], exc)
+            from job_runner import metrics
+            metrics.inc("on_dead_failures")
 
 
 registry = WorkflowRegistry()

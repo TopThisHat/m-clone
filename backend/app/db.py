@@ -1433,21 +1433,22 @@ async def db_clone_campaign(source_id: str, owner_sid: str) -> dict[str, Any]:
 
 async def db_cancel_job(job_id: str) -> bool:
     async with _acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            UPDATE validation_jobs SET status='failed', error='Cancelled by user', completed_at=NOW()
-            WHERE id = $1::uuid AND status IN ('queued', 'running') RETURNING id
-            """,
-            job_id,
-        )
-        if row:
-            await conn.execute(
+        async with conn.transaction():
+            row = await conn.fetchrow(
                 """
-                UPDATE job_queue SET status='dead', completed_at=NOW()
-                WHERE validation_job_id = $1::uuid AND status NOT IN ('done', 'dead')
+                UPDATE validation_jobs SET status='failed', error='Cancelled by user', completed_at=NOW()
+                WHERE id = $1::uuid AND status IN ('queued', 'running') RETURNING id
                 """,
                 job_id,
             )
+            if row:
+                await conn.execute(
+                    """
+                    UPDATE job_queue SET status='dead', completed_at=NOW()
+                    WHERE validation_job_id = $1::uuid AND status NOT IN ('done', 'dead')
+                    """,
+                    job_id,
+                )
     return row is not None
 
 
@@ -2270,6 +2271,12 @@ async def db_lookup_knowledge_batch(
         return {}
     gwm_ids = [g for g, _ in pairs]
     attr_labels = [a for _, a in pairs]
+    if len(gwm_ids) != len(attr_labels):
+        logger.error(
+            "db_lookup_knowledge_batch: mismatched arrays (%d gwm_ids vs %d labels) — skipping",
+            len(gwm_ids), len(attr_labels),
+        )
+        return {}
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
@@ -2285,14 +2292,33 @@ async def db_lookup_knowledge_batch(
 
 
 async def db_insert_results_batch(job_id: str, hits: list[dict[str, Any]]) -> None:
-    """Insert validation results for cache hits (no research needed)."""
-    for hit in hits:
-        await db_insert_result(
-            job_id,
-            hit["entity_id"],
-            hit["attribute_id"],
-            {"present": hit["present"], "confidence": hit.get("confidence"), "evidence": hit.get("evidence")},
-            "",
-            update_knowledge=False,
-        )
-        await db_increment_job_progress(job_id)
+    """Insert validation results for cache hits in a single transaction."""
+    if not hits:
+        return
+    async with _acquire() as conn:
+        async with conn.transaction():
+            for hit in hits:
+                await conn.execute(
+                    """
+                    INSERT INTO validation_results
+                        (job_id, entity_id, attribute_id, present, confidence, evidence, report_md)
+                    VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, '')
+                    ON CONFLICT (job_id, entity_id, attribute_id) DO UPDATE SET
+                        present    = EXCLUDED.present,
+                        confidence = EXCLUDED.confidence,
+                        evidence   = EXCLUDED.evidence
+                    """,
+                    job_id, hit["entity_id"], hit["attribute_id"],
+                    hit["present"], hit.get("confidence"), hit.get("evidence"),
+                )
+            # Single count-based progress update after all rows are inserted
+            await conn.execute(
+                """
+                UPDATE validation_jobs
+                SET completed_pairs = (
+                    SELECT COUNT(*) FROM validation_results WHERE job_id = $1::uuid
+                )
+                WHERE id = $1::uuid
+                """,
+                job_id,
+            )
