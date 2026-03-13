@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from app.auth import get_current_user
@@ -8,10 +8,12 @@ from app.db import (
     db_create_campaign,
     db_delete_campaign,
     db_get_campaign,
+    db_get_campaign_stats,
+    db_is_team_member,
     db_list_campaigns,
     db_update_campaign,
 )
-from app.models.campaign import CampaignCreate, CampaignOut, CampaignUpdate
+from app.models.campaign import CampaignCreate, CampaignOut, CampaignStatsOut, CampaignUpdate
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 
@@ -31,22 +33,49 @@ def _forbidden() -> HTTPException:
     return HTTPException(status_code=403, detail="Forbidden")
 
 
-@router.get("", response_model=list[CampaignOut])
-async def list_campaigns(user=Depends(get_current_user)):
+async def _assert_campaign_access(campaign: dict, user_sid: str) -> None:
+    """Raise 403 if user cannot access this campaign."""
+    if campaign.get("team_id"):
+        if not await db_is_team_member(campaign["team_id"], user_sid):
+            raise _forbidden()
+    elif campaign["owner_sid"] != user_sid:
+        raise _forbidden()
+
+
+@router.get("/stats", response_model=CampaignStatsOut)
+async def get_campaign_stats(
+    team_id: str | None = Query(default=None),
+    user=Depends(get_current_user),
+):
     try:
-        return await db_list_campaigns(owner_sid=user["sub"])
+        return await db_get_campaign_stats(owner_sid=user["sub"], team_id=team_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("", response_model=list[CampaignOut])
+async def list_campaigns(
+    team_id: str | None = Query(default=None),
+    user=Depends(get_current_user),
+):
+    try:
+        return await db_list_campaigns(owner_sid=user["sub"], team_id=team_id)
     except DatabaseNotConfigured:
         raise _no_db()
 
 
 @router.post("", response_model=CampaignOut, status_code=201)
 async def create_campaign(body: CampaignCreate, user=Depends(get_current_user)):
+    if body.team_id:
+        if not await db_is_team_member(body.team_id, user["sub"]):
+            raise _forbidden()
     try:
         return await db_create_campaign(
             owner_sid=user["sub"],
             name=body.name,
             description=body.description,
             schedule=body.schedule,
+            team_id=body.team_id,
         )
     except DatabaseNotConfigured:
         raise _no_db()
@@ -60,8 +89,7 @@ async def get_campaign(campaign_id: str, user=Depends(get_current_user)):
         raise _no_db()
     if not campaign:
         raise _not_found()
-    if campaign["owner_sid"] != user["sub"]:
-        raise _forbidden()
+    await _assert_campaign_access(campaign, user["sub"])
     return campaign
 
 
@@ -73,8 +101,7 @@ async def update_campaign(campaign_id: str, body: CampaignUpdate, user=Depends(g
         raise _no_db()
     if not campaign:
         raise _not_found()
-    if campaign["owner_sid"] != user["sub"]:
-        raise _forbidden()
+    await _assert_campaign_access(campaign, user["sub"])
     patch = body.model_dump(exclude_none=True)
     updated = await db_update_campaign(campaign_id, patch)
     return updated
@@ -88,8 +115,7 @@ async def clone_campaign(campaign_id: str, user=Depends(get_current_user)):
         raise _no_db()
     if not campaign:
         raise _not_found()
-    if campaign["owner_sid"] != user["sub"]:
-        raise _forbidden()
+    await _assert_campaign_access(campaign, user["sub"])
     try:
         return await db_clone_campaign(campaign_id, user["sub"])
     except DatabaseNotConfigured:

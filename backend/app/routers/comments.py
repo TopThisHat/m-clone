@@ -1,9 +1,10 @@
 """
-Comments router: CRUD + @mention notification trigger.
+Comments router: CRUD + @mention notification trigger + reply notifications.
 """
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -16,6 +17,7 @@ from app.db import (
     db_delete_comment,
     db_get_comment,
     db_get_session,
+    db_get_session_mentionable_users,
     db_get_user,
     db_list_comments,
 )
@@ -25,9 +27,25 @@ router = APIRouter(tags=["comments"])
 MENTION_RE = re.compile(r"@([A-Za-z0-9_.\-]+)")
 
 
+class HighlightAnchor(BaseModel):
+    quote: str
+    context_before: str = ""
+    context_after: str = ""
+
+
 class CommentCreate(BaseModel):
     body: str
     parent_id: str | None = None
+    highlight_anchor: HighlightAnchor | None = None
+
+
+@router.get("/api/sessions/{session_id}/mentionable-users")
+async def list_mentionable_users(session_id: str, user=Depends(get_current_user)):
+    """Users that can be @mentioned — members of teams this session is shared with."""
+    try:
+        return await db_get_session_mentionable_users(session_id)
+    except DatabaseNotConfigured:
+        return []
 
 
 @router.get("/api/sessions/{session_id}/comments")
@@ -46,8 +64,9 @@ async def create_comment(session_id: str, body: CommentCreate, user=Depends(get_
             raise HTTPException(status_code=404, detail="Session not found")
 
         # Parse @mentions
-        mentions = MENTION_RE.findall(body.body)
-        mentions = list(set(mentions))  # deduplicate
+        mentions = list(set(MENTION_RE.findall(body.body)))
+
+        anchor_dict = body.highlight_anchor.model_dump() if body.highlight_anchor else None
 
         comment = await db_create_comment(
             session_id=session_id,
@@ -55,12 +74,16 @@ async def create_comment(session_id: str, body: CommentCreate, user=Depends(get_
             body=body.body,
             mentions=mentions,
             parent_id=body.parent_id,
+            highlight_anchor=anchor_dict,
         )
 
-        # Create notifications for each mentioned SID that exists
+        author_name = user.get("display_name", user["sub"])
+        session_title = session.get("title", "")
+
+        # Notify @mentions
         for mentioned_sid in mentions:
             if mentioned_sid == user["sub"]:
-                continue  # don't notify self
+                continue
             try:
                 target = await db_get_user(mentioned_sid)
                 if target:
@@ -69,15 +92,36 @@ async def create_comment(session_id: str, body: CommentCreate, user=Depends(get_
                         type_="mention",
                         payload={
                             "session_id": session_id,
-                            "session_title": session.get("title", ""),
+                            "session_title": session_title,
                             "comment_id": comment["id"],
                             "author_sid": user["sub"],
-                            "author_name": user.get("display_name", user["sub"]),
+                            "author_name": author_name,
                             "body_preview": body.body[:100],
                         },
                     )
             except Exception:
-                pass  # never block comment creation due to notification failure
+                pass
+
+        # Notify parent comment author on reply
+        if body.parent_id:
+            try:
+                parent = await db_get_comment(body.parent_id)
+                if parent and parent["author_sid"] != user["sub"]:
+                    await db_create_notification(
+                        recipient_sid=parent["author_sid"],
+                        type_="reply",
+                        payload={
+                            "session_id": session_id,
+                            "session_title": session_title,
+                            "comment_id": comment["id"],
+                            "parent_id": body.parent_id,
+                            "author_sid": user["sub"],
+                            "author_name": author_name,
+                            "body_preview": body.body[:100],
+                        },
+                    )
+            except Exception:
+                pass
 
         return comment
     except DatabaseNotConfigured:

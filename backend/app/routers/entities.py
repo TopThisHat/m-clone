@@ -9,10 +9,11 @@ from app.db import (
     db_delete_entity,
     db_get_campaign,
     db_import_entities,
+    db_is_team_member,
     db_list_entities,
     db_update_entity,
 )
-from app.models.campaign import EntityCreate, EntityOut, EntityUpdate, ImportBody
+from app.models.campaign import BulkEntityResult, EntityCreate, EntityOut, EntityUpdate, ImportBody
 
 router = APIRouter(prefix="/api/campaigns", tags=["entities"])
 
@@ -31,7 +32,10 @@ async def _get_owned_campaign(campaign_id: str, user_sid: str):
         raise _no_db()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    if campaign["owner_sid"] != user_sid:
+    if campaign.get("team_id"):
+        if not await db_is_team_member(campaign["team_id"], user_sid):
+            raise HTTPException(status_code=403, detail="Forbidden")
+    elif campaign["owner_sid"] != user_sid:
         raise HTTPException(status_code=403, detail="Forbidden")
     return campaign
 
@@ -60,12 +64,11 @@ async def create_entity(campaign_id: str, body: EntityCreate, user=Depends(get_c
         raise _no_db()
 
 
-@router.post("/{campaign_id}/entities/bulk", response_model=list[EntityOut], status_code=201)
+@router.post("/{campaign_id}/entities/bulk", response_model=BulkEntityResult, status_code=201)
 async def bulk_create_entities(campaign_id: str, body: list[EntityCreate], user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
-        entities = [e.model_dump() for e in body]
-        return await db_bulk_create_entities(campaign_id, entities)
+        return await db_bulk_create_entities(campaign_id, [e.model_dump() for e in body])
     except DatabaseNotConfigured:
         raise _no_db()
 

@@ -3,10 +3,23 @@ GPT-4o-mini structured output to determine attribute presence from a research re
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
+from openai import AsyncOpenAI
+
 logger = logging.getLogger(__name__)
+
+_LLM_SEM = asyncio.Semaphore(5)  # max 5 concurrent LLM calls
+_client: AsyncOpenAI | None = None
+
+
+def _get_client() -> AsyncOpenAI:
+    global _client
+    if _client is None:
+        _client = AsyncOpenAI()
+    return _client
 
 
 async def determine_presence(entity: dict, attribute: dict, report_md: str) -> dict:
@@ -14,8 +27,6 @@ async def determine_presence(entity: dict, attribute: dict, report_md: str) -> d
     Ask GPT-4o-mini whether the entity possesses the attribute, based on the report.
     Returns: {"present": bool, "confidence": float, "evidence": str}
     """
-    from openai import AsyncOpenAI
-
     prompt = f"""Entity: {entity['label']}
 Attribute: {attribute['label']} — {attribute.get('description') or ''}
 Research report:
@@ -25,12 +36,13 @@ Based solely on the report, does this entity have the stated attribute?
 Return JSON only: {{"present": true|false, "confidence": 0.0-1.0, "evidence": "quote or explanation"}}"""
 
     try:
-        resp = await AsyncOpenAI().chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            max_tokens=300,
-        )
+        async with _LLM_SEM:
+            resp = await _get_client().chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                max_tokens=300,
+            )
         return json.loads(resp.choices[0].message.content)
     except Exception as exc:
         logger.error(

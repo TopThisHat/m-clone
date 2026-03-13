@@ -4,14 +4,16 @@ from fastapi.responses import Response
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
+    db_bulk_create_attributes,
     db_create_attribute,
     db_delete_attribute,
     db_get_campaign,
     db_import_attributes,
+    db_is_team_member,
     db_list_attributes,
     db_update_attribute,
 )
-from app.models.campaign import AttributeCreate, AttributeOut, AttributeUpdate, ImportBody
+from app.models.campaign import AttributeCreate, AttributeOut, AttributeUpdate, BulkAttributeResult, ImportBody
 
 router = APIRouter(prefix="/api/campaigns", tags=["attributes"])
 
@@ -30,7 +32,10 @@ async def _get_owned_campaign(campaign_id: str, user_sid: str):
         raise _no_db()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    if campaign["owner_sid"] != user_sid:
+    if campaign.get("team_id"):
+        if not await db_is_team_member(campaign["team_id"], user_sid):
+            raise HTTPException(status_code=403, detail="Forbidden")
+    elif campaign["owner_sid"] != user_sid:
         raise HTTPException(status_code=403, detail="Forbidden")
     return campaign
 
@@ -70,6 +75,15 @@ async def update_attribute(campaign_id: str, attribute_id: str, body: AttributeU
     if not updated:
         raise HTTPException(status_code=404, detail="Attribute not found")
     return updated
+
+
+@router.post("/{campaign_id}/attributes/bulk", response_model=BulkAttributeResult, status_code=201)
+async def bulk_create_attributes(campaign_id: str, body: list[AttributeCreate], user=Depends(get_current_user)):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_bulk_create_attributes(campaign_id, [a.model_dump() for a in body])
+    except DatabaseNotConfigured:
+        raise _no_db()
 
 
 @router.post("/{campaign_id}/attributes/import", response_model=list[AttributeOut], status_code=201)

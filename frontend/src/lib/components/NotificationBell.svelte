@@ -83,6 +83,8 @@
 								<p class="text-xs text-slate-200 leading-snug">
 									{#if notif.type === 'mention'}
 										<span class="font-medium">{notif.payload.author_name as string}</span> mentioned you
+									{:else if notif.type === 'reply'}
+										<span class="font-medium">{notif.payload.author_name as string}</span> replied to your comment
 									{:else if notif.type === 'share'}
 										A session was shared with your team
 									{:else if notif.type === 'comment'}

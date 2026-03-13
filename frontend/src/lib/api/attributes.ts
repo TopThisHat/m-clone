@@ -21,6 +21,11 @@ export interface AttributeUpdate {
 	weight?: number;
 }
 
+export interface BulkAttributeResult {
+	inserted: Attribute[];
+	skipped: number;
+}
+
 export const attributesApi = {
 	list: (campaignId: string): Promise<Attribute[]> =>
 		apiFetch(`/api/campaigns/${campaignId}/attributes`),
@@ -30,6 +35,13 @@ export const attributesApi = {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(data),
+		}),
+
+	bulkCreate: (campaignId: string, attributes: AttributeCreate[]): Promise<BulkAttributeResult> =>
+		apiFetch(`/api/campaigns/${campaignId}/attributes/bulk`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(attributes),
 		}),
 
 	update: (campaignId: string, attributeId: string, data: AttributeUpdate): Promise<Attribute> =>

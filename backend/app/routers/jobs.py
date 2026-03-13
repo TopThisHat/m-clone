@@ -12,10 +12,14 @@ from app.db import (
     db_create_and_enqueue_validation_job,
     db_get_campaign,
     db_get_knowledge_for_campaign,
+    db_get_queue_job_owner,
     db_get_scores,
     db_get_validation_job,
+    db_is_team_member,
+    db_list_dead_jobs,
     db_list_results,
     db_list_validation_jobs,
+    db_retry_dead_job,
 )
 from app.models.campaign import JobCreate, JobOut, KnowledgeOut, ResultOut, ScoreOut
 
@@ -38,7 +42,10 @@ async def _get_owned_campaign(campaign_id: str, user_sid: str):
         raise _no_db()
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    if campaign["owner_sid"] != user_sid:
+    if campaign.get("team_id"):
+        if not await db_is_team_member(campaign["team_id"], user_sid):
+            raise HTTPException(status_code=403, detail="Forbidden")
+    elif campaign["owner_sid"] != user_sid:
         raise HTTPException(status_code=403, detail="Forbidden")
     return campaign
 
@@ -136,6 +143,31 @@ async def cancel_job(job_id: str, user=Depends(get_current_user)):
     except DatabaseNotConfigured:
         raise _no_db()
     return {"cancelled": cancelled}
+
+
+@router.get("/api/campaigns/{campaign_id}/dead-jobs")
+async def list_dead_jobs(campaign_id: str, user=Depends(get_current_user)):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_list_dead_jobs(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.post("/api/jobs/{job_id}/retry")
+async def retry_dead_job(job_id: str, user=Depends(get_current_user)):
+    try:
+        row = await db_get_queue_job_owner(job_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await _get_owned_campaign(str(row["campaign_id"]), user["sub"])
+    try:
+        retried = await db_retry_dead_job(job_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    return {"retried": retried}
 
 
 @router.get("/api/campaigns/{campaign_id}/knowledge", response_model=list[KnowledgeOut])

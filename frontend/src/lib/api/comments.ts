@@ -1,5 +1,11 @@
 import { assertOk } from './errors';
 
+export interface Anchor {
+	quote: string;
+	context_before: string;
+	context_after: string;
+}
+
 export interface Comment {
 	id: string;
 	session_id: string;
@@ -9,22 +15,32 @@ export interface Comment {
 	body: string;
 	mentions: string[];
 	parent_id: string | null;
+	highlight_anchor: Anchor | null;
 	created_at: string;
 	updated_at: string;
 }
 
 export async function listComments(sessionId: string): Promise<Comment[]> {
 	const res = await fetch(`/api/sessions/${sessionId}/comments`, { credentials: 'include' });
-	if (!res.ok) return []; // silently degrade — no DB or not authed
+	if (!res.ok) return [];
 	return res.json();
 }
 
-export async function createComment(sessionId: string, body: string, parentId?: string): Promise<Comment> {
+export async function createComment(
+	sessionId: string,
+	body: string,
+	parentId?: string,
+	anchor?: Anchor,
+): Promise<Comment> {
 	const res = await fetch(`/api/sessions/${sessionId}/comments`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		credentials: 'include',
-		body: JSON.stringify({ body, parent_id: parentId ?? null }),
+		body: JSON.stringify({
+			body,
+			parent_id: parentId ?? null,
+			highlight_anchor: anchor ?? null,
+		}),
 	});
 	await assertOk(res, 'Failed to post comment.');
 	return res.json();

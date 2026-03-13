@@ -9,7 +9,11 @@ _pool: asyncpg.Pool | None = None
 
 async def init_db_pool() -> asyncpg.Pool:
     global _pool
-    _pool = await asyncpg.create_pool(dsn=settings.database_url)
+
+    async def _set_search_path(conn: asyncpg.Connection) -> None:
+        await conn.execute("SET search_path TO playbook, public")
+
+    _pool = await asyncpg.create_pool(dsn=settings.database_url, init=_set_search_path)
     return _pool
 
 

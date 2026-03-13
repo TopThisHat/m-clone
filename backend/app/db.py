@@ -62,11 +62,14 @@ async def get_pool() -> asyncpg.Pool:
         if _pool is not None:  # another coroutine beat us here
             return _pool
         dsn, ssl_mode = _resolve_connection()
-        kwargs: dict[str, Any] = {"dsn": dsn}
+        async def _set_search_path(conn: asyncpg.Connection) -> None:
+            await conn.execute("SET search_path TO playbook, public")
+
+        kwargs: dict[str, Any] = {"dsn": dsn, "init": _set_search_path}
         if ssl_mode:
             kwargs["ssl"] = ssl_mode
         _pool = await asyncpg.create_pool(**kwargs)
-        logger.info("DB pool created (ssl=%s)", ssl_mode or "off")
+        logger.info("DB pool created (ssl=%s, search_path=playbook)", ssl_mode or "off")
         return _pool
 
 
@@ -135,6 +138,8 @@ async def init_schema() -> None:
         # released automatically when the connection returns to the pool.
         await conn.execute("SELECT pg_advisory_lock(8675309)")
         try:
+            await conn.execute("CREATE SCHEMA IF NOT EXISTS playbook")
+            await conn.execute("SET search_path TO playbook, public")
             await conn.execute("""
             -- Users (populated on first SSO login or dev-login)
             CREATE TABLE IF NOT EXISTS users (
@@ -228,6 +233,7 @@ async def init_schema() -> None:
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             );
             CREATE INDEX IF NOT EXISTS comments_session_idx ON comments (session_id);
+            ALTER TABLE comments ADD COLUMN IF NOT EXISTS highlight_anchor JSONB;
 
             -- Pinned sessions per user
             CREATE TABLE IF NOT EXISTS pinned_sessions (
@@ -445,6 +451,15 @@ async def init_schema() -> None:
             CREATE INDEX IF NOT EXISTS job_queue_dead_idx
                 ON job_queue (status, job_type, created_at DESC)
                 WHERE status = 'dead';
+
+            CREATE TABLE IF NOT EXISTS attribute_templates (
+                id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                owner_sid  TEXT NOT NULL REFERENCES users(sid) ON DELETE CASCADE,
+                team_id    UUID REFERENCES teams(id) ON DELETE CASCADE,
+                name       TEXT NOT NULL,
+                attributes JSONB NOT NULL DEFAULT '[]',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
         """)
             # Full-text search on sessions (title + query)
             await conn.execute("""
@@ -455,6 +470,24 @@ async def init_schema() -> None:
             """)
             await conn.execute("""
                 CREATE INDEX IF NOT EXISTS sessions_search_idx ON sessions USING GIN(search_vec)
+            """)
+            # Team-scoped campaigns
+            await conn.execute("""
+                ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL
+            """)
+            # Uniqueness constraints within a campaign
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS entities_campaign_label_unique
+                    ON entities (campaign_id, label)
+            """)
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS entities_campaign_gwm_id_unique
+                    ON entities (campaign_id, gwm_id)
+                    WHERE gwm_id IS NOT NULL
+            """)
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS attributes_campaign_label_unique
+                    ON attributes (campaign_id, label)
             """)
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")
@@ -867,6 +900,23 @@ async def db_get_session_teams(session_id: str) -> list[str]:
     return [r["team_id"] for r in rows]
 
 
+async def db_get_session_mentionable_users(session_id: str) -> list[dict[str, Any]]:
+    """Return all unique members across teams this session is shared with."""
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT ON (u.sid) u.sid, u.display_name, u.avatar_url
+            FROM session_teams st
+            JOIN team_members tm ON tm.team_id = st.team_id
+            JOIN users u ON u.sid = tm.sid
+            WHERE st.session_id = $1::uuid
+            ORDER BY u.sid, u.display_name
+            """,
+            session_id,
+        )
+    return [_row_to_dict(r) for r in rows]
+
+
 # ── Pinned sessions ────────────────────────────────────────────────────────────
 
 async def db_pin_session(sid: str, session_id: str, team_id: str) -> dict[str, Any]:
@@ -912,16 +962,24 @@ async def db_get_pinned_sessions(sid: str, team_id: str) -> list[dict[str, Any]]
 
 # ── Comments ───────────────────────────────────────────────────────────────────
 
-async def db_create_comment(session_id: str, author_sid: str, body: str, mentions: list[str], parent_id: str | None = None) -> dict[str, Any]:
+async def db_create_comment(
+    session_id: str,
+    author_sid: str,
+    body: str,
+    mentions: list[str],
+    parent_id: str | None = None,
+    highlight_anchor: dict | None = None,
+) -> dict[str, Any]:
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO comments (session_id, author_sid, body, mentions, parent_id)
-            VALUES ($1::uuid, $2, $3, $4::jsonb, $5::uuid)
+            INSERT INTO comments (session_id, author_sid, body, mentions, parent_id, highlight_anchor)
+            VALUES ($1::uuid, $2, $3, $4::jsonb, $5::uuid, $6::jsonb)
             RETURNING *
             """,
             session_id, author_sid, body, json.dumps(mentions),
             parent_id if parent_id else None,
+            json.dumps(highlight_anchor) if highlight_anchor else None,
         )
     return _row_to_dict(row)
 
@@ -941,7 +999,7 @@ async def db_list_comments(session_id: str) -> list[dict[str, Any]]:
     result = []
     for r in rows:
         d = dict(r)
-        for field in ("mentions",):
+        for field in ("mentions", "highlight_anchor"):
             if field in d and isinstance(d[field], str):
                 d[field] = json.loads(d[field])
         for field in ("id", "session_id", "parent_id"):
@@ -1129,35 +1187,73 @@ async def db_update_monitor_run(monitor_id: str, frequency: str) -> None:
 
 def _campaign_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     d = dict(row)
-    for field in ("id", "campaign_id"):
+    for field in ("id", "campaign_id", "team_id"):
         if field in d and d[field] is not None:
             d[field] = str(d[field])
-    for ts in ("created_at", "updated_at", "last_run_at", "next_run_at"):
+    for ts in ("created_at", "updated_at", "last_run_at", "next_run_at", "last_completed_at"):
         if ts in d and d[ts] is not None:
             d[ts] = d[ts].isoformat()
     return d
 
 
-async def db_create_campaign(owner_sid: str, name: str, description: str | None, schedule: str | None) -> dict[str, Any]:
+async def db_create_campaign(owner_sid: str, name: str, description: str | None,
+                             schedule: str | None, team_id: str | None = None) -> dict[str, Any]:
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO campaigns (owner_sid, name, description, schedule)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO campaigns (owner_sid, name, description, schedule, team_id)
+            VALUES ($1, $2, $3, $4, $5::uuid)
             RETURNING *
             """,
-            owner_sid, name, description, schedule,
+            owner_sid, name, description, schedule, team_id,
         )
     return _campaign_row_to_dict(row)
 
 
-async def db_list_campaigns(owner_sid: str) -> list[dict[str, Any]]:
+_CAMPAIGN_COUNTS_SQL = """
+    SELECT c.*,
+           (SELECT COUNT(*) FROM entities WHERE campaign_id = c.id)::int      AS entity_count,
+           (SELECT COUNT(*) FROM attributes WHERE campaign_id = c.id)::int    AS attribute_count,
+           (SELECT COUNT(*) FROM validation_results vr
+            JOIN entities e ON e.id = vr.entity_id
+            WHERE e.campaign_id = c.id)::int                                  AS result_count,
+           (SELECT MAX(completed_at) FROM validation_jobs
+            WHERE campaign_id = c.id AND status = 'done')                     AS last_completed_at
+"""
+
+async def db_list_campaigns(owner_sid: str, team_id: str | None = None) -> list[dict[str, Any]]:
     async with _acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM campaigns WHERE owner_sid = $1 ORDER BY created_at DESC",
-            owner_sid,
-        )
+        if team_id:
+            rows = await conn.fetch(
+                f"""
+                {_CAMPAIGN_COUNTS_SQL}
+                FROM campaigns c
+                JOIN team_members tm ON tm.team_id = c.team_id
+                WHERE c.team_id = $1::uuid AND tm.sid = $2
+                ORDER BY c.updated_at DESC
+                """,
+                team_id, owner_sid,
+            )
+        else:
+            rows = await conn.fetch(
+                f"""
+                {_CAMPAIGN_COUNTS_SQL}
+                FROM campaigns c
+                WHERE c.owner_sid = $1 AND c.team_id IS NULL
+                ORDER BY c.updated_at DESC
+                """,
+                owner_sid,
+            )
     return [_campaign_row_to_dict(r) for r in rows]
+
+
+async def db_is_team_member(team_id: str, sid: str) -> bool:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT 1 FROM team_members WHERE team_id = $1::uuid AND sid = $2",
+            team_id, sid,
+        )
+    return row is not None
 
 
 async def db_get_campaign(campaign_id: str) -> dict[str, Any] | None:
@@ -1183,9 +1279,19 @@ async def db_update_campaign(campaign_id: str, patch: dict[str, Any]) -> dict[st
 
 
 async def db_delete_campaign(campaign_id: str, owner_sid: str) -> bool:
+    """Delete campaign if user is the owner, or a member of the owning team."""
     async with _acquire() as conn:
         result = await conn.execute(
-            "DELETE FROM campaigns WHERE id = $1::uuid AND owner_sid = $2",
+            """
+            DELETE FROM campaigns
+            WHERE id = $1::uuid
+              AND (
+                owner_sid = $2
+                OR team_id IN (
+                    SELECT team_id FROM team_members WHERE sid = $2
+                )
+              )
+            """,
             campaign_id, owner_sid,
         )
     return result.endswith("1")
@@ -1219,19 +1325,27 @@ async def db_create_entity(campaign_id: str, label: str, description: str | None
     return _entity_row_to_dict(row)
 
 
-async def db_bulk_create_entities(campaign_id: str, entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
+async def db_bulk_create_entities(campaign_id: str, entities: list[dict[str, Any]]) -> dict[str, Any]:
+    """Insert entities, skipping duplicates. Returns {inserted: list, skipped: int}."""
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
             INSERT INTO entities (campaign_id, label, description, gwm_id, metadata)
-            SELECT $1::uuid, e->>'label', e->>'description', e->>'gwm_id',
+            SELECT $1::uuid,
+                   e->>'label',
+                   NULLIF(e->>'description', ''),
+                   NULLIF(e->>'gwm_id', ''),
                    COALESCE((e->'metadata')::jsonb, '{}'::jsonb)
             FROM jsonb_array_elements($2::jsonb) AS e
+            WHERE (e->>'label') IS NOT NULL AND (e->>'label') != ''
+            ON CONFLICT (campaign_id, label) DO NOTHING
             RETURNING *
             """,
             campaign_id, json.dumps(entities),
         )
-    return [_entity_row_to_dict(r) for r in rows]
+    inserted = [_entity_row_to_dict(r) for r in rows]
+    skipped = len([e for e in entities if e.get("label")]) - len(inserted)
+    return {"inserted": inserted, "skipped": max(0, skipped)}
 
 
 async def db_list_entities(campaign_id: str) -> list[dict[str, Any]]:
@@ -1361,6 +1475,28 @@ async def db_create_attribute(campaign_id: str, label: str, description: str | N
             campaign_id, label, description, weight,
         )
     return _attribute_row_to_dict(row)
+
+
+async def db_bulk_create_attributes(campaign_id: str, attributes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Insert attributes, skipping duplicates. Returns {inserted: list, skipped: int}."""
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            INSERT INTO attributes (campaign_id, label, description, weight)
+            SELECT $1::uuid,
+                   a->>'label',
+                   NULLIF(a->>'description', ''),
+                   COALESCE((a->>'weight')::float, 1.0)
+            FROM jsonb_array_elements($2::jsonb) AS a
+            WHERE (a->>'label') IS NOT NULL AND (a->>'label') != ''
+            ON CONFLICT (campaign_id, label) DO NOTHING
+            RETURNING *
+            """,
+            campaign_id, json.dumps(attributes),
+        )
+    inserted = [_attribute_row_to_dict(r) for r in rows]
+    skipped = len([a for a in attributes if a.get("label")]) - len(inserted)
+    return {"inserted": inserted, "skipped": max(0, skipped)}
 
 
 async def db_list_attributes(campaign_id: str) -> list[dict[str, Any]]:
@@ -1756,12 +1892,19 @@ def _knowledge_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     return d
 
 
-async def db_lookup_knowledge(gwm_id: str, attribute_label: str) -> dict[str, Any] | None:
-    """Return cached research result for a gwm_id × attribute_label pair, or None."""
+async def db_lookup_knowledge(gwm_id: str, attribute_label: str, max_age_hours: int = 168) -> dict[str, Any] | None:
+    """Return cached research result for a gwm_id × attribute_label pair, or None.
+
+    max_age_hours: ignore cache entries older than this many hours (default 168 = 7 days).
+    """
     async with _acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT * FROM entity_attribute_knowledge WHERE gwm_id = $1 AND attribute_label = $2",
-            gwm_id, attribute_label,
+            """
+            SELECT * FROM entity_attribute_knowledge
+            WHERE gwm_id = $1 AND attribute_label = $2
+              AND last_updated > NOW() - ($3 || ' hours')::interval
+            """,
+            gwm_id, attribute_label, str(max_age_hours),
         )
     return _knowledge_row_to_dict(row) if row else None
 
@@ -1830,6 +1973,108 @@ async def db_import_attributes(target_campaign_id: str, source_campaign_id: str)
             source_campaign_id, target_campaign_id,
         )
     return [_attribute_row_to_dict(r) for r in rows]
+
+
+# ── Scout: Stats ────────────────────────────────────────────────────────────────
+
+async def db_get_campaign_stats(owner_sid: str, team_id: str | None = None) -> dict[str, Any]:
+    """Return aggregate stats across all accessible campaigns."""
+    async with _acquire() as conn:
+        if team_id:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    COUNT(DISTINCT c.id)::int                                     AS campaigns,
+                    COUNT(DISTINCT e.id)::int                                     AS entities,
+                    COUNT(DISTINCT vr.id)::int                                    AS results,
+                    COUNT(DISTINCT vj.id) FILTER (
+                        WHERE vj.created_at > NOW() - INTERVAL '7 days')::int    AS jobs_last_7_days,
+                    COUNT(DISTINCT k.gwm_id || ':' || k.attribute_label)::int    AS knowledge_entries
+                FROM campaigns c
+                JOIN team_members tm ON tm.team_id = c.team_id AND tm.sid = $1
+                LEFT JOIN entities e ON e.campaign_id = c.id
+                LEFT JOIN validation_results vr ON vr.entity_id = e.id
+                LEFT JOIN validation_jobs vj ON vj.campaign_id = c.id
+                LEFT JOIN entity_attribute_knowledge k
+                    ON k.gwm_id = e.gwm_id AND e.gwm_id IS NOT NULL
+                WHERE c.team_id = $2::uuid
+                """,
+                owner_sid, team_id,
+            )
+        else:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    COUNT(DISTINCT c.id)::int                                     AS campaigns,
+                    COUNT(DISTINCT e.id)::int                                     AS entities,
+                    COUNT(DISTINCT vr.id)::int                                    AS results,
+                    COUNT(DISTINCT vj.id) FILTER (
+                        WHERE vj.created_at > NOW() - INTERVAL '7 days')::int    AS jobs_last_7_days,
+                    COUNT(DISTINCT k.gwm_id || ':' || k.attribute_label)::int    AS knowledge_entries
+                FROM campaigns c
+                LEFT JOIN entities e ON e.campaign_id = c.id
+                LEFT JOIN validation_results vr ON vr.entity_id = e.id
+                LEFT JOIN validation_jobs vj ON vj.campaign_id = c.id
+                LEFT JOIN entity_attribute_knowledge k
+                    ON k.gwm_id = e.gwm_id AND e.gwm_id IS NOT NULL
+                WHERE c.owner_sid = $1 AND c.team_id IS NULL
+                """,
+                owner_sid,
+            )
+    return dict(row) if row else {"campaigns": 0, "entities": 0, "results": 0, "jobs_last_7_days": 0, "knowledge_entries": 0}
+
+
+# ── Scout: Attribute Templates ───────────────────────────────────────────────────
+
+async def db_list_attribute_templates(owner_sid: str, team_id: str | None = None) -> list[dict[str, Any]]:
+    async with _acquire() as conn:
+        if team_id:
+            rows = await conn.fetch(
+                "SELECT * FROM attribute_templates WHERE team_id = $1::uuid ORDER BY created_at DESC",
+                team_id,
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT * FROM attribute_templates WHERE owner_sid = $1 AND team_id IS NULL ORDER BY created_at DESC",
+                owner_sid,
+            )
+    return [_template_row_to_dict(r) for r in rows]
+
+
+async def db_create_attribute_template(
+    owner_sid: str, name: str, attributes: list[dict], team_id: str | None = None
+) -> dict[str, Any]:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO attribute_templates (owner_sid, team_id, name, attributes)
+            VALUES ($1, $2::uuid, $3, $4::jsonb)
+            RETURNING *
+            """,
+            owner_sid, team_id, name, json.dumps(attributes),
+        )
+    return _template_row_to_dict(row)
+
+
+async def db_delete_attribute_template(template_id: str, owner_sid: str) -> bool:
+    async with _acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM attribute_templates WHERE id = $1::uuid AND owner_sid = $2",
+            template_id, owner_sid,
+        )
+    return int(result.split()[-1]) > 0
+
+
+def _template_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
+    d = dict(row)
+    for f in ("id", "team_id"):
+        if f in d and d[f] is not None:
+            d[f] = str(d[f])
+    if "attributes" in d and isinstance(d["attributes"], str):
+        d["attributes"] = json.loads(d["attributes"])
+    if "created_at" in d and d["created_at"] is not None:
+        d["created_at"] = d["created_at"].isoformat()
+    return d
 
 
 # ── Knowledge Graph ─────────────────────────────────────────────────────────────
@@ -1962,3 +2207,92 @@ async def db_get_job_combined_report(job_id: str) -> str:
         for row in rows
     ]
     return "\n\n---\n\n".join(parts)
+
+
+# ── Dead-letter management ─────────────────────────────────────────────────────
+
+async def db_list_dead_jobs(campaign_id: str) -> list[dict[str, Any]]:
+    """Return dead queue jobs for a campaign (newest first, max 200)."""
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT jq.id, jq.job_type, jq.payload, jq.attempts, jq.last_error,
+                   jq.created_at, jq.completed_at
+            FROM job_queue jq
+            WHERE jq.validation_job_id IN (
+                SELECT id FROM validation_jobs WHERE campaign_id = $1::uuid
+            ) AND jq.status = 'dead'
+            ORDER BY jq.completed_at DESC
+            LIMIT 200
+            """,
+            campaign_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def db_get_queue_job_owner(job_id: str) -> dict[str, Any] | None:
+    """Return campaign_id for a queue job, or None if not found."""
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT vj.campaign_id
+            FROM job_queue jq
+            JOIN validation_jobs vj ON vj.id = jq.validation_job_id
+            WHERE jq.id = $1::uuid
+            """,
+            job_id,
+        )
+    return dict(row) if row else None
+
+
+async def db_retry_dead_job(job_id: str) -> bool:
+    """Reset a dead job back to pending so it can be retried."""
+    async with _acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE job_queue
+            SET status = 'pending', attempts = 0, last_error = NULL,
+                run_at = NOW(), worker_id = NULL, heartbeat_at = NULL, completed_at = NULL
+            WHERE id = $1::uuid AND status = 'dead'
+            """,
+            job_id,
+        )
+    return int(result.split()[-1]) > 0
+
+
+# ── Batch knowledge cache lookup ───────────────────────────────────────────────
+
+async def db_lookup_knowledge_batch(
+    pairs: list[tuple[str, str]], max_age_hours: int = 168
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Return {(gwm_id, attribute_label): knowledge_row} for cache hits."""
+    if not pairs:
+        return {}
+    gwm_ids = [g for g, _ in pairs]
+    attr_labels = [a for _, a in pairs]
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT k.*
+            FROM entity_attribute_knowledge k
+            JOIN unnest($1::text[], $2::text[]) AS inp(gwm_id, attr)
+              ON k.gwm_id = inp.gwm_id AND k.attribute_label = inp.attr
+            WHERE k.last_updated > NOW() - ($3 || ' hours')::interval
+            """,
+            gwm_ids, attr_labels, str(max_age_hours),
+        )
+    return {(r["gwm_id"], r["attribute_label"]): _knowledge_row_to_dict(r) for r in rows}
+
+
+async def db_insert_results_batch(job_id: str, hits: list[dict[str, Any]]) -> None:
+    """Insert validation results for cache hits (no research needed)."""
+    for hit in hits:
+        await db_insert_result(
+            job_id,
+            hit["entity_id"],
+            hit["attribute_id"],
+            {"present": hit["present"], "confidence": hit.get("confidence"), "evidence": hit.get("evidence")},
+            "",
+            update_knowledge=False,
+        )
+        await db_increment_job_progress(job_id)

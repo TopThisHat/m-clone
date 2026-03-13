@@ -53,6 +53,9 @@
 						{#if notif.type === 'mention'}
 							<span class="font-medium">{notif.payload.author_name}</span> mentioned you in
 							<span class="text-gold">"{notif.payload.session_title}"</span>
+						{:else if notif.type === 'reply'}
+							<span class="font-medium">{notif.payload.author_name}</span> replied to your comment in
+							<span class="text-gold">"{notif.payload.session_title}"</span>
 						{:else if notif.type === 'share'}
 							A session was shared with your team
 						{:else if notif.type === 'comment'}

@@ -17,6 +17,11 @@ export interface EntityCreate {
 	metadata?: Record<string, unknown>;
 }
 
+export interface BulkEntityResult {
+	inserted: Entity[];
+	skipped: number;
+}
+
 export const entitiesApi = {
 	list: (campaignId: string): Promise<Entity[]> =>
 		apiFetch(`/api/campaigns/${campaignId}/entities`),
@@ -28,7 +33,7 @@ export const entitiesApi = {
 			body: JSON.stringify(data),
 		}),
 
-	bulkCreate: (campaignId: string, entities: EntityCreate[]): Promise<Entity[]> =>
+	bulkCreate: (campaignId: string, entities: EntityCreate[]): Promise<BulkEntityResult> =>
 		apiFetch(`/api/campaigns/${campaignId}/entities/bulk`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },

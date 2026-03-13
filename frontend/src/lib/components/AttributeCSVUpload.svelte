@@ -1,6 +1,6 @@
 <script lang="ts">
 	import * as XLSX from 'xlsx';
-	import { entitiesApi, type EntityCreate } from '$lib/api/entities';
+	import { attributesApi, type AttributeCreate } from '$lib/api/attributes';
 
 	let {
 		campaignId,
@@ -18,12 +18,10 @@
 	let headers = $state<string[]>([]);
 	let rows = $state<Record<string, string>[]>([]);
 
-	// Column mapping
 	let labelCol = $state('');
 	let descCol = $state('');
-	let gwmIdCol = $state('');
+	let weightCol = $state('');
 
-	// Upload progress
 	let uploadedCount = $state(0);
 	let totalCount = $state(0);
 	let insertedCount = $state(0);
@@ -32,17 +30,17 @@
 	const BATCH_SIZE = 500;
 
 	const SAMPLE_CSV =
-		'label,description,gwm_id\n' +
-		'Acme Corp,Leading widget manufacturer,GWM-001\n' +
-		'Globex Inc,Industrial conglomerate,GWM-002\n' +
-		'Initech LLC,Software solutions provider,';
+		'label,description,weight\n' +
+		'Has board experience,Serves or has served on a public company board,1.5\n' +
+		'ESG certified,Holds a recognized ESG or sustainability certification,1.0\n' +
+		'Revenue > $100M,Annual revenue exceeds $100 million,2.0\n';
 
 	function downloadSample() {
 		const blob = new Blob([SAMPLE_CSV], { type: 'text/csv' });
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement('a');
 		a.href = url;
-		a.download = 'entities_sample.csv';
+		a.download = 'attributes_sample.csv';
 		a.click();
 		URL.revokeObjectURL(url);
 	}
@@ -87,26 +85,22 @@
 	async function handleFile(file: File) {
 		error = '';
 		try {
-			let parsed: { headers: string[]; rows: Record<string, string>[] };
 			const ext = file.name.split('.').pop()?.toLowerCase();
+			let parsed: { headers: string[]; rows: Record<string, string>[] };
 			if (ext === 'csv' || ext === 'tsv' || ext === 'txt') {
-				const text = await file.text();
-				parsed = parseCSV(text);
+				parsed = parseCSV(await file.text());
 			} else if (ext === 'xlsx' || ext === 'xls' || ext === 'ods') {
-				const buffer = await file.arrayBuffer();
-				parsed = parseExcel(buffer);
+				parsed = parseExcel(await file.arrayBuffer());
 			} else {
 				error = 'Unsupported file type. Please upload a CSV or Excel file.';
 				return;
 			}
-
 			headers = parsed.headers;
 			rows = parsed.rows;
 
-			// Auto-detect common column names
-			labelCol = headers.find((h) => /^(label|name|entity|company|person|org)/i.test(h)) ?? headers[0] ?? '';
-			descCol = headers.find((h) => /^(desc|description|bio|notes)/i.test(h)) ?? '';
-			gwmIdCol = headers.find((h) => /^(gwm_id|gwm|id)/i.test(h)) ?? '';
+			labelCol = headers.find((h) => /^(label|name|attribute|criterion)/i.test(h)) ?? headers[0] ?? '';
+			descCol = headers.find((h) => /^(desc|description|notes|prompt)/i.test(h)) ?? '';
+			weightCol = headers.find((h) => /^(weight|score|priority)/i.test(h)) ?? '';
 
 			stage = 'mapping';
 		} catch (err: unknown) {
@@ -132,34 +126,36 @@
 		stage = 'preview';
 	}
 
-	function mappedEntities(): EntityCreate[] {
-		const metaCols = headers.filter((h) => h !== labelCol && h !== descCol && h !== gwmIdCol);
-		return rows
-			.map((row) => ({
-				label: row[labelCol] ?? '',
+	function mappedAttributes(): AttributeCreate[] {
+		const result: AttributeCreate[] = [];
+		for (const row of rows) {
+			const label = row[labelCol] ?? '';
+			if (!label) continue;
+			const weight = weightCol ? parseFloat(row[weightCol]) : NaN;
+			result.push({
+				label,
 				description: descCol ? (row[descCol] || undefined) : undefined,
-				gwm_id: gwmIdCol ? (row[gwmIdCol] || undefined) : undefined,
-				metadata: Object.fromEntries(metaCols.map((h) => [h, row[h]])),
-			}))
-			.filter((e) => e.label);
+				weight: isNaN(weight) ? 1.0 : weight,
+			});
+		}
+		return result;
 	}
 
 	async function upload() {
-		const entities = mappedEntities();
-		if (!entities.length) { error = 'No valid rows to upload.'; return; }
+		const attributes = mappedAttributes();
+		if (!attributes.length) { error = 'No valid rows to upload.'; return; }
 
 		stage = 'uploading';
 		error = '';
 		uploadedCount = 0;
-		totalCount = entities.length;
+		totalCount = attributes.length;
 
 		try {
-			for (let i = 0; i < entities.length; i += BATCH_SIZE) {
-				const batch = entities.slice(i, i + BATCH_SIZE);
-				const result = await entitiesApi.bulkCreate(campaignId, batch);
+			for (let i = 0; i < attributes.length; i += BATCH_SIZE) {
+				const result = await attributesApi.bulkCreate(campaignId, attributes.slice(i, i + BATCH_SIZE));
 				insertedCount += result.inserted.length;
 				skippedCount += result.skipped;
-				uploadedCount = Math.min(i + BATCH_SIZE, entities.length);
+				uploadedCount = Math.min(i + BATCH_SIZE, attributes.length);
 			}
 			stage = 'done';
 			onUploaded();
@@ -186,7 +182,6 @@
 
 <div class="space-y-4">
 	{#if stage === 'idle'}
-		<!-- Drop zone -->
 		<div
 			role="region"
 			aria-label="File drop zone"
@@ -212,33 +207,25 @@
 					<span class="text-gold font-mono text-xs mt-0.5 w-24 shrink-0">label</span>
 					<div>
 						<span class="text-xs bg-amber-900/50 text-amber-400 px-1.5 py-0.5 rounded font-medium">required</span>
-						<p class="text-slate-400 text-xs mt-0.5">Entity name (e.g. company, person, or fund name)</p>
+						<p class="text-slate-400 text-xs mt-0.5">Attribute name (e.g. "Has board experience")</p>
 					</div>
 				</div>
 				<div class="flex items-start gap-3">
 					<span class="text-slate-400 font-mono text-xs mt-0.5 w-24 shrink-0">description</span>
 					<div>
 						<span class="text-xs bg-navy-700 text-slate-400 px-1.5 py-0.5 rounded font-medium">optional</span>
-						<p class="text-slate-400 text-xs mt-0.5">Short description or bio</p>
+						<p class="text-slate-400 text-xs mt-0.5">Detailed prompt fed to the LLM when evaluating this attribute</p>
 					</div>
 				</div>
 				<div class="flex items-start gap-3">
-					<span class="text-slate-400 font-mono text-xs mt-0.5 w-24 shrink-0">gwm_id</span>
+					<span class="text-slate-400 font-mono text-xs mt-0.5 w-24 shrink-0">weight</span>
 					<div>
 						<span class="text-xs bg-navy-700 text-slate-400 px-1.5 py-0.5 rounded font-medium">optional</span>
-						<p class="text-slate-400 text-xs mt-0.5">Internal GWM identifier — enables cross-campaign knowledge cache</p>
-					</div>
-				</div>
-				<div class="flex items-start gap-3">
-					<span class="text-slate-400 font-mono text-xs mt-0.5 w-24 shrink-0">any other</span>
-					<div>
-						<span class="text-xs bg-navy-700 text-slate-400 px-1.5 py-0.5 rounded font-medium">optional</span>
-						<p class="text-slate-400 text-xs mt-0.5">Extra columns are stored as metadata</p>
+						<p class="text-slate-400 text-xs mt-0.5">Numeric scoring weight (default 1.0)</p>
 					</div>
 				</div>
 			</div>
 
-			<!-- Sample preview -->
 			<div>
 				<p class="text-slate-500 text-xs mb-1.5">Sample</p>
 				<div class="overflow-x-auto">
@@ -247,13 +234,13 @@
 							<tr class="text-slate-500">
 								<th class="text-left pr-6 pb-1">label</th>
 								<th class="text-left pr-6 pb-1">description</th>
-								<th class="text-left pb-1">gwm_id</th>
+								<th class="text-left pb-1">weight</th>
 							</tr>
 						</thead>
 						<tbody class="text-slate-400">
-							<tr><td class="pr-6">Acme Corp</td><td class="pr-6">Widget manufacturer</td><td>GWM-001</td></tr>
-							<tr><td class="pr-6">Globex Inc</td><td class="pr-6">Industrial conglomerate</td><td>GWM-002</td></tr>
-							<tr><td class="pr-6">Initech LLC</td><td class="pr-6 text-slate-600">(blank)</td><td class="text-slate-600">(blank)</td></tr>
+							<tr><td class="pr-6">Has board experience</td><td class="pr-6">Serves on a public company board</td><td>1.5</td></tr>
+							<tr><td class="pr-6">ESG certified</td><td class="pr-6">Holds a sustainability certification</td><td>1.0</td></tr>
+							<tr><td class="pr-6">Revenue &gt; $100M</td><td class="pr-6">Annual revenue exceeds $100M</td><td>2.0</td></tr>
 						</tbody>
 					</table>
 				</div>
@@ -275,7 +262,7 @@
 			{#each [
 				{ label: 'Label', hint: 'required', bind: 'labelCol' },
 				{ label: 'Description', hint: 'optional', bind: 'descCol' },
-				{ label: 'GWM ID', hint: 'optional', bind: 'gwmIdCol' },
+				{ label: 'Weight', hint: 'optional', bind: 'weightCol' },
 			] as col}
 				<div>
 					<label class="block text-xs mb-1">
@@ -284,12 +271,12 @@
 					</label>
 					<select
 						class="w-full bg-navy-700 border border-navy-600 rounded-lg px-2 py-1.5 text-sm text-slate-200"
-						value={col.bind === 'labelCol' ? labelCol : col.bind === 'descCol' ? descCol : gwmIdCol}
+						value={col.bind === 'labelCol' ? labelCol : col.bind === 'descCol' ? descCol : weightCol}
 						onchange={(e) => {
 							const v = (e.target as HTMLSelectElement).value;
 							if (col.bind === 'labelCol') labelCol = v;
 							else if (col.bind === 'descCol') descCol = v;
-							else gwmIdCol = v;
+							else weightCol = v;
 						}}
 					>
 						<option value="">— none —</option>
@@ -316,16 +303,17 @@
 				<thead>
 					<tr class="text-slate-400 text-xs uppercase tracking-wide">
 						<th class="text-left px-2 py-1">Label</th>
-						<th class="text-left px-2 py-1">GWM ID</th>
 						<th class="text-left px-2 py-1">Description</th>
+						<th class="text-left px-2 py-1">Weight</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each previewRows as row}
+						{@const w = weightCol ? parseFloat(row[weightCol]) : NaN}
 						<tr class="border-t border-navy-700">
 							<td class="px-2 py-1.5 text-slate-200">{row[labelCol] ?? ''}</td>
-							<td class="px-2 py-1.5 text-slate-400 font-mono text-xs">{gwmIdCol ? (row[gwmIdCol] ?? '') : '—'}</td>
-							<td class="px-2 py-1.5 text-slate-500 truncate max-w-xs">{descCol ? (row[descCol] ?? '') : '—'}</td>
+							<td class="px-2 py-1.5 text-slate-500 truncate max-w-xs">{descCol ? (row[descCol] ?? '—') : '—'}</td>
+							<td class="px-2 py-1.5 text-slate-300 font-mono text-xs">{isNaN(w) ? '1.0' : w.toFixed(1)}</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -338,17 +326,16 @@
 		{/if}
 		{#if error}<p class="text-red-400 text-sm">{error}</p>{/if}
 		<div class="flex gap-2">
-			<button onclick={upload} class="btn-gold">Upload {rows.length.toLocaleString()} entities</button>
+			<button onclick={upload} class="btn-gold">Upload {rows.length.toLocaleString()} attributes</button>
 			<button onclick={() => (stage = 'mapping')} class="btn-secondary">Back</button>
 		</div>
 
 	{:else if stage === 'uploading'}
 		<div class="space-y-3">
 			<div class="flex items-center justify-between text-sm">
-				<span class="text-slate-400">Uploading entities…</span>
+				<span class="text-slate-400">Uploading attributes…</span>
 				<span class="text-slate-300 font-mono">{uploadedCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
 			</div>
-			<!-- Progress bar -->
 			<div class="h-2 bg-navy-700 rounded-full overflow-hidden">
 				<div
 					class="h-full bg-gold rounded-full transition-all duration-300"
@@ -364,7 +351,7 @@
 				<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
 				</svg>
-				<span>{insertedCount.toLocaleString()} {insertedCount === 1 ? 'entity' : 'entities'} added.</span>
+				<span>{insertedCount.toLocaleString()} {insertedCount === 1 ? 'attribute' : 'attributes'} added.</span>
 			</div>
 			{#if skippedCount > 0}
 				<p class="text-xs text-amber-400 pl-6">

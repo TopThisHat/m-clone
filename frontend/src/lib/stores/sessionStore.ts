@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { chatMessages, reportMarkdown, errorMessage, messageHistory } from '$lib/stores/reportStore';
+import { chatMessages, reportMarkdown, errorMessage, messageHistory, sessionComments } from '$lib/stores/reportStore';
 import { traceStore } from '$lib/stores/traceStore';
 
 export interface SessionSummary {
@@ -24,4 +24,5 @@ export function newResearch() {
 	traceStore.reset();
 	errorMessage.set(null);
 	activeSessionId.set(null);
+	sessionComments.set([]);
 }

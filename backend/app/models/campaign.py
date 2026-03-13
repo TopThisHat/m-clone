@@ -10,6 +10,7 @@ class CampaignCreate(BaseModel):
     name: str
     description: str | None = None
     schedule: str | None = None  # cron expression e.g. "0 9 * * 1"
+    team_id: str | None = None
 
 
 class CampaignUpdate(BaseModel):
@@ -22,14 +23,42 @@ class CampaignUpdate(BaseModel):
 class CampaignOut(BaseModel):
     id: str
     owner_sid: str
+    team_id: str | None = None
     name: str
     description: str | None = None
     schedule: str | None = None
     is_active: bool = True
     last_run_at: str | None = None
     next_run_at: str | None = None
+    last_completed_at: str | None = None
+    entity_count: int = 0
+    attribute_count: int = 0
+    result_count: int = 0
     created_at: str
     updated_at: str
+
+
+class CampaignStatsOut(BaseModel):
+    campaigns: int = 0
+    entities: int = 0
+    results: int = 0
+    jobs_last_7_days: int = 0
+    knowledge_entries: int = 0
+
+
+class AttributeTemplateCreate(BaseModel):
+    name: str
+    team_id: str | None = None
+    attributes: list[dict] = []
+
+
+class AttributeTemplateOut(BaseModel):
+    id: str
+    owner_sid: str
+    team_id: str | None = None
+    name: str
+    attributes: list[dict] = []
+    created_at: str
 
 
 # ── Entity ─────────────────────────────────────────────────────────────────────
@@ -152,3 +181,15 @@ class KnowledgeOut(BaseModel):
 
 class ImportBody(BaseModel):
     source_campaign_id: str
+
+
+# ── Bulk operation results ──────────────────────────────────────────────────────
+
+class BulkEntityResult(BaseModel):
+    inserted: list[EntityOut]
+    skipped: int
+
+
+class BulkAttributeResult(BaseModel):
+    inserted: list[AttributeOut]
+    skipped: int

@@ -7,6 +7,7 @@
 	import { attributesApi } from '$lib/api/attributes';
 	import { jobsApi, type Job } from '$lib/api/jobs';
 	import JobProgress from '$lib/components/JobProgress.svelte';
+	import SchedulePicker from '$lib/components/SchedulePicker.svelte';
 
 	let campaignId = $derived($page.params.id as string);
 	let campaign = $state<Campaign | null>(null);
@@ -107,6 +108,23 @@
 
 	let latestJob = $derived(jobs[0] ?? null);
 
+	function friendlySchedule(cron: string): string {
+		if (!cron) return '';
+		const m = cron.match(/^0 (\d+) (\S+) \* (\S+)$/);
+		if (!m) return cron;
+		const [, h, domPart, dowPart] = m;
+		const hour = parseInt(h);
+		const hLabel = hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`;
+		if (dowPart === '*' && domPart !== '*') return `Monthly on the ${domPart}${['st','nd','rd'][+domPart-1]||'th'} at ${hLabel}`;
+		if (domPart === '*') {
+			if (dowPart === '*') return `Daily at ${hLabel}`;
+			if (dowPart === '1-5') return `Weekdays at ${hLabel}`;
+			const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+			return `Weekly on ${days[+dowPart] ?? dowPart} at ${hLabel}`;
+		}
+		return cron;
+	}
+
 	let nextRunCountdown = $derived(() => {
 		if (!campaign?.next_run_at) return null;
 		const diff = new Date(campaign.next_run_at).getTime() - Date.now();
@@ -142,9 +160,9 @@
 					<p class="text-slate-400 mt-1">{campaign.description}</p>
 				{/if}
 				{#if campaign.schedule}
-					<p class="text-xs text-slate-500 mt-1 font-mono">⏰ {campaign.schedule}
+					<p class="text-xs text-slate-500 mt-1">⏰ {friendlySchedule(campaign.schedule)}
 						{#if nextRunCountdown()}
-							<span class="ml-2 text-slate-400">Next run in {nextRunCountdown()}</span>
+							<span class="ml-2 text-slate-400">· Next run in {nextRunCountdown()}</span>
 						{/if}
 					</p>
 				{/if}
@@ -179,18 +197,20 @@
 				{#if saveError}
 					<p class="text-red-400 text-sm mb-3">{saveError}</p>
 				{/if}
-				<div class="grid grid-cols-2 gap-4 mb-4">
-					<div>
-						<label class="block text-xs text-slate-400 mb-1">Name *</label>
-						<input bind:value={editName} required class="input-field w-full" />
+				<div class="space-y-4 mb-4">
+					<div class="grid grid-cols-2 gap-4">
+						<div>
+							<label class="block text-xs text-slate-400 mb-1">Name *</label>
+							<input bind:value={editName} required class="input-field w-full" />
+						</div>
+						<div>
+							<label class="block text-xs text-slate-400 mb-1">Description</label>
+							<input bind:value={editDesc} class="input-field w-full" />
+						</div>
 					</div>
 					<div>
-						<label class="block text-xs text-slate-400 mb-1">Schedule (cron)</label>
-						<input bind:value={editSchedule} placeholder="0 9 * * 1" class="input-field w-full font-mono" />
-					</div>
-					<div class="col-span-2">
-						<label class="block text-xs text-slate-400 mb-1">Description</label>
-						<input bind:value={editDesc} class="input-field w-full" />
+						<label class="block text-xs text-slate-400 mb-2">Schedule <span class="text-slate-600">(optional)</span></label>
+						<SchedulePicker bind:value={editSchedule} />
 					</div>
 				</div>
 				<div class="flex items-center gap-4 mb-4">

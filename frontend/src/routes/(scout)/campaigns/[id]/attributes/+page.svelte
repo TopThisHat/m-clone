@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
+	import AttributeCSVUpload from '$lib/components/AttributeCSVUpload.svelte';
 
 	let campaignId = $derived($page.params.id as string);
 	let attributes = $state<Attribute[]>([]);
@@ -17,6 +18,9 @@
 
 	// Inline edit state: attributeId → editing flag
 	let editing = $state<Record<string, Attribute & { _orig: Attribute }>>({});
+
+	// Upload modal state
+	let showUpload = $state(false);
 
 	// Import modal state
 	let showImport = $state(false);
@@ -129,14 +133,39 @@
 
 	<div class="flex items-center justify-between mb-6">
 		<h2 class="font-serif text-gold text-xl font-bold">Attributes ({attributes.length})</h2>
-		<button
-			onclick={openImport}
-			class="text-sm bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg
-			       hover:bg-navy-600 transition-colors"
-		>
-			↗ Import from Campaign
-		</button>
+		<div class="flex gap-2">
+			<button
+				onclick={() => (showUpload = !showUpload)}
+				class="text-sm bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg
+				       hover:bg-navy-600 transition-colors"
+			>
+				↑ Upload CSV / Excel
+			</button>
+			<button
+				onclick={openImport}
+				class="text-sm bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg
+				       hover:bg-navy-600 transition-colors"
+			>
+				↗ Import from Campaign
+			</button>
+		</div>
 	</div>
+
+	{#if showUpload}
+		<div class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="font-medium text-slate-200">Upload Attributes</h3>
+				<button onclick={() => (showUpload = false)} class="text-slate-500 hover:text-slate-300 text-xs">✕ Close</button>
+			</div>
+			<AttributeCSVUpload
+				{campaignId}
+				onUploaded={async () => {
+					showUpload = false;
+					attributes = await attributesApi.list(campaignId);
+				}}
+			/>
+		</div>
+	{/if}
 
 	{#if showImport}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">

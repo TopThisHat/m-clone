@@ -1,5 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import { marked } from 'marked';
+import type { Comment } from '$lib/api/comments';
 
 // Configure marked for safe rendering
 marked.setOptions({ gfm: true, breaks: true });
@@ -58,3 +59,6 @@ export const pendingClarification = writable<ClarificationData | null>(null);
 export const reportHtml = derived(reportMarkdown, ($md) =>
 	$md ? (marked.parse($md) as string) : ''
 );
+
+// Shared comment state so HighlightableReport can read what CommentThread loaded
+export const sessionComments = writable<Comment[]>([]);

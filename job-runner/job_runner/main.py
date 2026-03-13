@@ -44,6 +44,10 @@ async def main() -> None:
     await init_db_pool()
     logger.info("DB pool initialized")
 
+    from job_runner.metrics import start_metrics_server
+    await start_metrics_server(settings.metrics_port)
+    logger.info("Metrics server listening on port %d", settings.metrics_port)
+
     worker = WorkerPool()
 
     loop = asyncio.get_running_loop()

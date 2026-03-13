@@ -39,6 +39,41 @@ class ValidationCampaignWorkflow(BaseWorkflow):
 
         logger.info("ValidationCampaign job=%s: fanning out %d pairs", job_id, len(pairs))
 
+        # Pre-enqueue cache deduplication: skip research for pairs already in knowledge cache
+        from app.db import db_insert_results_batch, db_lookup_knowledge_batch
+
+        entity_map = {str(e["id"]): e for e in entities}
+        attr_map = {str(a["id"]): a for a in attributes}
+
+        gwm_pairs = [
+            (entity_map[eid]["gwm_id"], attr_map[aid]["label"])
+            for eid, aid in pairs
+            if entity_map[eid].get("gwm_id")
+        ]
+        cache_hits = await db_lookup_knowledge_batch(gwm_pairs, max_age_hours=_settings.knowledge_cache_ttl_hours)
+
+        hit_set = {
+            (eid, aid) for eid, aid in pairs
+            if entity_map[eid].get("gwm_id")
+            and (entity_map[eid]["gwm_id"], attr_map[aid]["label"]) in cache_hits
+        }
+        miss_pairs = [(eid, aid) for eid, aid in pairs if (eid, aid) not in hit_set]
+
+        if hit_set:
+            cached_results = [
+                {
+                    "entity_id": eid,
+                    "attribute_id": aid,
+                    **cache_hits[(entity_map[eid]["gwm_id"], attr_map[aid]["label"])],
+                }
+                for eid, aid in hit_set
+            ]
+            logger.info(
+                "ValidationCampaign job=%s: %d cache hits, %d pairs need research",
+                job_id, len(hit_set), len(miss_pairs),
+            )
+            await db_insert_results_batch(job_id, cached_results)
+
         # All pair enqueues happen in a single transaction along with the
         # status update. If the process crashes mid-loop nothing is committed,
         # so on retry we start fresh with a clean fan-out.
@@ -71,7 +106,7 @@ class ValidationCampaignWorkflow(BaseWorkflow):
                             "validation_job_id": job_id,
                             "max_attempts": _settings.default_max_attempts,
                         }
-                        for entity_id, attribute_id in pairs
+                        for entity_id, attribute_id in miss_pairs
                     ]
                     await enqueue_many(pair_jobs, conn=conn)
 
@@ -84,11 +119,20 @@ class ValidationCampaignWorkflow(BaseWorkflow):
                     job_id, len(pairs), datetime.now(timezone.utc),
                 )
                 # Notify workers about the new batch
-                await conn.execute(
-                    "SELECT pg_notify($1, $2)",
-                    _settings.listen_channel,
-                    job_id,
-                )
+                if miss_pairs:
+                    await conn.execute(
+                        "SELECT pg_notify($1, $2)",
+                        _settings.listen_channel,
+                        job_id,
+                    )
+
+        # If all pairs were cache hits, finalize immediately (no pair workers will run)
+        if not miss_pairs:
+            logger.info(
+                "ValidationCampaign job=%s: all %d pairs were cache hits, finalizing",
+                job_id, len(pairs),
+            )
+            await finalize_validation_job(job_id, self.job_id)
 
 
 async def finalize_validation_job(validation_job_id: str, root_queue_job_id: str) -> None:
@@ -214,10 +258,18 @@ class ValidationPairWorkflow(BaseWorkflow):
             await self._maybe_finalize(job_id)
             return
 
+        # Cancellation check: skip if parent validation_job was cancelled/failed
+        from app.db import db_get_validation_job
+        vj = await db_get_validation_job(job_id)
+        if vj and vj.get("status") == "failed":
+            logger.info("validation_pair job=%s: parent cancelled, skipping", job_id)
+            return
+
         # Cache check
+        from job_runner.config import settings as _settings
         gwm_id = entity.get("gwm_id")
         if gwm_id:
-            cached = await db_lookup_knowledge(gwm_id, attribute["label"])
+            cached = await db_lookup_knowledge(gwm_id, attribute["label"], max_age_hours=_settings.knowledge_cache_ttl_hours)
             if cached:
                 logger.info(
                     "validation_pair job=%s: cache hit gwm_id=%s × %s",
@@ -235,6 +287,13 @@ class ValidationPairWorkflow(BaseWorkflow):
 
         query = f"{entity['label']}: {attribute['label']}. {attribute.get('description') or ''}"
         report_md = await run_research(query)
+
+        # Post-research cancellation check before expensive LLM call
+        vj = await db_get_validation_job(job_id)
+        if vj and vj.get("status") == "failed":
+            logger.info("validation_pair job=%s: parent cancelled after research, skipping LLM", job_id)
+            return
+
         result = await determine_presence(entity, attribute, report_md)
         await db_insert_result(job_id, entity_id, attribute_id, result, report_md)
         await db_increment_job_progress(job_id)

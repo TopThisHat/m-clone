@@ -94,3 +94,27 @@ export async function getPublicSession(id: string): Promise<SessionFull> {
 	const res = await fetch(`/api/share/${id}`, { credentials: 'include' });
 	return handleResponse<SessionFull>(res);
 }
+
+export async function getSessionTeams(id: string): Promise<string[]> {
+	const res = await fetch(`/api/sessions/${id}/teams`, { credentials: 'include' });
+	if (!res.ok) return [];
+	return res.json();
+}
+
+export async function shareSessionToTeam(id: string, teamId: string): Promise<void> {
+	const res = await fetch(`/api/sessions/${id}/teams`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		credentials: 'include',
+		body: JSON.stringify({ team_id: teamId })
+	});
+	if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function unshareSessionFromTeam(id: string, teamId: string): Promise<void> {
+	const res = await fetch(`/api/sessions/${id}/teams/${teamId}`, {
+		method: 'DELETE',
+		credentials: 'include'
+	});
+	if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}

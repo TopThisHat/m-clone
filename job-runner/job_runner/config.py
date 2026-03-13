@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     tavily_api_key: str = ""
     anthropic_api_key: str = ""
+    per_type_limits: dict[str, int] = {}   # e.g. {"validation_pair": 10}
+    default_job_timeout: int = 300         # seconds
+    type_timeouts: dict[str, int] = {}     # e.g. {"validation_pair": 600}
+    metrics_port: int = 9090
+    knowledge_cache_ttl_hours: int = 168   # 7 days
 
     class Config:
         env_file = ".env"

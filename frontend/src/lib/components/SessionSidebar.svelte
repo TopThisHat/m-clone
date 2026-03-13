@@ -101,7 +101,7 @@
 			// Restore persisted charts from trace steps
 			const charts = steps
 				.filter((step) => step.chart)
-				.map((step) => step.chart as ChartPayload);
+				.map((step) => step.chart as unknown as ChartPayload);
 			chartData.set(charts);
 		} catch {
 			// silently ignore

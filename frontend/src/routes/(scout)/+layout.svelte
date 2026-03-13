@@ -1,23 +1,80 @@
 <script lang="ts">
 	import type { LayoutData } from './$types';
+	import { scoutTeam } from '$lib/stores/scoutTeamStore';
+	import { page } from '$app/stores';
+	import { onMount } from 'svelte';
+
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
+
+	// Validate stored team is still one the user belongs to
+	onMount(() => {
+		const stored = $scoutTeam;
+		if (stored && !data.teams.some((t: { id: string }) => t.id === stored)) {
+			scoutTeam.select(null);
+		}
+	});
+
+	const NAV = [
+		{ label: 'Campaigns', href: '/campaigns' },
+		{ label: 'Entities', href: '/entities' },
+		{ label: 'Attributes', href: '/attributes' },
+	];
+
+	let currentPath = $derived($page.url.pathname);
+
+	function isActive(href: string) {
+		if (href === '/campaigns') return currentPath.startsWith('/campaigns');
+		return currentPath.startsWith(href);
+	}
 </script>
 
-<div class="min-h-screen bg-navy-900">
-	<!-- Compact top nav (~48px) -->
-	<nav class="border-b border-navy-700 bg-navy-800 px-6 py-3 flex items-center justify-between">
-		<div class="flex items-center gap-4">
-			<a href="/" class="text-slate-400 hover:text-gold text-sm transition-colors">← Research</a>
-			<span class="text-navy-600">|</span>
-			<span class="font-serif text-gold text-lg font-bold tracking-wide">Playbook Scout</span>
-		</div>
-		<div class="flex items-center gap-4 text-sm text-slate-400">
-			<span>{data.user?.display_name ?? data.user?.sub ?? ''}</span>
-			<a href="/api/auth/logout" class="hover:text-gold transition-colors">Sign out</a>
-		</div>
-	</nav>
+<div class="p-6">
+	<!-- Top bar: nav + team -->
+	<div class="flex items-center justify-between mb-5 flex-wrap gap-3">
+		<!-- Page nav -->
+		<nav class="flex items-center gap-1">
+			{#each NAV as item}
+				<a
+					href={item.href}
+					class="text-sm px-3 py-1.5 rounded-lg transition-colors
+						{isActive(item.href)
+							? 'bg-navy-700 text-slate-200 font-medium'
+							: 'text-slate-500 hover:text-slate-300 hover:bg-navy-800'}"
+				>
+					{item.label}
+				</a>
+			{/each}
+		</nav>
 
-	<main class="p-6">
-		{@render children()}
-	</main>
+		<!-- Team picker -->
+		{#if data.teams.length > 0}
+			<div class="flex items-center gap-2">
+				<span class="text-xs text-slate-600 uppercase tracking-wide">Team</span>
+				<div class="flex items-center gap-1.5 flex-wrap">
+					<button
+						onclick={() => scoutTeam.select(null)}
+						class="text-xs px-3 py-1 rounded-full border transition-colors
+							{$scoutTeam === null
+								? 'bg-gold text-navy border-gold font-semibold'
+								: 'border-navy-600 text-slate-400 hover:border-navy-500 hover:text-slate-300'}"
+					>
+						Personal
+					</button>
+					{#each data.teams as team (team.id)}
+						<button
+							onclick={() => scoutTeam.select(team.id)}
+							class="text-xs px-3 py-1 rounded-full border transition-colors
+								{$scoutTeam === team.id
+									? 'bg-gold text-navy border-gold font-semibold'
+									: 'border-navy-600 text-slate-400 hover:border-navy-500 hover:text-slate-300'}"
+						>
+							{team.display_name}
+						</button>
+					{/each}
+				</div>
+			</div>
+		{/if}
+	</div>
+
+	{@render children()}
 </div>

@@ -44,6 +44,10 @@ class WorkerPool:
         self._active: set[asyncio.Task] = set()
         self._worker_id = f"{socket.gethostname()}:{os.getpid()}"
         self._listen_conn: asyncpg.Connection | None = None
+        self._type_sems: dict[str, asyncio.Semaphore] = {
+            jtype: asyncio.Semaphore(limit)
+            for jtype, limit in settings.per_type_limits.items()
+        }
 
     async def run(self) -> None:
         logger.info("WorkerPool starting (worker_id=%s, max_concurrency=%d)",
@@ -178,19 +182,48 @@ class WorkerPool:
 
     async def _run_job(self, job: dict) -> None:
         job_id = str(job["id"])
+        job_type = job["job_type"]
         hb = HeartbeatManager(job_id, settings.heartbeat_interval)
         await mark_running(job_id)
         await hb.start()
+
+        from job_runner import metrics
+        metrics.set_gauge("active_jobs", len(self._active))
+
         try:
-            await registry.dispatch(job)
+            type_sem = self._type_sems.get(job_type)
+            timeout = settings.type_timeouts.get(job_type, settings.default_job_timeout)
+
+            if type_sem:
+                async def _execute():
+                    async with type_sem:
+                        await registry.dispatch(job)
+                coro = _execute()
+            else:
+                coro = registry.dispatch(job)
+
+            await asyncio.wait_for(coro, timeout=timeout)
             await ack(job_id)
-            logger.info("Job %s (%s) done", job_id, job["job_type"])
+            metrics.inc("jobs_processed")
+            logger.info("Job %s (%s) done", job_id, job_type)
+        except asyncio.TimeoutError:
+            backoff = _calc_backoff(job.get("attempts", 0), settings.default_backoff_base)
+            error_msg = f"Job timed out after {timeout}s"
+            logger.error("Job %s (%s) timed out", job_id, job_type)
+            metrics.inc("jobs_failed")
+            went_dead = await fail(job_id, error_msg, backoff)
+            if went_dead:
+                metrics.inc("jobs_dead")
+                await registry.dispatch_on_dead(job)
         except Exception as exc:
             backoff = _calc_backoff(job.get("attempts", 0), settings.default_backoff_base)
             logger.error("Job %s (%s) failed (attempt %d): %s",
-                         job_id, job["job_type"], job.get("attempts", 0) + 1, exc)
+                         job_id, job_type, job.get("attempts", 0) + 1, exc)
+            metrics.inc("jobs_failed")
             went_dead = await fail(job_id, str(exc), backoff)
             if went_dead:
+                metrics.inc("jobs_dead")
                 await registry.dispatch_on_dead(job)
         finally:
             await hb.stop()
+            metrics.set_gauge("active_jobs", len(self._active))

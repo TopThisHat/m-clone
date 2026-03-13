@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { marked } from 'marked';
+	import { tableExport } from '$lib/actions/tableExport';
 	import {
 		chatMessages,
 		isStreaming,
@@ -114,23 +115,15 @@
 	}
 
 	// ── Share session ─────────────────────────────────────────────────────────
-	import { activeSessionId } from '$lib/stores/sessionStore';
-	import { shareSession } from '$lib/api/sessions';
+	import { activeSessionId, sessionList } from '$lib/stores/sessionStore';
+	import { currentUser } from '$lib/stores/authStore';
+	import { sessionComments } from '$lib/stores/reportStore';
+	import HighlightableReport from './HighlightableReport.svelte';
+	import ShareModal from './ShareModal.svelte';
 
-	async function copyShareLink(btn: HTMLButtonElement) {
-		const id = $activeSessionId;
-		if (!id) return;
-		try {
-			await shareSession(id);
-			const shareUrl = `${window.location.origin}/share/${id}`;
-			await navigator.clipboard.writeText(shareUrl);
-			const orig = btn.textContent;
-			btn.textContent = 'Link copied!';
-			setTimeout(() => (btn.textContent = orig), 2000);
-		} catch {
-			// ignore
-		}
-	}
+	let showShareModal = $state(false);
+	const activeSession = $derived($sessionList.find((s) => s.id === $activeSessionId));
+	const currentVisibility = $derived(activeSession?.visibility ?? 'private');
 
 	// ── Suggested follow-ups ─────────────────────────────────────────────────
 	async function submitSuggestion(q: string) {
@@ -283,12 +276,15 @@
 							{#if msg.content}
 								<!-- Action buttons -->
 								<div class="flex justify-end gap-3 px-4 pt-3 pb-0">
-									{#if isLast && !msg.isStreaming && $activeSessionId}
+									{#if isLast && !msg.isStreaming && $activeSessionId && $currentUser}
 										<button
-											onclick={(e) => copyShareLink(e.currentTarget)}
-											class="text-xs text-slate-600 hover:text-gold transition-colors"
+											onclick={() => (showShareModal = true)}
+											class="text-xs text-slate-600 hover:text-gold transition-colors flex items-center gap-1"
 											title="Share report"
 										>
+											<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+											</svg>
 											Share
 										</button>
 									{/if}
@@ -318,10 +314,18 @@
 										id="report-content-{msg.id}"
 										use:sourcePreview={{ urlMap }}
 									>
-										<article class="prose prose-sm max-w-none">
-											<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-											{@html renderMd(msg.content)}
-										</article>
+										{#if isLast && $activeSessionId && !msg.isStreaming}
+											<HighlightableReport
+												html={renderMd(msg.content)}
+												comments={$sessionComments}
+												canComment={!!$currentUser}
+											/>
+										{:else}
+											<article use:tableExport class="prose prose-sm max-w-none">
+												<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+												{@html renderMd(msg.content)}
+											</article>
+										{/if}
 									</div>
 
 									<!-- Sources footnote section -->
@@ -414,3 +418,16 @@
 		</button>
 	{/if}
 </div>
+
+{#if showShareModal && $activeSessionId}
+	<ShareModal
+		sessionId={$activeSessionId}
+		{currentVisibility}
+		onClose={() => (showShareModal = false)}
+		onVisibilityChange={(v) => {
+			sessionList.update((list) =>
+				list.map((s) => (s.id === $activeSessionId ? { ...s, visibility: v } : s))
+			);
+		}}
+	/>
+{/if}
