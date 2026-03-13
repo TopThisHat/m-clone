@@ -3,8 +3,9 @@
 	 * Wraps report HTML content to support:
 	 * - Text selection → floating "Add comment" toolbar → creates anchored comment
 	 * - Rendering highlight marks for anchored comments
-	 * - Hover tooltip over highlights showing comment preview
+	 * - Hover tooltip over highlights showing comment preview + anchor context
 	 * - Click highlight to focus comment in sidebar (via activeCommentId store)
+	 * - Suggestion underlines: gold = open, green = accepted
 	 */
 	import { tick } from 'svelte';
 	import type { Comment } from '$lib/api/comments';
@@ -40,7 +41,6 @@
 
 	// Re-apply highlights and table export buttons whenever comments or html changes
 	$effect(() => {
-		// Track both dependencies
 		const _comments = anchoredComments;
 		const _html = html;
 		if (containerEl) {
@@ -59,6 +59,17 @@
 		}
 	});
 
+	function getMarkStyle(comment: Comment): { bg: string; border: string } {
+		if (comment.comment_type === 'suggestion') {
+			if (comment.suggestion_status === 'accepted') {
+				return { bg: 'rgba(34,197,94,0.18)', border: '2px solid rgba(34,197,94,0.6)' };
+			}
+			// open suggestion → gold underline
+			return { bg: 'rgba(212,175,55,0.15)', border: '2px solid rgba(212,175,55,0.8)' };
+		}
+		return { bg: 'rgba(212,175,55,0.25)', border: '2px solid rgba(212,175,55,0.6)' };
+	}
+
 	function applyHighlights() {
 		if (!containerEl) return;
 		const article = containerEl.querySelector('article');
@@ -75,20 +86,19 @@
 		for (const comment of anchoredComments) {
 			const quote = comment.highlight_anchor!.quote;
 			if (!quote) continue;
-			wrapTextInMark(article, quote, comment.id);
+			wrapTextInMark(article, quote, comment.id, comment);
 		}
 
 		refreshActivePulse();
 	}
 
-	function wrapTextInMark(root: Element, quote: string, commentId: string) {
+	function wrapTextInMark(root: Element, quote: string, commentId: string, comment: Comment) {
 		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
 		let node: Text | null;
 		while ((node = walker.nextNode() as Text | null)) {
 			const idx = node.nodeValue?.indexOf(quote) ?? -1;
 			if (idx === -1) continue;
 
-			// Split: before | mark | after
 			const before = node.nodeValue!.slice(0, idx);
 			const after = node.nodeValue!.slice(idx + quote.length);
 
@@ -96,8 +106,9 @@
 			mark.dataset.commentId = commentId;
 			mark.textContent = quote;
 			mark.className = 'highlight-mark cursor-pointer rounded-sm px-0.5 transition-colors';
-			mark.style.backgroundColor = 'rgba(212,175,55,0.25)';
-			mark.style.borderBottom = '2px solid rgba(212,175,55,0.6)';
+			const style = getMarkStyle(comment);
+			mark.style.backgroundColor = style.bg;
+			mark.style.borderBottom = style.border;
 
 			const parent = node.parentNode!;
 			const ref = node.nextSibling;
@@ -106,8 +117,7 @@
 			parent.insertBefore(mark, ref ?? null);
 			if (after) parent.insertBefore(document.createTextNode(after), ref ?? null);
 
-			// Only highlight first occurrence
-			break;
+			break; // Only highlight first occurrence
 		}
 	}
 
@@ -115,11 +125,16 @@
 		if (!containerEl) return;
 		containerEl.querySelectorAll('mark[data-comment-id]').forEach((m) => {
 			const el = m as HTMLElement;
-			const isActive = el.dataset.commentId === $activeCommentId;
-			el.style.backgroundColor = isActive
-				? 'rgba(212,175,55,0.55)'
-				: 'rgba(212,175,55,0.25)';
-			el.style.outline = isActive ? '2px solid rgba(212,175,55,0.8)' : '';
+			const commentId = el.dataset.commentId;
+			const comment = comments.find((c) => c.id === commentId);
+			const isActive = commentId === $activeCommentId;
+			if (comment) {
+				const style = getMarkStyle(comment);
+				el.style.backgroundColor = isActive
+					? style.bg.replace(/[\d.]+\)$/, '0.55)')
+					: style.bg;
+				el.style.outline = isActive ? `2px solid ${style.border.split(' ')[2]}` : '';
+			}
 		});
 	}
 
@@ -133,7 +148,6 @@
 			return;
 		}
 
-		// Ensure selection is inside our container
 		if (!containerEl?.contains(sel.anchorNode)) {
 			toolbarVisible = false;
 			return;
@@ -158,8 +172,6 @@
 		let contextAfter = '';
 
 		if (sel && !sel.isCollapsed && containerEl) {
-			const range = sel.getRangeAt(0);
-			// Get text content around the selection for context
 			const fullText = containerEl.textContent ?? '';
 			const quoteIdx = fullText.indexOf(selectionText);
 			if (quoteIdx !== -1) {
@@ -207,7 +219,6 @@
 		e.stopPropagation();
 	}
 
-	// Close toolbar if clicking elsewhere
 	function onContainerClick(e: MouseEvent) {
 		if (!(e.target as HTMLElement).closest('mark[data-comment-id]')) {
 			toolbarVisible = false;
@@ -270,10 +281,19 @@
 				<span class="font-medium text-slate-200">{tooltipComment.author_name}</span>
 				<span class="text-slate-600 text-[10px]">{new Date(tooltipComment.created_at).toLocaleDateString()}</span>
 			</div>
+			<!-- Anchor context (Feature 5) -->
+			{#if tooltipComment.highlight_anchor && (tooltipComment.highlight_anchor.context_before || tooltipComment.highlight_anchor.context_after)}
+				<p class="text-slate-600 text-[10px] leading-relaxed mb-1.5 italic line-clamp-2">
+					…{tooltipComment.highlight_anchor.context_before.slice(-30)}<strong class="text-slate-400 not-italic">"{tooltipComment.highlight_anchor.quote}"</strong>{tooltipComment.highlight_anchor.context_after.slice(0, 30)}…
+				</p>
+			{/if}
 			<p class="text-slate-300 leading-relaxed line-clamp-3">
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 				{@html highlightMentions(tooltipComment.body)}
 			</p>
+			{#if tooltipComment.comment_type === 'suggestion' && tooltipComment.proposed_text}
+				<p class="text-green-400/70 text-[10px] mt-1">→ {tooltipComment.proposed_text}</p>
+			{/if}
 			<p class="text-gold text-[10px] mt-1.5">Click to view thread →</p>
 		</div>
 	{/if}

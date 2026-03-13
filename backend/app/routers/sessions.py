@@ -5,19 +5,29 @@ from pydantic import BaseModel
 from app.auth import get_current_user, get_optional_user
 from app.db import (
     DatabaseNotConfigured,
+    db_create_notification,
     db_create_session,
     db_delete_session,
+    db_fork_session,
+    db_get_active_viewers,
     db_get_public_session,
     db_get_session,
+    db_get_session_diff,
     db_get_session_teams,
     db_get_team,
+    db_get_team_by_id,
     db_get_member_role,
+    db_heartbeat_presence,
+    db_is_subscribed,
     db_list_sessions,
+    db_list_team_member_sids,
     db_list_user_teams,
     db_pin_session,
     db_share_session_to_team,
+    db_subscribe,
     db_unpin_session,
     db_unshare_session,
+    db_unsubscribe,
     db_update_session,
     db_record_activity,
 )
@@ -49,18 +59,15 @@ async def get_session(session_id: str, user=Depends(get_optional_user)):
         raise HTTPException(status_code=404, detail="Session not found")
     visibility = row.get("visibility", "private")
     if visibility == "private":
-        # Only the owner can access private sessions
         if not user or row.get("owner_sid") != user.get("sub"):
             raise HTTPException(status_code=403, detail="Access denied")
     elif visibility == "team":
-        # Any member of a team the session was shared to can access it
         if not user:
             raise HTTPException(status_code=403, detail="Access denied")
         session_team_ids = set(await db_get_session_teams(session_id))
         user_team_ids = {t["id"] for t in await db_list_user_teams(user["sub"])}
         if not session_team_ids & user_team_ids:
             raise HTTPException(status_code=403, detail="Access denied")
-    # visibility == "public" or no owner → open access
     return row
 
 
@@ -135,8 +142,6 @@ async def share_to_team(session_id: str, body: TeamShareBody, user=Depends(get_c
         session = await db_get_session(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        # Look up team by id
-        from app.db import db_get_team_by_id
         team = await db_get_team_by_id(body.team_id)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -144,13 +149,31 @@ async def share_to_team(session_id: str, body: TeamShareBody, user=Depends(get_c
         if role not in ("owner", "admin", "member"):
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         result = await db_share_session_to_team(session_id, body.team_id)
-        # Make session visible to team
         await db_update_session(session_id, {"visibility": "team"})
         try:
             await db_record_activity(body.team_id, user["sub"], "shared_session", {
                 "session_id": session_id,
                 "session_title": session.get("title", ""),
             })
+        except Exception:
+            pass
+        # Notify all team members except sharer
+        try:
+            sharer_name = user.get("display_name", user["sub"])
+            member_sids = await db_list_team_member_sids(body.team_id)
+            for member_sid in member_sids:
+                if member_sid == user["sub"]:
+                    continue
+                await db_create_notification(
+                    recipient_sid=member_sid,
+                    type_="shared_session",
+                    payload={
+                        "session_id": session_id,
+                        "session_title": session.get("title", ""),
+                        "team_name": team.get("display_name", ""),
+                        "shared_by_name": sharer_name,
+                    },
+                )
         except Exception:
             pass
         return result
@@ -198,6 +221,92 @@ async def pin_session(session_id: str, body: PinBody, user=Depends(get_current_u
 async def unpin_session(session_id: str, team_id: str, user=Depends(get_current_user)):
     try:
         await db_unpin_session(user["sub"], session_id, team_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+# ── Fork ──────────────────────────────────────────────────────────────────────
+
+@router.post("/{session_id}/fork", status_code=201)
+async def fork_session(session_id: str, user=Depends(get_current_user)):
+    """Fork a session into a new private session owned by the current user."""
+    try:
+        row = await db_get_session(session_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        visibility = row.get("visibility", "private")
+        # Must be owner, public, or a team member
+        if visibility == "private" and row.get("owner_sid") != user["sub"]:
+            raise HTTPException(status_code=403, detail="Access denied")
+        if visibility == "team":
+            session_team_ids = set(await db_get_session_teams(session_id))
+            user_team_ids = {t["id"] for t in await db_list_user_teams(user["sub"])}
+            if not session_team_ids & user_team_ids and row.get("owner_sid") != user["sub"]:
+                raise HTTPException(status_code=403, detail="Access denied")
+        new_session = await db_fork_session(session_id, user["sub"])
+        return {"id": new_session["id"], "title": new_session["title"]}
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+# ── Subscribe ─────────────────────────────────────────────────────────────────
+
+@router.post("/{session_id}/subscribe", status_code=201)
+async def subscribe_session(session_id: str, user=Depends(get_current_user)):
+    try:
+        await db_subscribe(session_id, user["sub"])
+        return Response(status_code=201)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.delete("/{session_id}/subscribe", status_code=204)
+async def unsubscribe_session(session_id: str, user=Depends(get_current_user)):
+    try:
+        await db_unsubscribe(session_id, user["sub"])
+        return Response(status_code=204)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/{session_id}/subscribe")
+async def get_subscription(session_id: str, user=Depends(get_current_user)):
+    try:
+        subscribed = await db_is_subscribed(session_id, user["sub"])
+        return {"subscribed": subscribed}
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+# ── Presence ──────────────────────────────────────────────────────────────────
+
+@router.post("/{session_id}/presence", status_code=204)
+async def heartbeat_presence(session_id: str, user=Depends(get_current_user)):
+    try:
+        await db_heartbeat_presence(session_id, user["sub"])
+        return Response(status_code=204)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/{session_id}/presence")
+async def get_presence(session_id: str, user=Depends(get_current_user)):
+    try:
+        viewers = await db_get_active_viewers(session_id, window_seconds=30)
+        return viewers
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+# ── Diff ──────────────────────────────────────────────────────────────────────
+
+@router.get("/{session_id}/diff")
+async def get_session_diff(session_id: str, user=Depends(get_optional_user)):
+    try:
+        diff = await db_get_session_diff(session_id)
+        if diff is None:
+            raise HTTPException(status_code=404, detail="No previous version found")
+        return diff
     except DatabaseNotConfigured:
         raise _no_db()
 

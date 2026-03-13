@@ -493,6 +493,48 @@ async def init_schema() -> None:
                 CREATE UNIQUE INDEX IF NOT EXISTS attributes_campaign_label_unique
                     ON attributes (campaign_id, label)
             """)
+            # ── Collaboration features ──────────────────────────────────────────
+            await conn.execute("""
+                ALTER TABLE sessions ADD COLUMN IF NOT EXISTS parent_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL
+            """)
+            await conn.execute("""
+                ALTER TABLE comments ADD COLUMN IF NOT EXISTS comment_type TEXT NOT NULL DEFAULT 'comment'
+            """)
+            await conn.execute("""
+                ALTER TABLE comments ADD COLUMN IF NOT EXISTS proposed_text TEXT
+            """)
+            await conn.execute("""
+                ALTER TABLE comments ADD COLUMN IF NOT EXISTS suggestion_status TEXT DEFAULT 'open'
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS comment_reactions (
+                    comment_id UUID REFERENCES comments(id) ON DELETE CASCADE,
+                    user_sid   TEXT REFERENCES users(sid)   ON DELETE CASCADE,
+                    emoji      TEXT NOT NULL CHECK (emoji IN ('👍','❤️','🔥','💡','✅','❓')),
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    PRIMARY KEY (comment_id, user_sid, emoji)
+                )
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS session_subscriptions (
+                    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+                    user_sid   TEXT REFERENCES users(sid)   ON DELETE CASCADE,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    PRIMARY KEY (session_id, user_sid)
+                )
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS session_presence (
+                    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
+                    user_sid   TEXT REFERENCES users(sid)   ON DELETE CASCADE,
+                    last_seen  TIMESTAMPTZ DEFAULT NOW(),
+                    PRIMARY KEY (session_id, user_sid)
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS session_presence_idx
+                    ON session_presence(session_id, last_seen DESC)
+            """)
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")
 
@@ -599,7 +641,7 @@ async def db_create_session(data: dict[str, Any]) -> dict[str, Any]:
 
 
 async def db_update_session(session_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
-    allowed = {"title", "report_markdown", "message_history", "trace_steps", "is_public", "usage_tokens", "visibility", "owner_sid"}
+    allowed = {"title", "report_markdown", "message_history", "trace_steps", "is_public", "usage_tokens", "visibility", "owner_sid", "parent_session_id"}
     fields = {k: v for k, v in patch.items() if k in allowed}
     if not fields:
         return await db_get_session(session_id)
@@ -973,17 +1015,21 @@ async def db_create_comment(
     mentions: list[str],
     parent_id: str | None = None,
     highlight_anchor: dict | None = None,
+    comment_type: str = "comment",
+    proposed_text: str | None = None,
 ) -> dict[str, Any]:
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO comments (session_id, author_sid, body, mentions, parent_id, highlight_anchor)
-            VALUES ($1::uuid, $2, $3, $4::jsonb, $5::uuid, $6::jsonb)
+            INSERT INTO comments (session_id, author_sid, body, mentions, parent_id, highlight_anchor, comment_type, proposed_text)
+            VALUES ($1::uuid, $2, $3, $4::jsonb, $5::uuid, $6::jsonb, $7, $8)
             RETURNING *
             """,
             session_id, author_sid, body, json.dumps(mentions),
             parent_id if parent_id else None,
             json.dumps(highlight_anchor) if highlight_anchor else None,
+            comment_type,
+            proposed_text,
         )
     return _row_to_dict(row)
 
@@ -1001,6 +1047,7 @@ async def db_list_comments(session_id: str) -> list[dict[str, Any]]:
             session_id,
         )
     result = []
+    comment_ids = []
     for r in rows:
         d = dict(r)
         for field in ("mentions", "highlight_anchor"):
@@ -1013,7 +1060,14 @@ async def db_list_comments(session_id: str) -> list[dict[str, Any]]:
             d["created_at"] = d["created_at"].isoformat()
         if "updated_at" in d and d["updated_at"] is not None:
             d["updated_at"] = d["updated_at"].isoformat()
+        d.setdefault("reactions", {})
         result.append(d)
+        comment_ids.append(d["id"])
+    # Attach reactions in bulk
+    if comment_ids:
+        reactions_map = await db_get_reactions_bulk(comment_ids)
+        for d in result:
+            d["reactions"] = reactions_map.get(d["id"], {})
     return result
 
 
@@ -1027,6 +1081,199 @@ async def db_delete_comment(comment_id: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute("DELETE FROM comments WHERE id = $1::uuid", comment_id)
     return result.endswith("1")
+
+
+async def db_update_comment(comment_id: str, body: str, mentions: list[str]) -> dict[str, Any] | None:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE comments SET body=$2, updated_at=NOW(), mentions=$3::jsonb
+            WHERE id=$1::uuid RETURNING *
+            """,
+            comment_id, body, json.dumps(mentions),
+        )
+    return _row_to_dict(row) if row else None
+
+
+async def db_resolve_suggestion(comment_id: str, status: str) -> dict[str, Any] | None:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE comments SET suggestion_status=$2, updated_at=NOW()
+            WHERE id=$1::uuid AND comment_type='suggestion' RETURNING *
+            """,
+            comment_id, status,
+        )
+    return _row_to_dict(row) if row else None
+
+
+async def db_toggle_reaction(comment_id: str, user_sid: str, emoji: str) -> dict[str, list[str]]:
+    async with _acquire() as conn:
+        async with conn.transaction():
+            existing = await conn.fetchrow(
+                "SELECT 1 FROM comment_reactions WHERE comment_id=$1::uuid AND user_sid=$2 AND emoji=$3",
+                comment_id, user_sid, emoji,
+            )
+            if existing:
+                await conn.execute(
+                    "DELETE FROM comment_reactions WHERE comment_id=$1::uuid AND user_sid=$2 AND emoji=$3",
+                    comment_id, user_sid, emoji,
+                )
+            else:
+                await conn.execute(
+                    "INSERT INTO comment_reactions (comment_id, user_sid, emoji) VALUES ($1::uuid, $2, $3) ON CONFLICT DO NOTHING",
+                    comment_id, user_sid, emoji,
+                )
+            rows = await conn.fetch(
+                "SELECT emoji, user_sid FROM comment_reactions WHERE comment_id=$1::uuid",
+                comment_id,
+            )
+    result: dict[str, list[str]] = {}
+    for r in rows:
+        result.setdefault(r["emoji"], []).append(r["user_sid"])
+    return result
+
+
+async def db_get_reactions_bulk(comment_ids: list[str]) -> dict[str, dict[str, list[str]]]:
+    if not comment_ids:
+        return {}
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT comment_id::text, emoji, user_sid FROM comment_reactions WHERE comment_id = ANY($1::uuid[])",
+            comment_ids,
+        )
+    result: dict[str, dict[str, list[str]]] = {}
+    for r in rows:
+        cid = r["comment_id"]
+        result.setdefault(cid, {}).setdefault(r["emoji"], []).append(r["user_sid"])
+    return result
+
+
+# ── Team membership helpers ────────────────────────────────────────────────────
+
+async def db_list_team_member_sids(team_id: str) -> list[str]:
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT sid FROM team_members WHERE team_id = $1::uuid",
+            team_id,
+        )
+    return [r["sid"] for r in rows]
+
+
+# ── Session fork ───────────────────────────────────────────────────────────────
+
+async def db_fork_session(source_id: str, new_owner_sid: str) -> dict[str, Any]:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO sessions (title, query, report_markdown, message_history, trace_steps, owner_sid, visibility)
+            SELECT 'Fork: ' || title, query, report_markdown, message_history, '[]'::jsonb, $2, 'private'
+            FROM sessions WHERE id=$1::uuid
+            RETURNING *, COALESCE(is_public, FALSE) AS is_public,
+                         COALESCE(usage_tokens, 0) AS usage_tokens,
+                         COALESCE(visibility, 'private') AS visibility
+            """,
+            source_id, new_owner_sid,
+        )
+    return _row_to_dict(row)
+
+
+# ── Session subscriptions ──────────────────────────────────────────────────────
+
+async def db_subscribe(session_id: str, user_sid: str) -> None:
+    async with _acquire() as conn:
+        await conn.execute(
+            "INSERT INTO session_subscriptions (session_id, user_sid) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING",
+            session_id, user_sid,
+        )
+
+
+async def db_unsubscribe(session_id: str, user_sid: str) -> None:
+    async with _acquire() as conn:
+        await conn.execute(
+            "DELETE FROM session_subscriptions WHERE session_id=$1::uuid AND user_sid=$2",
+            session_id, user_sid,
+        )
+
+
+async def db_is_subscribed(session_id: str, user_sid: str) -> bool:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT 1 FROM session_subscriptions WHERE session_id=$1::uuid AND user_sid=$2",
+            session_id, user_sid,
+        )
+    return row is not None
+
+
+async def db_get_subscriber_sids(session_id: str) -> list[str]:
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT user_sid FROM session_subscriptions WHERE session_id=$1::uuid",
+            session_id,
+        )
+    return [r["user_sid"] for r in rows]
+
+
+# ── Session presence ───────────────────────────────────────────────────────────
+
+async def db_heartbeat_presence(session_id: str, user_sid: str) -> None:
+    async with _acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO session_presence (session_id, user_sid, last_seen)
+            VALUES ($1::uuid, $2, NOW())
+            ON CONFLICT (session_id, user_sid) DO UPDATE SET last_seen=NOW()
+            """,
+            session_id, user_sid,
+        )
+
+
+async def db_get_active_viewers(session_id: str, window_seconds: int = 30) -> list[dict[str, Any]]:
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT sp.user_sid, u.display_name, u.avatar_url
+            FROM session_presence sp
+            JOIN users u ON sp.user_sid = u.sid
+            WHERE sp.session_id=$1::uuid AND sp.last_seen > NOW() - ($2 || ' seconds')::interval
+            ORDER BY sp.last_seen DESC
+            """,
+            session_id, str(window_seconds),
+        )
+    result = []
+    for r in rows:
+        d = dict(r)
+        if "avatar_url" in d and d.get("avatar_url") is None:
+            d["avatar_url"] = None
+        result.append(d)
+    return result
+
+
+# ── Session diff ───────────────────────────────────────────────────────────────
+
+async def db_get_session_diff(session_id: str) -> dict[str, Any] | None:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT parent_session_id, report_markdown FROM sessions WHERE id=$1::uuid",
+            session_id,
+        )
+    if not row or not row["parent_session_id"]:
+        return None
+    parent_id = str(row["parent_session_id"])
+    current_md = row["report_markdown"] or ""
+    async with _acquire() as conn:
+        parent_row = await conn.fetchrow(
+            "SELECT report_markdown, created_at FROM sessions WHERE id=$1::uuid",
+            parent_id,
+        )
+    if not parent_row:
+        return None
+    return {
+        "current_markdown": current_md,
+        "previous_markdown": parent_row["report_markdown"] or "",
+        "previous_id": parent_id,
+        "previous_date": parent_row["created_at"].isoformat() if parent_row["created_at"] else None,
+    }
 
 
 # ── Notifications ──────────────────────────────────────────────────────────────

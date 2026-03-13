@@ -1,13 +1,26 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { listComments, createComment, deleteComment, type Comment } from '$lib/api/comments';
+	import {
+		listComments,
+		createComment,
+		deleteComment,
+		updateComment,
+		toggleReaction,
+		resolveSuggestion,
+		getLastSeen,
+		setLastSeen,
+		type Comment,
+	} from '$lib/api/comments';
 	import { currentUser } from '$lib/stores/authStore';
 	import { activeCommentId, pendingAnchor } from '$lib/stores/highlightStore';
 	import { sessionComments } from '$lib/stores/reportStore';
 
-	let { sessionId, onCommentsChange }: {
+	const REACTION_EMOJIS = ['👍', '❤️', '🔥', '💡', '✅', '❓'];
+
+	let { sessionId, onCommentsChange, unseenIds = new Set<string>() }: {
 		sessionId: string;
 		onCommentsChange?: (comments: Comment[]) => void;
+		unseenIds?: Set<string>;
 	} = $props();
 
 	let comments = $state<Comment[]>([]);
@@ -20,18 +33,28 @@
 	let submitting = $state(false);
 	let replyingToId = $state<string | null>(null);
 	let currentAnchor = $state<{ quote: string; context_before: string; context_after: string } | null>(null);
+	// Suggestion mode
+	let isSuggestion = $state(false);
+	let proposedText = $state('');
 
 	let containerEl = $state<HTMLElement | null>(null);
 	let textareaEl = $state<HTMLTextAreaElement | null>(null);
 
+	// Edit mode
+	let editingId = $state<string | null>(null);
+	let editBody = $state('');
+
+	// Reaction picker open for which comment
+	let reactionPickerFor = $state<string | null>(null);
+
 	// ── @mention autocomplete ────────────────────────────────────────────────
 	interface MentionUser { sid: string; display_name: string; avatar_url: string | null; }
-	let mentionUsers = $state<MentionUser[]>([]);           // full list, fetched once
+	let mentionUsers = $state<MentionUser[]>([]);
 	let mentionUsersFetched = $state(false);
-	let mentionQuery = $state('');                          // text after the @ trigger
-	let mentionStart = $state(-1);                          // caret position of the @
+	let mentionQuery = $state('');
+	let mentionStart = $state(-1);
 	let mentionVisible = $state(false);
-	let mentionIndex = $state(0);                           // keyboard-selected index
+	let mentionIndex = $state(0);
 
 	let mentionFiltered = $derived(
 		mentionQuery === ''
@@ -51,7 +74,7 @@
 			const res = await fetch(`/api/sessions/${sessionId}/mentionable-users`, { credentials: 'include' });
 			if (res.ok) mentionUsers = await res.json();
 		} catch {
-			// ignore — autocomplete just won't show
+			// ignore
 		}
 	}
 
@@ -60,7 +83,6 @@
 		const val = ta.value;
 		const pos = ta.selectionStart ?? 0;
 
-		// Find the last @ before the cursor that starts a mention (preceded by space/start)
 		let atIdx = -1;
 		for (let i = pos - 1; i >= 0; i--) {
 			if (val[i] === '@') {
@@ -73,7 +95,6 @@
 
 		if (atIdx !== -1) {
 			const query = val.slice(atIdx + 1, pos);
-			// Only open if query has no spaces (still in the mention token)
 			if (!query.includes(' ')) {
 				mentionStart = atIdx;
 				mentionQuery = query;
@@ -96,7 +117,7 @@
 		mentionVisible = false;
 		tick().then(() => {
 			if (!textareaEl) return;
-			const newPos = before.length + user.sid.length + 2; // @sid + space
+			const newPos = before.length + user.sid.length + 2;
 			textareaEl.setSelectionRange(newPos, newPos);
 			textareaEl.focus();
 		});
@@ -133,7 +154,6 @@
 		if (sessionId) load();
 	});
 
-	// When pendingAnchor is set (user selected text in report), open thread and pre-fill anchor
 	$effect(() => {
 		const anchor = $pendingAnchor;
 		if (anchor) {
@@ -141,6 +161,8 @@
 			currentAnchor = anchor;
 			replyingToId = null;
 			newBody = '';
+			isSuggestion = false;
+			proposedText = '';
 			tick().then(() => {
 				const textarea = containerEl?.querySelector('textarea');
 				textarea?.focus();
@@ -148,7 +170,6 @@
 		}
 	});
 
-	// When activeCommentId changes, scroll to that comment and open thread
 	$effect(() => {
 		const id = $activeCommentId;
 		if (id) {
@@ -162,17 +183,26 @@
 		}
 	});
 
+	// When panel opens, mark as seen
+	$effect(() => {
+		if (open) setLastSeen(sessionId);
+	});
+
 	async function submit() {
 		const body = newBody.trim();
 		if (!body || submitting) return;
 		submitting = true;
 		error = '';
 		try {
+			const commentType = isSuggestion ? 'suggestion' : 'comment';
+			const proposed = isSuggestion ? proposedText.trim() || undefined : undefined;
 			const c = await createComment(
 				sessionId,
 				body,
 				replyingToId ?? undefined,
 				currentAnchor ?? undefined,
+				commentType,
+				proposed,
 			);
 			comments = [...comments, c];
 			sessionComments.set(comments);
@@ -180,6 +210,8 @@
 			newBody = '';
 			replyingToId = null;
 			currentAnchor = null;
+			isSuggestion = false;
+			proposedText = '';
 			pendingAnchor.set(null);
 		} catch (e: unknown) {
 			error = (e as Error).message || 'Failed to post comment.';
@@ -192,6 +224,50 @@
 		try {
 			await deleteComment(id);
 			comments = comments.filter((c) => c.id !== id);
+			sessionComments.set(comments);
+			onCommentsChange?.(comments);
+		} catch {
+			// ignore
+		}
+	}
+
+	async function startEdit(comment: Comment) {
+		editingId = comment.id;
+		editBody = comment.body;
+	}
+
+	async function saveEdit(id: string) {
+		const body = editBody.trim();
+		if (!body) return;
+		try {
+			const updated = await updateComment(id, body);
+			comments = comments.map((c) => (c.id === id ? { ...c, ...updated } : c));
+			sessionComments.set(comments);
+			onCommentsChange?.(comments);
+			editingId = null;
+		} catch {
+			// ignore
+		}
+	}
+
+	async function handleReaction(commentId: string, emoji: string) {
+		try {
+			const reactions = await toggleReaction(commentId, emoji);
+			comments = comments.map((c) =>
+				c.id === commentId ? { ...c, reactions } : c
+			);
+			sessionComments.set(comments);
+			onCommentsChange?.(comments);
+		} catch {
+			// ignore
+		}
+		reactionPickerFor = null;
+	}
+
+	async function handleResolveSuggestion(commentId: string, status: 'accepted' | 'rejected') {
+		try {
+			const updated = await resolveSuggestion(commentId, status);
+			comments = comments.map((c) => (c.id === commentId ? { ...c, ...updated } : c));
 			sessionComments.set(comments);
 			onCommentsChange?.(comments);
 		} catch {
@@ -214,6 +290,8 @@
 		replyingToId = null;
 		currentAnchor = null;
 		newBody = '';
+		isSuggestion = false;
+		proposedText = '';
 		pendingAnchor.set(null);
 	}
 
@@ -221,9 +299,13 @@
 		return text.replace(/@([A-Za-z0-9_.\-]+)/g, '<span class="text-gold font-medium">@$1</span>');
 	}
 
-	// Top-level comments (no parent)
+	function isEdited(comment: Comment): boolean {
+		const created = new Date(comment.created_at).getTime();
+		const updated = new Date(comment.updated_at).getTime();
+		return updated - created > 5000;
+	}
+
 	let topLevel = $derived(comments.filter((c) => !c.parent_id));
-	// Replies grouped by parent
 	let replies = $derived(
 		comments.reduce<Record<string, Comment[]>>((acc, c) => {
 			if (c.parent_id) {
@@ -239,11 +321,15 @@
 			activeCommentId.set(comment.id);
 		}
 	}
+
+	let unseenCount = $derived(
+		comments.filter((c) => unseenIds.has(c.id)).length
+	);
 </script>
 
 <div bind:this={containerEl} class="border-t border-navy-700 mt-4">
 	<button
-		onclick={() => (open = !open)}
+		onclick={() => { open = !open; if (open) setLastSeen(sessionId); }}
 		class="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-500 hover:text-slate-300 transition-colors"
 	>
 		<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -251,6 +337,9 @@
 				d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
 		</svg>
 		<span>{comments.length} comment{comments.length !== 1 ? 's' : ''}</span>
+		{#if unseenCount > 0 && !open}
+			<span class="bg-gold text-navy text-[9px] font-bold rounded-full px-1.5 py-0.5 leading-none">{unseenCount} new</span>
+		{/if}
 		{#if $pendingAnchor}
 			<span class="ml-1 text-gold text-[10px] font-medium">● drafting</span>
 		{/if}
@@ -268,7 +357,10 @@
 
 				<!-- Comment threads -->
 				{#each topLevel as comment (comment.id)}
-					<div data-comment-id={comment.id} class="rounded-lg transition-all duration-300">
+					<div
+						data-comment-id={comment.id}
+						class="rounded-lg transition-all duration-300 {unseenIds.has(comment.id) ? 'border-l-2 border-gold/50 pl-2' : ''}"
+					>
 						<!-- Root comment -->
 						<div class="flex gap-2.5 group">
 							<div class="w-6 h-6 rounded-full bg-navy-700 flex items-center justify-center text-[10px] text-gold font-bold flex-shrink-0 mt-0.5">
@@ -278,7 +370,16 @@
 								<div class="flex items-baseline gap-2 flex-wrap">
 									<span class="text-xs font-medium text-slate-200">{comment.author_name}</span>
 									<span class="text-[10px] text-slate-700">{new Date(comment.created_at).toLocaleString()}</span>
+									{#if isEdited(comment)}
+										<span class="text-[10px] text-slate-600 italic">(edited)</span>
+									{/if}
 									{#if $currentUser?.sid === comment.author_sid}
+										<button
+											onclick={() => startEdit(comment)}
+											class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-600 hover:text-gold transition-all"
+										>
+											edit
+										</button>
 										<button
 											onclick={() => remove(comment.id)}
 											class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-600 hover:text-red-400 transition-all ml-auto"
@@ -298,14 +399,100 @@
 										<svg class="w-2.5 h-2.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
 											<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
 										</svg>
-										<span class="truncate">"{comment.highlight_anchor.quote.slice(0, 50)}{comment.highlight_anchor.quote.length > 50 ? '…' : ''}"</span>
+										{#if comment.highlight_anchor.context_before || comment.highlight_anchor.context_after}
+											<span class="text-slate-500 italic truncate">
+												…{comment.highlight_anchor.context_before.slice(-20)}<strong class="text-gold not-italic">"{comment.highlight_anchor.quote.slice(0, 40)}"</strong>{comment.highlight_anchor.context_after.slice(0, 20)}…
+											</span>
+										{:else}
+											<span class="truncate">"{comment.highlight_anchor.quote.slice(0, 50)}{comment.highlight_anchor.quote.length > 50 ? '…' : ''}"</span>
+										{/if}
 									</button>
 								{/if}
 
-								<p class="text-xs text-slate-300 mt-0.5 leading-relaxed">
-									<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-									{@html highlightMentions(comment.body)}
-								</p>
+								<!-- Suggestion badge -->
+								{#if comment.comment_type === 'suggestion'}
+									<div class="mt-1 mb-1 rounded border border-navy-600 p-1.5 text-[10px]">
+										<div class="text-slate-500 mb-1">Suggestion</div>
+										{#if comment.proposed_text}
+											<div class="line-through text-red-400/70 truncate">{comment.highlight_anchor?.quote ?? '(original)'}</div>
+											<div class="text-green-400/80 truncate">→ {comment.proposed_text}</div>
+										{/if}
+										{#if comment.suggestion_status === 'open' && $currentUser}
+											<!-- Owner can resolve -->
+											<div class="flex gap-1 mt-1.5">
+												<button
+													onclick={() => handleResolveSuggestion(comment.id, 'accepted')}
+													class="px-1.5 py-0.5 rounded bg-green-900/40 text-green-400 hover:bg-green-900/60 transition-colors"
+												>Accept</button>
+												<button
+													onclick={() => handleResolveSuggestion(comment.id, 'rejected')}
+													class="px-1.5 py-0.5 rounded bg-red-900/40 text-red-400 hover:bg-red-900/60 transition-colors"
+												>Reject</button>
+											</div>
+										{:else if comment.suggestion_status === 'accepted'}
+											<span class="text-green-400/70">✓ Accepted</span>
+										{:else if comment.suggestion_status === 'rejected'}
+											<span class="text-red-400/70">✗ Rejected</span>
+										{/if}
+									</div>
+								{/if}
+
+								<!-- Edit mode -->
+								{#if editingId === comment.id}
+									<div class="mt-1">
+										<textarea
+											bind:value={editBody}
+											rows="2"
+											class="w-full bg-navy-800 border border-navy-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-gold/40 resize-none"
+										></textarea>
+										<div class="flex gap-2 mt-1">
+											<button
+												onclick={() => saveEdit(comment.id)}
+												class="text-[10px] px-2 py-0.5 bg-gold text-navy rounded"
+											>Save</button>
+											<button
+												onclick={() => (editingId = null)}
+												class="text-[10px] text-slate-500 hover:text-slate-300"
+											>Cancel</button>
+										</div>
+									</div>
+								{:else}
+									<p class="text-xs text-slate-300 mt-0.5 leading-relaxed">
+										<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+										{@html highlightMentions(comment.body)}
+									</p>
+								{/if}
+
+								<!-- Reactions row -->
+								<div class="flex items-center gap-1 mt-1 flex-wrap">
+									{#each Object.entries(comment.reactions ?? {}) as [emoji, sids] (emoji)}
+										<button
+											onclick={() => handleReaction(comment.id, emoji)}
+											class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border border-navy-600 hover:border-gold/30 transition-colors
+												{$currentUser && sids.includes($currentUser.sid) ? 'bg-gold/10 border-gold/30 text-gold' : 'text-slate-400'}"
+										>
+											{emoji} <span>{sids.length}</span>
+										</button>
+									{/each}
+									{#if $currentUser}
+										<div class="relative">
+											<button
+												onclick={() => (reactionPickerFor = reactionPickerFor === comment.id ? null : comment.id)}
+												class="text-[10px] text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
+											>+</button>
+											{#if reactionPickerFor === comment.id}
+												<div class="absolute bottom-full left-0 mb-1 bg-navy-900 border border-navy-700 rounded-lg p-1.5 flex gap-1 z-30 shadow-xl">
+													{#each ['👍','❤️','🔥','💡','✅','❓'] as emoji}
+														<button
+															onclick={() => handleReaction(comment.id, emoji)}
+															class="text-sm hover:scale-125 transition-transform p-0.5"
+														>{emoji}</button>
+													{/each}
+												</div>
+											{/if}
+										</div>
+									{/if}
+								</div>
 
 								<button
 									onclick={() => startReply(comment.id)}
@@ -320,7 +507,7 @@
 						{#if replies[comment.id]?.length}
 							<div class="ml-8 mt-2 space-y-2 border-l border-navy-700 pl-3">
 								{#each replies[comment.id] as reply (reply.id)}
-									<div data-comment-id={reply.id} class="flex gap-2 group rounded transition-all duration-300">
+									<div data-comment-id={reply.id} class="flex gap-2 group rounded transition-all duration-300 {unseenIds.has(reply.id) ? 'border-l-2 border-gold/40 pl-1' : ''}">
 										<div class="w-5 h-5 rounded-full bg-navy-700 flex items-center justify-center text-[9px] text-gold font-bold flex-shrink-0 mt-0.5">
 											{reply.author_name?.charAt(0).toUpperCase() ?? '?'}
 										</div>
@@ -328,19 +515,63 @@
 											<div class="flex items-baseline gap-2 flex-wrap">
 												<span class="text-[11px] font-medium text-slate-200">{reply.author_name}</span>
 												<span class="text-[10px] text-slate-700">{new Date(reply.created_at).toLocaleString()}</span>
+												{#if isEdited(reply)}
+													<span class="text-[10px] text-slate-600 italic">(edited)</span>
+												{/if}
 												{#if $currentUser?.sid === reply.author_sid}
+													<button
+														onclick={() => startEdit(reply)}
+														class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-600 hover:text-gold transition-all"
+													>edit</button>
 													<button
 														onclick={() => remove(reply.id)}
 														class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-600 hover:text-red-400 transition-all ml-auto"
-													>
-														delete
-													</button>
+													>delete</button>
 												{/if}
 											</div>
-											<p class="text-xs text-slate-300 mt-0.5 leading-relaxed">
-												<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-												{@html highlightMentions(reply.body)}
-											</p>
+											{#if editingId === reply.id}
+												<div class="mt-1">
+													<textarea
+														bind:value={editBody}
+														rows="2"
+														class="w-full bg-navy-800 border border-navy-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-gold/40 resize-none"
+													></textarea>
+													<div class="flex gap-2 mt-1">
+														<button onclick={() => saveEdit(reply.id)} class="text-[10px] px-2 py-0.5 bg-gold text-navy rounded">Save</button>
+														<button onclick={() => (editingId = null)} class="text-[10px] text-slate-500 hover:text-slate-300">Cancel</button>
+													</div>
+												</div>
+											{:else}
+												<p class="text-xs text-slate-300 mt-0.5 leading-relaxed">
+													<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+													{@html highlightMentions(reply.body)}
+												</p>
+											{/if}
+											<!-- Reactions on replies -->
+											<div class="flex items-center gap-1 mt-1 flex-wrap">
+												{#each Object.entries(reply.reactions ?? {}) as [emoji, sids] (emoji)}
+													<button
+														onclick={() => handleReaction(reply.id, emoji)}
+														class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border border-navy-600 hover:border-gold/30 transition-colors
+															{$currentUser && sids.includes($currentUser.sid) ? 'bg-gold/10 border-gold/30 text-gold' : 'text-slate-400'}"
+													>{emoji} {sids.length}</button>
+												{/each}
+												{#if $currentUser}
+													<div class="relative">
+														<button
+															onclick={() => (reactionPickerFor = reactionPickerFor === reply.id ? null : reply.id)}
+															class="text-[10px] text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
+														>+</button>
+														{#if reactionPickerFor === reply.id}
+															<div class="absolute bottom-full left-0 mb-1 bg-navy-900 border border-navy-700 rounded-lg p-1.5 flex gap-1 z-30 shadow-xl">
+																{#each ['👍','❤️','🔥','💡','✅','❓'] as emoji}
+																	<button onclick={() => handleReaction(reply.id, emoji)} class="text-sm hover:scale-125 transition-transform p-0.5">{emoji}</button>
+																{/each}
+															</div>
+														{/if}
+													</div>
+												{/if}
+											</div>
 										</div>
 									</div>
 								{/each}
@@ -362,6 +593,25 @@
 							<span class="truncate">Commenting on: "{currentAnchor.quote.slice(0, 60)}{currentAnchor.quote.length > 60 ? '…' : ''}"</span>
 							<button onclick={cancelCompose} class="ml-auto flex-shrink-0 hover:text-red-400">✕</button>
 						</div>
+						<!-- Suggestion toggle (only when anchor is set) -->
+						<div class="flex items-center gap-2 mb-2">
+							<button
+								onclick={() => { isSuggestion = !isSuggestion; }}
+								class="text-[10px] px-2 py-0.5 rounded border transition-colors {isSuggestion ? 'border-gold/40 text-gold bg-gold/10' : 'border-navy-700 text-slate-500 hover:text-slate-300'}"
+							>{isSuggestion ? '✎ Suggestion mode' : 'Switch to suggestion'}</button>
+						</div>
+						{#if isSuggestion}
+							<div class="mb-2">
+								<label for="proposed-text" class="text-[10px] text-slate-500 mb-1 block">Proposed replacement text</label>
+								<textarea
+									id="proposed-text"
+									bind:value={proposedText}
+									placeholder="Enter your suggested replacement…"
+									rows="2"
+									class="w-full bg-navy-800 border border-green-900/40 rounded px-2 py-1 text-xs text-green-300 placeholder-slate-600 focus:outline-none focus:border-green-700/40 resize-none"
+								></textarea>
+							</div>
+						{/if}
 					{:else if replyingToId}
 						{@const parent = comments.find((c) => c.id === replyingToId)}
 						{#if parent}
@@ -386,7 +636,7 @@
 								onkeydown={handleKey}
 								oninput={onTextareaInput}
 								placeholder={currentAnchor
-									? 'Comment on highlighted text… @mention teammates'
+									? (isSuggestion ? 'Describe your suggestion… @mention teammates' : 'Comment on highlighted text… @mention teammates')
 									: replyingToId
 									? 'Write a reply… @mention teammates'
 									: 'Add a comment… @mention teammates'}
@@ -433,7 +683,7 @@
 									disabled={!newBody.trim() || submitting}
 									class="px-3 py-1 rounded text-xs bg-gold text-navy font-medium disabled:opacity-40 hover:bg-gold/90 transition-colors"
 								>
-									{submitting ? 'Posting…' : currentAnchor ? 'Comment on selection' : replyingToId ? 'Reply' : 'Comment'}
+									{submitting ? 'Posting…' : isSuggestion ? 'Post suggestion' : currentAnchor ? 'Comment on selection' : replyingToId ? 'Reply' : 'Comment'}
 								</button>
 							</div>
 						</div>

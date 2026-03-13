@@ -4,13 +4,28 @@
 	import ResearchSwimlane from '$lib/components/ResearchSwimlane.svelte';
 	import ChartCard from '$lib/components/ChartCard.svelte';
 	import CommentThread from '$lib/components/CommentThread.svelte';
+	import PresenceAvatars from '$lib/components/PresenceAvatars.svelte';
+	import ReportDiff from '$lib/components/ReportDiff.svelte';
 	import type { TraceStep } from '$lib/stores/traceStore';
 	import type { ChartPayload } from '$lib/stores/reportStore';
 	import type { Comment } from '$lib/api/comments';
+	import { getLastSeen, setLastSeen, listComments } from '$lib/api/comments';
+	import {
+		forkSession,
+		subscribe,
+		unsubscribe,
+		isSubscribed,
+		heartbeatPresence,
+		getPresence,
+		getSessionDiff,
+		type PresenceViewer,
+		type SessionDiff,
+	} from '$lib/api/sessions';
 	import { currentUser } from '$lib/stores/authStore';
 	import { sessionComments } from '$lib/stores/reportStore';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { tableExport } from '$lib/actions/tableExport';
+	import { goto } from '$app/navigation';
 
 	let { data }: { data: PageData } = $props();
 	const session = $derived(data.session);
@@ -25,10 +40,137 @@
 	let showComments = $state(false);
 	let copied = $state(false);
 
+	// Live comments (Feature 1 & 3)
+	let liveComments = $state<Comment[]>((data.comments as Comment[]) ?? []);
+	let unseenIds = $state(new Set<string>());
+	let unseenCount = $derived(unseenIds.size);
+	let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+	// Subscribe (Feature 10)
+	let subscribed = $state(false);
+	let subscribing = $state(false);
+
+	// Presence (Feature 11)
+	let viewers = $state<PresenceViewer[]>([]);
+	let presenceInterval: ReturnType<typeof setInterval> | null = null;
+
+	// Diff (Feature 12)
+	let diff = $state<SessionDiff | null>(null);
+	let showDiff = $state(false);
+	let diffMode = $state<'unified' | 'side'>('unified');
+	let loadingDiff = $state(false);
+
+	// Forking (Feature 7)
+	let forking = $state(false);
+
 	// Seed the global comment store so CommentThread can operate
-	onMount(() => {
-		sessionComments.set((data.comments as Comment[]) ?? []);
+	onMount(async () => {
+		sessionComments.set(liveComments);
+
+		// Compute unread (Feature 3)
+		const lastSeen = getLastSeen(session.id);
+		if (lastSeen) {
+			const seen = new Date(lastSeen).getTime();
+			const initialUnseen = new Set(
+				liveComments
+					.filter((c) => new Date(c.created_at).getTime() > seen)
+					.map((c) => c.id)
+			);
+			unseenIds = initialUnseen;
+		}
+
+		// Start live comment polling (Feature 1)
+		pollInterval = setInterval(async () => {
+			const fresh = await listComments(session.id).catch(() => null);
+			if (!fresh) return;
+			const existingIds = new Set(liveComments.map((c) => c.id));
+			const newOnes = fresh.filter((c) => !existingIds.has(c.id));
+			if (newOnes.length > 0) {
+				if (!showComments) {
+					unseenIds = new Set([...unseenIds, ...newOnes.map((c) => c.id)]);
+				}
+				liveComments = fresh;
+				sessionComments.set(fresh);
+			} else {
+				// Update reactions etc even if no new comments
+				liveComments = fresh;
+				sessionComments.set(fresh);
+			}
+		}, 15_000);
+
+		// Subscribe status (Feature 10)
+		if ($currentUser && session.visibility === 'team') {
+			subscribed = await isSubscribed(session.id).catch(() => false);
+		}
+
+		// Presence (Feature 11)
+		if ($currentUser) {
+			await heartbeatPresence(session.id).catch(() => {});
+			viewers = await getPresence(session.id).catch(() => []);
+			presenceInterval = setInterval(async () => {
+				await heartbeatPresence(session.id).catch(() => {});
+				viewers = await getPresence(session.id).catch(() => []);
+			}, 20_000);
+		}
 	});
+
+	onDestroy(() => {
+		if (pollInterval) clearInterval(pollInterval);
+		if (presenceInterval) clearInterval(presenceInterval);
+	});
+
+	function onCommentsOpen() {
+		// Clear unseen when user opens comments
+		unseenIds = new Set();
+		setLastSeen(session.id);
+	}
+
+	async function handleFork() {
+		if (forking || !$currentUser) return;
+		forking = true;
+		try {
+			const forked = await forkSession(session.id);
+			goto(`/?session=${forked.id}`);
+		} catch {
+			// ignore
+		} finally {
+			forking = false;
+		}
+	}
+
+	async function handleSubscribe() {
+		if (subscribing || !$currentUser) return;
+		subscribing = true;
+		try {
+			if (subscribed) {
+				await unsubscribe(session.id);
+				subscribed = false;
+			} else {
+				await subscribe(session.id);
+				subscribed = true;
+			}
+		} catch {
+			// ignore
+		} finally {
+			subscribing = false;
+		}
+	}
+
+	async function handleShowDiff() {
+		if (diff) {
+			showDiff = !showDiff;
+			return;
+		}
+		loadingDiff = true;
+		try {
+			diff = await getSessionDiff(session.id);
+			if (diff) showDiff = true;
+		} catch {
+			// ignore
+		} finally {
+			loadingDiff = false;
+		}
+	}
 
 	// ── Table of contents ─────────────────────────────────────────────────────
 	interface TocEntry { id: string; text: string; level: number; }
@@ -146,10 +288,42 @@
 			<span class="text-navy-600 hidden sm:inline">·</span>
 			<span class="text-xs text-slate-500 truncate flex-1">{session.title}</span>
 
+			<!-- Presence avatars (Feature 11) -->
+			{#if $currentUser && viewers.length > 0}
+				<PresenceAvatars {viewers} currentSid={$currentUser.sid} />
+			{/if}
+
 			<div class="flex items-center gap-2 flex-shrink-0">
+				<!-- Subscribe bell (Feature 10) -->
+				{#if $currentUser && session.visibility === 'team'}
+					<button
+						onclick={handleSubscribe}
+						disabled={subscribing}
+						title={subscribed ? 'Unsubscribe from new comments' : 'Subscribe to new comments'}
+						class="p-1.5 rounded text-xs border transition-all
+							{subscribed ? 'border-gold/40 text-gold bg-gold/5' : 'border-navy-700 text-slate-500 hover:text-gold hover:border-gold/30'}"
+					>
+						{subscribed ? '🔔' : '🔕'}
+					</button>
+				{/if}
+
+				<!-- Fork (Feature 7) -->
+				{#if $currentUser}
+					<button
+						onclick={handleFork}
+						disabled={forking}
+						class="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs border border-navy-700 text-slate-500 hover:text-gold hover:border-gold/30 transition-all disabled:opacity-40"
+					>
+						<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+						</svg>
+						{forking ? 'Forking…' : 'Fork'}
+					</button>
+				{/if}
+
 				{#if session.visibility === 'team' && $currentUser}
 					<button
-						onclick={() => (showComments = !showComments)}
+						onclick={() => { showComments = !showComments; if (showComments) onCommentsOpen(); }}
 						class="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs border transition-all
 							{showComments ? 'border-gold/40 text-gold bg-gold/5' : 'border-navy-700 text-slate-500 hover:text-gold hover:border-gold/30'}"
 					>
@@ -157,8 +331,10 @@
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
 						</svg>
 						Comments
-						{#if (data.comments as Comment[]).length > 0}
-							<span class="bg-gold/20 text-gold rounded-full px-1.5 text-[10px]">{(data.comments as Comment[]).length}</span>
+						{#if unseenCount > 0 && !showComments}
+							<span class="bg-gold text-navy text-[9px] font-bold rounded-full px-1.5 leading-none py-0.5">{unseenCount}</span>
+						{:else if liveComments.length > 0}
+							<span class="bg-gold/20 text-gold rounded-full px-1.5 text-[10px]">{liveComments.length}</span>
 						{/if}
 					</button>
 				{/if}
@@ -245,6 +421,22 @@
 						</svg>
 						Download .md
 					</button>
+
+					<!-- Compare with previous (Feature 12) -->
+					{#if session.parent_session_id || diff}
+						<button
+							onclick={handleShowDiff}
+							disabled={loadingDiff}
+							class="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs border transition-colors disabled:opacity-40
+								{showDiff ? 'border-gold/40 text-gold bg-gold/5' : 'text-slate-400 hover:text-gold border-navy-700 hover:border-gold/30 bg-navy-900'}"
+						>
+							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" />
+							</svg>
+							{loadingDiff ? 'Loading…' : showDiff ? 'Hide diff' : 'Compare with previous'}
+						</button>
+					{/if}
+
 					<!-- Mobile TOC -->
 					{#if toc.length >= 3}
 						<details class="lg:hidden relative">
@@ -267,6 +459,32 @@
 							</div>
 						</details>
 					{/if}
+				</div>
+			{/if}
+
+			<!-- Diff view (Feature 12) -->
+			{#if showDiff && diff}
+				<div class="mb-6">
+					<div class="flex items-center gap-2 mb-2">
+						<span class="text-xs text-slate-500">
+							Comparing with version from {diff.previous_date ? new Date(diff.previous_date).toLocaleDateString() : 'previous run'}
+						</span>
+						<div class="ml-auto flex gap-1">
+							<button
+								onclick={() => (diffMode = 'unified')}
+								class="text-[10px] px-2 py-0.5 rounded border transition-colors {diffMode === 'unified' ? 'border-gold/40 text-gold' : 'border-navy-700 text-slate-500'}"
+							>Unified</button>
+							<button
+								onclick={() => (diffMode = 'side')}
+								class="text-[10px] px-2 py-0.5 rounded border transition-colors {diffMode === 'side' ? 'border-gold/40 text-gold' : 'border-navy-700 text-slate-500'}"
+							>Side by side</button>
+						</div>
+					</div>
+					<ReportDiff
+						currentMarkdown={diff.current_markdown}
+						previousMarkdown={diff.previous_markdown}
+						mode={diffMode}
+					/>
 				</div>
 			{/if}
 
@@ -329,7 +547,13 @@
 		{#if showComments && session.visibility === 'team' && $currentUser}
 			<aside class="w-80 flex-shrink-0">
 				<div class="sticky top-20 max-h-[calc(100vh-5rem)] overflow-y-auto">
-					<CommentThread sessionId={session.id} />
+					<CommentThread
+						sessionId={session.id}
+						unseenIds={unseenIds}
+						onCommentsChange={(comments) => {
+							liveComments = comments;
+						}}
+					/>
 				</div>
 			</aside>
 		{/if}

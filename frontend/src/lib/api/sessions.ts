@@ -4,6 +4,7 @@ export interface SessionFull extends SessionSummary {
 	report_markdown: string;
 	message_history: unknown[];
 	trace_steps: unknown[];
+	parent_session_id?: string | null;
 }
 
 export interface SessionCreate {
@@ -21,6 +22,19 @@ export interface SessionUpdate {
 	trace_steps?: unknown[];
 	is_public?: boolean;
 	usage_tokens?: number;
+}
+
+export interface PresenceViewer {
+	user_sid: string;
+	display_name: string;
+	avatar_url: string | null;
+}
+
+export interface SessionDiff {
+	current_markdown: string;
+	previous_markdown: string;
+	previous_id: string;
+	previous_date: string | null;
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -117,4 +131,54 @@ export async function unshareSessionFromTeam(id: string, teamId: string): Promis
 		credentials: 'include'
 	});
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function forkSession(id: string): Promise<{ id: string; title: string }> {
+	const res = await fetch(`/api/sessions/${id}/fork`, {
+		method: 'POST',
+		credentials: 'include'
+	});
+	return handleResponse<{ id: string; title: string }>(res);
+}
+
+export async function subscribe(id: string): Promise<void> {
+	const res = await fetch(`/api/sessions/${id}/subscribe`, {
+		method: 'POST',
+		credentials: 'include'
+	});
+	if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function unsubscribe(id: string): Promise<void> {
+	const res = await fetch(`/api/sessions/${id}/subscribe`, {
+		method: 'DELETE',
+		credentials: 'include'
+	});
+	if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function isSubscribed(id: string): Promise<boolean> {
+	const res = await fetch(`/api/sessions/${id}/subscribe`, { credentials: 'include' });
+	if (!res.ok) return false;
+	const data = await res.json();
+	return data.subscribed ?? false;
+}
+
+export async function heartbeatPresence(id: string): Promise<void> {
+	await fetch(`/api/sessions/${id}/presence`, {
+		method: 'POST',
+		credentials: 'include'
+	});
+}
+
+export async function getPresence(id: string): Promise<PresenceViewer[]> {
+	const res = await fetch(`/api/sessions/${id}/presence`, { credentials: 'include' });
+	if (!res.ok) return [];
+	return res.json();
+}
+
+export async function getSessionDiff(id: string): Promise<SessionDiff | null> {
+	const res = await fetch(`/api/sessions/${id}/diff`, { credentials: 'include' });
+	if (!res.ok) return null;
+	return res.json();
 }

@@ -91,6 +91,13 @@
 										New comment on a session
 									{:else if notif.type === 'invite'}
 										You were invited to a team
+									{:else if notif.type === 'shared_session'}
+										<span class="font-medium">{notif.payload.shared_by_name as string}</span> shared
+										<span class="text-gold">"{notif.payload.session_title as string}"</span>
+										with {notif.payload.team_name as string}
+									{:else if notif.type === 'new_comment'}
+										<span class="font-medium">{notif.payload.author_name as string}</span> commented on
+										<span class="text-gold">"{notif.payload.session_title as string}"</span>
 									{:else}
 										{notif.type}
 									{/if}

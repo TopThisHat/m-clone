@@ -16,7 +16,7 @@ _task: asyncio.Task | None = None
 
 async def _run_monitor(monitor: dict) -> None:
     from app.agent.streaming import stream_research
-    from app.db import db_create_session, db_update_monitor_run
+    from app.db import db_create_session, db_list_sessions, db_update_monitor_run
     from app.dependencies import get_agent_deps
 
     final_md: str | None = None
@@ -41,14 +41,27 @@ async def _run_monitor(monitor: dict) -> None:
     if final_md:
         date_str = datetime.now().strftime("%Y-%m-%d")
         try:
-            await db_create_session({
+            # Find the most recent previous session for this monitor query to link as parent
+            previous_sessions = await db_list_sessions(owner_sid=monitor["owner_sid"])
+            parent_session_id = None
+            for s in previous_sessions:
+                if s.get("query") == monitor["query"]:
+                    parent_session_id = s["id"]
+                    break
+
+            session_data: dict = {
                 "owner_sid": monitor["owner_sid"],
                 "title": f"{monitor['label']} \u2014 {date_str}",
                 "query": monitor["query"],
                 "report_markdown": final_md,
                 "message_history": [],
                 "trace_steps": [],
-            })
+            }
+            new_session = await db_create_session(session_data)
+            # Set parent_session_id if we found a previous run
+            if parent_session_id:
+                from app.db import db_update_session
+                await db_update_session(new_session["id"], {"parent_session_id": parent_session_id})
         except Exception as exc:
             logger.error("Monitor %s failed to save session: %s", monitor["id"], exc)
 

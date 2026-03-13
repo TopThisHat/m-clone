@@ -95,14 +95,22 @@
 					{/if}
 				</div>
 			</div>
-			{#if team.your_role === 'owner' || team.your_role === 'admin'}
+			<div class="flex items-center gap-2">
 				<a
-					href="/teams/{slug}/settings"
+					href="/teams/{slug}/library"
 					class="px-3 py-1.5 border border-navy-700 text-slate-400 text-xs rounded hover:border-gold/30 hover:text-gold transition-colors"
 				>
-					Settings
+					Library
 				</a>
-			{/if}
+				{#if team.your_role === 'owner' || team.your_role === 'admin'}
+					<a
+						href="/teams/{slug}/settings"
+						class="px-3 py-1.5 border border-navy-700 text-slate-400 text-xs rounded hover:border-gold/30 hover:text-gold transition-colors"
+					>
+						Settings
+					</a>
+				{/if}
+			</div>
 		</div>
 
 		<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
