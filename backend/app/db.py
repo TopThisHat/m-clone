@@ -452,6 +452,10 @@ async def init_schema() -> None:
                 ON job_queue (status, job_type, created_at DESC)
                 WHERE status = 'dead';
 
+            CREATE INDEX IF NOT EXISTS job_queue_validation_job_idx
+                ON job_queue (validation_job_id)
+                WHERE validation_job_id IS NOT NULL;
+
             CREATE TABLE IF NOT EXISTS attribute_templates (
                 id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 owner_sid  TEXT NOT NULL REFERENCES users(sid) ON DELETE CASCADE,

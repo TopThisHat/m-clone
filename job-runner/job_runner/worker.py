@@ -135,7 +135,7 @@ class WorkerPool:
                         JOIN job_queue root
                           ON root.validation_job_id = vj.id
                          AND root.job_type = 'validation_campaign'
-                         AND root.status = 'done'
+                         AND root.status IN ('done', 'dead')
                         WHERE vj.status = 'running'
                           AND NOT EXISTS (
                               SELECT 1 FROM job_queue children

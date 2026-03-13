@@ -25,6 +25,33 @@ class ValidationCampaignWorkflow(BaseWorkflow):
     payload: {"validation_job_id": str}
     """
 
+    @classmethod
+    async def on_dead(cls, job: dict) -> None:
+        """
+        Called when the campaign fan-out job exhausts all retries.
+        Mark the validation_job as failed so it is not stuck in 'queued' forever.
+        """
+        from app.db import db_update_validation_job
+        payload = job.get("payload") or {}
+        validation_job_id = payload.get("validation_job_id")
+        if not validation_job_id:
+            return
+        try:
+            await db_update_validation_job(
+                validation_job_id,
+                status="failed",
+                error="Campaign fan-out job exhausted all retries",
+            )
+            logger.error(
+                "ValidationCampaign job=%s: fan-out dead after max retries, marked validation_job failed",
+                validation_job_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "ValidationCampaign on_dead: failed to mark validation_job %s failed: %s",
+                validation_job_id, exc,
+            )
+
     async def run(self) -> None:
         from app.db import db_get_job_details, db_update_validation_job
         from job_runner.db import get_pool
@@ -140,12 +167,15 @@ async def finalize_validation_job(validation_job_id: str, root_queue_job_id: str
     Finalize a validation_job once all its pair children have reached a terminal
     state (done or dead).
 
-    Uses a conditional UPDATE (WHERE status = 'running') as an atomic compare-and-swap
-    so that concurrent callers (on_dead hook, _maybe_finalize, reconcile loop) are
-    all safe: exactly one wins the race and proceeds; the rest are silent no-ops.
+    Uses a single CTE statement to atomically count pair outcomes and apply the
+    status update. This eliminates the TOCTOU race where a separate count query
+    could become stale (e.g. due to a retry_dead_job call) before the UPDATE runs.
+
+    The NOT EXISTS guard inside the UPDATE ensures we only finalize when there
+    are truly no pending/claimed/running children remaining.
 
     Final status:
-      - 'failed' if every pair went dead
+      - 'failed' if every pair went dead (and there was at least one)
       - 'done'   otherwise (with error note if some pairs died)
     """
     from app.db import db_get_job_combined_report, db_recompute_scores
@@ -153,50 +183,61 @@ async def finalize_validation_job(validation_job_id: str, root_queue_job_id: str
 
     pool = await get_pool()
 
-    # Count terminal outcomes for all pair children
-    async with pool.acquire() as conn:
-        counts = await conn.fetchrow(
-            """
-            SELECT
-                COUNT(*) FILTER (WHERE status = 'dead') AS dead_count,
-                COUNT(*) FILTER (WHERE status = 'done') AS done_count,
-                COUNT(*) AS total
-            FROM job_queue
-            WHERE root_job_id = $1::uuid
-            """,
-            root_queue_job_id,
-        )
-
-    dead_count = counts["dead_count"] or 0
-    done_count = counts["done_count"] or 0
-    total = counts["total"] or 0
-
-    if dead_count == total and total > 0:
-        final_status = "failed"
-        error = f"All {dead_count} pair job(s) exhausted retries"
-    else:
-        final_status = "done"
-        error = f"{dead_count} of {total} pair(s) failed" if dead_count else None
-
-    # Atomic CAS: only the first caller transitions 'running' → final_status.
-    # If validation_job is already done/failed (another worker beat us), RETURNING
-    # yields no rows and we skip the expensive score recompute + publish.
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            UPDATE validation_jobs
-            SET status = $2, error = $3, completed_at = NOW()
-            WHERE id = $1::uuid AND status = 'running'
-            RETURNING id
+            WITH counts AS (
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'dead') AS dead_count,
+                    COUNT(*) FILTER (WHERE status = 'done') AS done_count,
+                    COUNT(*) AS total
+                FROM job_queue
+                WHERE root_job_id = $1::uuid
+            ),
+            upd AS (
+                UPDATE validation_jobs
+                SET
+                    status = CASE
+                        WHEN (SELECT dead_count = total AND total > 0 FROM counts) THEN 'failed'
+                        ELSE 'done'
+                    END,
+                    error = CASE
+                        WHEN (SELECT dead_count = total AND total > 0 FROM counts)
+                            THEN 'All ' || (SELECT dead_count FROM counts)::text || ' pair job(s) exhausted retries'
+                        WHEN (SELECT dead_count > 0 FROM counts)
+                            THEN (SELECT dead_count FROM counts)::text
+                                 || ' of ' || (SELECT total FROM counts)::text || ' pair(s) failed'
+                        ELSE NULL
+                    END,
+                    completed_at = NOW()
+                WHERE id = $2::uuid
+                  AND status = 'running'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM job_queue
+                      WHERE root_job_id = $1::uuid
+                        AND status NOT IN ('done', 'dead')
+                  )
+                RETURNING id
+            )
+            SELECT
+                (SELECT id        FROM upd)    AS updated_id,
+                (SELECT dead_count FROM counts) AS dead_count,
+                (SELECT done_count FROM counts) AS done_count,
+                (SELECT total      FROM counts) AS total
             """,
+            root_queue_job_id,
             validation_job_id,
-            final_status,
-            error,
         )
 
-    if row is None:
-        # Another worker already finalized this job — nothing to do.
-        logger.debug("Validation job %s already finalized by another worker", validation_job_id)
+    updated_id = row["updated_id"] if row else None
+    dead_count = (row["dead_count"] or 0) if row else 0
+    done_count = (row["done_count"] or 0) if row else 0
+    total      = (row["total"]      or 0) if row else 0
+    final_status = "failed" if (dead_count == total and total > 0) else "done"
+
+    if updated_id is None:
+        # Another worker already finalized, or pending children still exist.
+        logger.debug("Validation job %s already finalized or still has pending children", validation_job_id)
         return
 
     logger.info(
