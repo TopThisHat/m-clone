@@ -20,7 +20,7 @@
 		updated_at: string;
 	}
 
-	let slug = $derived($page.params.slug);
+	let slug = $derived($page.params.slug as string);
 	let team = $state<TeamDetail | null>(null);
 	let activity = $state<ActivityItem[]>([]);
 	let sessions = $state<SharedSession[]>([]);

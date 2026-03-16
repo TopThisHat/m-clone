@@ -3,6 +3,7 @@
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
 	import { entitiesApi, type EntityCreate } from '$lib/api/entities';
 	import { attributesApi, type AttributeCreate } from '$lib/api/attributes';
+	import { libraryEntitiesApi, libraryAttributesApi, type LibraryEntity, type LibraryAttribute } from '$lib/api/library';
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
 	import SchedulePicker from '$lib/components/SchedulePicker.svelte';
 	import CSVUpload from '$lib/components/CSVUpload.svelte';
@@ -31,6 +32,11 @@
 	let addingEntity = $state(false);
 	let entityError = $state('');
 	let showEntityUpload = $state(false);
+	let showEntityLibrary = $state(false);
+	let libraryEntities = $state<LibraryEntity[]>([]);
+	let libraryEntitySelectedIds = $state<Set<string>>(new Set());
+	let importingEntityLib = $state(false);
+	let _libEntitiesLoaded = false;
 
 	// Step 3 — attributes
 	let attrLabel = $state('');
@@ -40,6 +46,11 @@
 	let addingAttr = $state(false);
 	let attrError = $state('');
 	let showAttrUpload = $state(false);
+	let showAttrLibrary = $state(false);
+	let libraryAttrs = $state<LibraryAttribute[]>([]);
+	let libraryAttrSelectedIds = $state<Set<string>>(new Set());
+	let importingAttrLib = $state(false);
+	let _libAttrsLoaded = false;
 
 	// Templates
 	let templates = $state<AttributeTemplate[]>([]);
@@ -135,6 +146,62 @@
 			attrError = err instanceof Error ? err.message : 'Failed to add attribute';
 		} finally {
 			addingAttr = false;
+		}
+	}
+
+	async function openEntityLibrary() {
+		showEntityLibrary = !showEntityLibrary;
+		showEntityUpload = false;
+		if (showEntityLibrary && !_libEntitiesLoaded) {
+			_libEntitiesLoaded = true;
+			try { libraryEntities = await libraryEntitiesApi.list($scoutTeam); } catch { /* ignore */ }
+		}
+	}
+
+	function toggleLibraryEntity(id: string) {
+		const next = new Set(libraryEntitySelectedIds);
+		if (next.has(id)) next.delete(id); else next.add(id);
+		libraryEntitySelectedIds = next;
+	}
+
+	async function importFromEntityLibrary() {
+		if (!campaign || libraryEntitySelectedIds.size === 0) return;
+		importingEntityLib = true;
+		try {
+			const imported = await entitiesApi.importFromLibrary(campaign.id, [...libraryEntitySelectedIds]);
+			entityCount += imported.length;
+			libraryEntitySelectedIds = new Set();
+			showEntityLibrary = false;
+		} catch { /* ignore */ } finally {
+			importingEntityLib = false;
+		}
+	}
+
+	async function openAttrLibrary() {
+		showAttrLibrary = !showAttrLibrary;
+		showAttrUpload = false;
+		if (showAttrLibrary && !_libAttrsLoaded) {
+			_libAttrsLoaded = true;
+			try { libraryAttrs = await libraryAttributesApi.list($scoutTeam); } catch { /* ignore */ }
+		}
+	}
+
+	function toggleLibraryAttr(id: string) {
+		const next = new Set(libraryAttrSelectedIds);
+		if (next.has(id)) next.delete(id); else next.add(id);
+		libraryAttrSelectedIds = next;
+	}
+
+	async function importFromAttrLibrary() {
+		if (!campaign || libraryAttrSelectedIds.size === 0) return;
+		importingAttrLib = true;
+		try {
+			const imported = await attributesApi.importFromLibrary(campaign.id, [...libraryAttrSelectedIds]);
+			attrCount += imported.length;
+			libraryAttrSelectedIds = new Set();
+			showAttrLibrary = false;
+		} catch { /* ignore */ } finally {
+			importingAttrLib = false;
 		}
 	}
 
@@ -262,11 +329,17 @@
 				</form>
 				{#if entityError}<p class="text-red-400 text-xs mb-2">{entityError}</p>{/if}
 
-				<!-- CSV upload toggle -->
-				<button onclick={() => (showEntityUpload = !showEntityUpload)}
-					class="text-xs text-gold hover:text-gold-light underline transition-colors">
-					{showEntityUpload ? 'Hide' : '↑ Upload CSV / Excel instead'}
-				</button>
+				<!-- Import options -->
+				<div class="flex items-center gap-4">
+					<button onclick={() => (showEntityUpload = !showEntityUpload)}
+						class="text-xs text-gold hover:text-gold-light underline transition-colors">
+						{showEntityUpload ? 'Hide' : '↑ Upload CSV / Excel instead'}
+					</button>
+					<button onclick={openEntityLibrary}
+						class="text-xs text-gold hover:text-gold-light underline transition-colors">
+						{showEntityLibrary ? 'Hide library' : '↗ Import from Library'}
+					</button>
+				</div>
 
 				{#if showEntityUpload}
 					<div class="mt-3 border-t border-navy-700 pt-3">
@@ -278,6 +351,34 @@
 								entityCount = all.length;
 							}}
 						/>
+					</div>
+				{/if}
+
+				{#if showEntityLibrary}
+					<div class="mt-3 border-t border-navy-700 pt-3">
+						{#if libraryEntities.length === 0}
+							<p class="text-xs text-slate-500 italic">
+								No entities in your library yet. <a href="/entities" class="text-gold hover:underline">Add some →</a>
+							</p>
+						{:else}
+							<p class="text-xs text-slate-400 mb-2">Select entities to import:</p>
+							<div class="max-h-48 overflow-y-auto space-y-1 mb-3">
+								{#each libraryEntities as lib (lib.id)}
+									<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-navy-700 cursor-pointer">
+										<input type="checkbox" checked={libraryEntitySelectedIds.has(lib.id)}
+											onchange={() => toggleLibraryEntity(lib.id)} class="accent-gold" />
+										<span class="text-slate-200 text-sm">{lib.label}</span>
+										{#if lib.gwm_id}<span class="text-slate-500 font-mono text-xs">{lib.gwm_id}</span>{/if}
+										{#if lib.description}<span class="text-slate-500 text-xs truncate">{lib.description}</span>{/if}
+									</label>
+								{/each}
+							</div>
+							<button onclick={importFromEntityLibrary}
+								disabled={libraryEntitySelectedIds.size === 0 || importingEntityLib}
+								class="bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50">
+								{importingEntityLib ? 'Importing…' : `Import Selected (${libraryEntitySelectedIds.size})`}
+							</button>
+						{/if}
 					</div>
 				{/if}
 			</div>
@@ -365,11 +466,17 @@
 					</div>
 				{/if}
 
-				<!-- CSV upload toggle -->
-				<button onclick={() => (showAttrUpload = !showAttrUpload)}
-					class="text-xs text-gold hover:text-gold-light underline transition-colors">
-					{showAttrUpload ? 'Hide' : '↑ Upload CSV / Excel instead'}
-				</button>
+				<!-- Import options -->
+				<div class="flex items-center gap-4">
+					<button onclick={() => (showAttrUpload = !showAttrUpload)}
+						class="text-xs text-gold hover:text-gold-light underline transition-colors">
+						{showAttrUpload ? 'Hide' : '↑ Upload CSV / Excel instead'}
+					</button>
+					<button onclick={openAttrLibrary}
+						class="text-xs text-gold hover:text-gold-light underline transition-colors">
+						{showAttrLibrary ? 'Hide library' : '↗ Import from Library'}
+					</button>
+				</div>
 
 				{#if showAttrUpload}
 					<div class="mt-3 border-t border-navy-700 pt-3">
@@ -381,6 +488,34 @@
 								attrCount = all.length;
 							}}
 						/>
+					</div>
+				{/if}
+
+				{#if showAttrLibrary}
+					<div class="mt-3 border-t border-navy-700 pt-3">
+						{#if libraryAttrs.length === 0}
+							<p class="text-xs text-slate-500 italic">
+								No attributes in your library yet. <a href="/attributes" class="text-gold hover:underline">Add some →</a>
+							</p>
+						{:else}
+							<p class="text-xs text-slate-400 mb-2">Select attributes to import:</p>
+							<div class="max-h-48 overflow-y-auto space-y-1 mb-3">
+								{#each libraryAttrs as lib (lib.id)}
+									<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-navy-700 cursor-pointer">
+										<input type="checkbox" checked={libraryAttrSelectedIds.has(lib.id)}
+											onchange={() => toggleLibraryAttr(lib.id)} class="accent-gold" />
+										<span class="text-slate-200 text-sm">{lib.label}</span>
+										<span class="text-slate-500 font-mono text-xs">×{lib.weight.toFixed(1)}</span>
+										{#if lib.description}<span class="text-slate-500 text-xs truncate">{lib.description}</span>{/if}
+									</label>
+								{/each}
+							</div>
+							<button onclick={importFromAttrLibrary}
+								disabled={libraryAttrSelectedIds.size === 0 || importingAttrLib}
+								class="bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50">
+								{importingAttrLib ? 'Importing…' : `Import Selected (${libraryAttrSelectedIds.size})`}
+							</button>
+						{/if}
 					</div>
 				{/if}
 			</div>

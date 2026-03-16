@@ -13,7 +13,7 @@
 	} from '$lib/api/teams';
 	import { currentUser } from '$lib/stores/authStore';
 
-	let slug = $derived($page.params.slug);
+	let slug = $derived($page.params.slug as string);
 	let team = $state<TeamDetail | null>(null);
 	let loading = $state(true);
 	let error = $state('');

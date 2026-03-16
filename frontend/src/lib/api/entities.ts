@@ -56,4 +56,11 @@ export const entitiesApi = {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ source_campaign_id: sourceCampaignId }),
 		}),
+
+	importFromLibrary: (campaignId: string, ids: string[]): Promise<Entity[]> =>
+		apiFetch(`/api/campaigns/${campaignId}/entities/import-library`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ids }),
+		}),
 };

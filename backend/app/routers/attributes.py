@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from app.auth import get_current_user
 from app.db import (
@@ -9,11 +10,16 @@ from app.db import (
     db_delete_attribute,
     db_get_campaign,
     db_import_attributes,
+    db_import_attributes_from_library,
     db_is_team_member,
     db_list_attributes,
     db_update_attribute,
 )
 from app.models.campaign import AttributeCreate, AttributeOut, AttributeUpdate, BulkAttributeResult, ImportBody
+
+
+class ImportLibraryBody(BaseModel):
+    ids: list[str]
 
 router = APIRouter(prefix="/api/campaigns", tags=["attributes"])
 
@@ -59,6 +65,15 @@ async def create_attribute(campaign_id: str, body: AttributeCreate, user=Depends
             description=body.description,
             weight=body.weight,
         )
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.post("/{campaign_id}/attributes/import-library", response_model=list[AttributeOut], status_code=201)
+async def import_attributes_from_library(campaign_id: str, body: ImportLibraryBody, user=Depends(get_current_user)):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_import_attributes_from_library(campaign_id, body.ids)
     except DatabaseNotConfigured:
         raise _no_db()
 

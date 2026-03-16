@@ -3,11 +3,13 @@
 	import { entitiesApi, type EntityCreate } from '$lib/api/entities';
 
 	let {
-		campaignId,
+		campaignId = '',
 		onUploaded,
+		onBulkCreate,
 	}: {
-		campaignId: string;
+		campaignId?: string;
 		onUploaded: () => void;
+		onBulkCreate?: (rows: EntityCreate[]) => Promise<{ inserted: unknown[]; skipped: number }>;
 	} = $props();
 
 	type Stage = 'idle' | 'mapping' | 'preview' | 'uploading' | 'done';
@@ -156,7 +158,9 @@
 		try {
 			for (let i = 0; i < entities.length; i += BATCH_SIZE) {
 				const batch = entities.slice(i, i + BATCH_SIZE);
-				const result = await entitiesApi.bulkCreate(campaignId, batch);
+				const result = onBulkCreate
+					? await onBulkCreate(batch)
+					: await entitiesApi.bulkCreate(campaignId, batch);
 				insertedCount += result.inserted.length;
 				skippedCount += result.skipped;
 				uploadedCount = Math.min(i + BATCH_SIZE, entities.length);

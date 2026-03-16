@@ -535,6 +535,30 @@ async def init_schema() -> None:
                 CREATE INDEX IF NOT EXISTS session_presence_idx
                     ON session_presence(session_id, last_seen DESC)
             """)
+            # ── Global entity / attribute library ───────────────────────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS entity_library (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    owner_sid   TEXT NOT NULL REFERENCES users(sid) ON DELETE CASCADE,
+                    team_id     UUID REFERENCES teams(id) ON DELETE SET NULL,
+                    label       TEXT NOT NULL,
+                    description TEXT,
+                    gwm_id      TEXT,
+                    metadata    JSONB NOT NULL DEFAULT '{}',
+                    created_at  TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS attribute_library (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    owner_sid   TEXT NOT NULL REFERENCES users(sid) ON DELETE CASCADE,
+                    team_id     UUID REFERENCES teams(id) ON DELETE SET NULL,
+                    label       TEXT NOT NULL,
+                    description TEXT,
+                    weight      FLOAT NOT NULL DEFAULT 1.0,
+                    created_at  TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")
 
@@ -2573,3 +2597,211 @@ async def db_insert_results_batch(job_id: str, hits: list[dict[str, Any]]) -> No
                 """,
                 job_id,
             )
+
+
+# ── Global Library ─────────────────────────────────────────────────────────────
+
+def _lib_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
+    d = dict(row)
+    for field in ("id", "team_id"):
+        if field in d and d[field] is not None:
+            d[field] = str(d[field])
+    if "metadata" in d and isinstance(d["metadata"], str):
+        d["metadata"] = json.loads(d["metadata"])
+    if "created_at" in d and d["created_at"] is not None:
+        d["created_at"] = d["created_at"].isoformat()
+    return d
+
+
+async def db_list_entity_library(owner_sid: str, team_id: str | None = None) -> list[dict[str, Any]]:
+    async with _acquire() as conn:
+        if team_id:
+            rows = await conn.fetch(
+                "SELECT * FROM entity_library WHERE owner_sid=$1 OR team_id=$2::uuid ORDER BY created_at ASC",
+                owner_sid, team_id,
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT * FROM entity_library WHERE owner_sid=$1 AND team_id IS NULL ORDER BY created_at ASC",
+                owner_sid,
+            )
+    return [_lib_row_to_dict(r) for r in rows]
+
+
+async def db_create_entity_library(owner_sid: str, team_id: str | None, label: str,
+                                   description: str | None, gwm_id: str | None,
+                                   metadata: dict | None) -> dict[str, Any]:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO entity_library (owner_sid, team_id, label, description, gwm_id, metadata)
+            VALUES ($1, $2::uuid, $3, $4, $5, $6::jsonb)
+            RETURNING *
+            """,
+            owner_sid, team_id, label, description, gwm_id, json.dumps(metadata or {}),
+        )
+    return _lib_row_to_dict(row)
+
+
+async def db_bulk_create_entity_library(owner_sid: str, team_id: str | None,
+                                        items: list[dict[str, Any]]) -> dict[str, Any]:
+    if not items:
+        return {"inserted": [], "skipped": 0}
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            INSERT INTO entity_library (owner_sid, team_id, label, description, gwm_id, metadata)
+            SELECT $1,
+                   $2::uuid,
+                   e->>'label',
+                   NULLIF(e->>'description', ''),
+                   NULLIF(e->>'gwm_id', ''),
+                   COALESCE((e->'metadata')::jsonb, '{}'::jsonb)
+            FROM jsonb_array_elements($3::jsonb) AS e
+            WHERE (e->>'label') IS NOT NULL AND (e->>'label') != ''
+            RETURNING *
+            """,
+            owner_sid, team_id, json.dumps(items),
+        )
+    inserted = [_lib_row_to_dict(r) for r in rows]
+    skipped = len([i for i in items if i.get("label")]) - len(inserted)
+    return {"inserted": inserted, "skipped": max(0, skipped)}
+
+
+async def db_update_entity_library(item_id: str, owner_sid: str, **fields: Any) -> dict[str, Any] | None:
+    allowed = {"label", "description", "gwm_id", "metadata"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return None
+    set_clauses = []
+    values: list[Any] = []
+    for i, (k, v) in enumerate(updates.items(), start=3):
+        if k == "metadata":
+            set_clauses.append(f"{k} = ${i}::jsonb")
+            values.append(json.dumps(v))
+        else:
+            set_clauses.append(f"{k} = ${i}")
+            values.append(v)
+    sql = f"UPDATE entity_library SET {', '.join(set_clauses)} WHERE id=$1::uuid AND owner_sid=$2 RETURNING *"
+    async with _acquire() as conn:
+        row = await conn.fetchrow(sql, item_id, owner_sid, *values)
+    return _lib_row_to_dict(row) if row else None
+
+
+async def db_delete_entity_library(item_id: str, owner_sid: str) -> None:
+    async with _acquire() as conn:
+        await conn.execute(
+            "DELETE FROM entity_library WHERE id=$1::uuid AND owner_sid=$2",
+            item_id, owner_sid,
+        )
+
+
+async def db_list_attribute_library(owner_sid: str, team_id: str | None = None) -> list[dict[str, Any]]:
+    async with _acquire() as conn:
+        if team_id:
+            rows = await conn.fetch(
+                "SELECT * FROM attribute_library WHERE owner_sid=$1 OR team_id=$2::uuid ORDER BY created_at ASC",
+                owner_sid, team_id,
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT * FROM attribute_library WHERE owner_sid=$1 AND team_id IS NULL ORDER BY created_at ASC",
+                owner_sid,
+            )
+    return [_lib_row_to_dict(r) for r in rows]
+
+
+async def db_create_attribute_library(owner_sid: str, team_id: str | None, label: str,
+                                      description: str | None, weight: float) -> dict[str, Any]:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO attribute_library (owner_sid, team_id, label, description, weight)
+            VALUES ($1, $2::uuid, $3, $4, $5)
+            RETURNING *
+            """,
+            owner_sid, team_id, label, description, weight,
+        )
+    return _lib_row_to_dict(row)
+
+
+async def db_bulk_create_attribute_library(owner_sid: str, team_id: str | None,
+                                           items: list[dict[str, Any]]) -> dict[str, Any]:
+    if not items:
+        return {"inserted": [], "skipped": 0}
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            INSERT INTO attribute_library (owner_sid, team_id, label, description, weight)
+            SELECT $1,
+                   $2::uuid,
+                   e->>'label',
+                   NULLIF(e->>'description', ''),
+                   COALESCE((e->>'weight')::float, 1.0)
+            FROM jsonb_array_elements($3::jsonb) AS e
+            WHERE (e->>'label') IS NOT NULL AND (e->>'label') != ''
+            RETURNING *
+            """,
+            owner_sid, team_id, json.dumps(items),
+        )
+    inserted = [_lib_row_to_dict(r) for r in rows]
+    skipped = len([i for i in items if i.get("label")]) - len(inserted)
+    return {"inserted": inserted, "skipped": max(0, skipped)}
+
+
+async def db_update_attribute_library(item_id: str, owner_sid: str, **fields: Any) -> dict[str, Any] | None:
+    allowed = {"label", "description", "weight"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return None
+    set_clauses = [f"{k} = ${i}" for i, k in enumerate(updates.keys(), start=3)]
+    sql = f"UPDATE attribute_library SET {', '.join(set_clauses)} WHERE id=$1::uuid AND owner_sid=$2 RETURNING *"
+    async with _acquire() as conn:
+        row = await conn.fetchrow(sql, item_id, owner_sid, *updates.values())
+    return _lib_row_to_dict(row) if row else None
+
+
+async def db_delete_attribute_library(item_id: str, owner_sid: str) -> None:
+    async with _acquire() as conn:
+        await conn.execute(
+            "DELETE FROM attribute_library WHERE id=$1::uuid AND owner_sid=$2",
+            item_id, owner_sid,
+        )
+
+
+async def db_import_entities_from_library(campaign_id: str, lib_ids: list[str]) -> list[dict[str, Any]]:
+    """Copy entity_library rows into campaign entities, skip duplicates."""
+    if not lib_ids:
+        return []
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            INSERT INTO entities (campaign_id, label, description, gwm_id, metadata)
+            SELECT $1::uuid, label, description, gwm_id, metadata
+            FROM entity_library
+            WHERE id = ANY($2::uuid[])
+            ON CONFLICT (campaign_id, label) DO NOTHING
+            RETURNING *
+            """,
+            campaign_id, lib_ids,
+        )
+    return [_entity_row_to_dict(r) for r in rows]
+
+
+async def db_import_attributes_from_library(campaign_id: str, lib_ids: list[str]) -> list[dict[str, Any]]:
+    """Copy attribute_library rows into campaign attributes, skip duplicates."""
+    if not lib_ids:
+        return []
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            INSERT INTO attributes (campaign_id, label, description, weight)
+            SELECT $1::uuid, label, description, weight
+            FROM attribute_library
+            WHERE id = ANY($2::uuid[])
+            ON CONFLICT (campaign_id, label) DO NOTHING
+            RETURNING *
+            """,
+            campaign_id, lib_ids,
+        )
+    return [_attribute_row_to_dict(r) for r in rows]

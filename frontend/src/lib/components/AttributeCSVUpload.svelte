@@ -3,11 +3,13 @@
 	import { attributesApi, type AttributeCreate } from '$lib/api/attributes';
 
 	let {
-		campaignId,
+		campaignId = '',
 		onUploaded,
+		onBulkCreate,
 	}: {
-		campaignId: string;
+		campaignId?: string;
 		onUploaded: () => void;
+		onBulkCreate?: (rows: AttributeCreate[]) => Promise<{ inserted: unknown[]; skipped: number }>;
 	} = $props();
 
 	type Stage = 'idle' | 'mapping' | 'preview' | 'uploading' | 'done';
@@ -152,7 +154,10 @@
 
 		try {
 			for (let i = 0; i < attributes.length; i += BATCH_SIZE) {
-				const result = await attributesApi.bulkCreate(campaignId, attributes.slice(i, i + BATCH_SIZE));
+				const batch = attributes.slice(i, i + BATCH_SIZE);
+				const result = onBulkCreate
+					? await onBulkCreate(batch)
+					: await attributesApi.bulkCreate(campaignId, batch);
 				insertedCount += result.inserted.length;
 				skippedCount += result.skipped;
 				uploadedCount = Math.min(i + BATCH_SIZE, attributes.length);

@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
 from app.auth import get_current_user
+from pydantic import BaseModel
+
 from app.db import (
     DatabaseNotConfigured,
     db_bulk_create_entities,
@@ -9,11 +11,16 @@ from app.db import (
     db_delete_entity,
     db_get_campaign,
     db_import_entities,
+    db_import_entities_from_library,
     db_is_team_member,
     db_list_entities,
     db_update_entity,
 )
 from app.models.campaign import BulkEntityResult, EntityCreate, EntityOut, EntityUpdate, ImportBody
+
+
+class ImportLibraryBody(BaseModel):
+    ids: list[str]
 
 router = APIRouter(prefix="/api/campaigns", tags=["entities"])
 
@@ -82,6 +89,15 @@ async def import_entities(campaign_id: str, body: ImportBody, user=Depends(get_c
             target_campaign_id=campaign_id,
             source_campaign_id=body.source_campaign_id,
         )
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.post("/{campaign_id}/entities/import-library", response_model=list[EntityOut], status_code=201)
+async def import_entities_from_library(campaign_id: str, body: ImportLibraryBody, user=Depends(get_current_user)):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_import_entities_from_library(campaign_id, body.ids)
     except DatabaseNotConfigured:
         raise _no_db()
 
