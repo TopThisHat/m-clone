@@ -230,7 +230,7 @@
 						{done ? 'bg-green-600 text-white' : active ? 'bg-gold text-navy' : 'bg-navy-700 text-slate-500 border border-navy-600'}">
 						{#if done}✓{:else}{s}{/if}
 					</div>
-					<span class="text-xs {active ? 'text-slate-200 font-medium' : done ? 'text-slate-400' : 'text-slate-600'}">{label}</span>
+					<span class="text-xs {active ? 'text-slate-200 font-medium' : done ? 'text-slate-400' : 'text-slate-600'}" aria-current={active ? 'step' : undefined}>{label}</span>
 				</div>
 				{#if i < STEP_LABELS.length - 1}
 					<div class="flex-1 h-px mx-3 {done ? 'bg-green-800' : 'bg-navy-700'}"></div>
@@ -246,14 +246,16 @@
 			{#if data.teams?.length > 0}
 				<div>
 					<p class="text-sm text-slate-400 mb-2">Team <span class="text-slate-600">(optional)</span></p>
-					<div class="flex flex-wrap gap-2">
+					<div class="flex flex-wrap gap-2" role="group" aria-label="Select team">
 						<button type="button" onclick={() => (selectedTeamId = null)}
+							aria-pressed={selectedTeamId === null}
 							class="text-xs px-3 py-1.5 rounded-full border transition-colors
 								{selectedTeamId === null ? 'bg-gold text-navy border-gold font-semibold' : 'border-navy-600 text-slate-400 hover:border-navy-500'}">
 							Personal
 						</button>
 						{#each data.teams as team (team.id)}
 							<button type="button" onclick={() => (selectedTeamId = team.id)}
+								aria-pressed={selectedTeamId === team.id}
 								class="text-xs px-3 py-1.5 rounded-full border transition-colors
 									{selectedTeamId === team.id ? 'bg-gold text-navy border-gold font-semibold' : 'border-navy-600 text-slate-400 hover:border-navy-500'}">
 								{team.display_name}
@@ -317,9 +319,11 @@
 				<!-- Quick add -->
 				<form onsubmit={quickAddEntity} class="flex gap-2 mb-4">
 					<input bind:value={entityLabel} placeholder="Entity name *" required
+						aria-label="Entity name"
 						class="flex-1 bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
 						       placeholder-slate-500 focus:outline-none focus:border-gold" />
 					<input bind:value={entityDesc} placeholder="Description (optional)"
+						aria-label="Entity description"
 						class="flex-1 bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
 						       placeholder-slate-500 focus:outline-none focus:border-gold" />
 					<button type="submit" disabled={addingEntity || !entityLabel.trim()}
@@ -412,9 +416,11 @@
 				<form onsubmit={quickAddAttr} class="mb-4 space-y-2">
 					<div class="flex gap-2">
 						<input bind:value={attrLabel} placeholder="Attribute name *" required
+							aria-label="Attribute name"
 							class="flex-1 bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
 							       placeholder-slate-500 focus:outline-none focus:border-gold" />
 						<input bind:value={attrDesc} placeholder="Description / LLM prompt (optional)"
+							aria-label="Attribute description"
 							class="flex-1 bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
 							       placeholder-slate-500 focus:outline-none focus:border-gold" />
 						<input type="number" bind:value={attrWeight} min="0" step="0.1" placeholder="Weight"
@@ -438,7 +444,7 @@
 					</button>
 					{#if attrCount > 0}
 						<div class="flex items-center gap-1.5 ml-auto">
-							<input bind:value={templateName} placeholder="Template name…" class="bg-navy-700 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-gold w-36" />
+							<input bind:value={templateName} placeholder="Template name…" aria-label="Template name" class="bg-navy-700 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-gold w-36" />
 							<button onclick={saveTemplate} disabled={savingTemplate || !templateName.trim()} class="text-xs text-slate-400 hover:text-gold border border-navy-600 px-2 py-1 rounded transition-colors disabled:opacity-50">
 								{savingTemplate ? '…' : 'Save as template'}
 							</button>

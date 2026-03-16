@@ -126,10 +126,11 @@
 	</div>
 
 	<!-- Status filter pills -->
-	<div class="flex gap-2 mb-6 flex-wrap">
+	<div class="flex gap-2 mb-6 flex-wrap" role="group" aria-label="Filter jobs by status">
 		{#each filterOptions as opt}
 			<button
 				onclick={() => (statusFilter = opt)}
+				aria-pressed={statusFilter === opt}
 				class="text-xs px-3 py-1 rounded-full transition-colors border
 				       {statusFilter === opt
 				         ? 'bg-gold text-navy border-gold font-semibold'
@@ -140,10 +141,10 @@
 		{/each}
 	</div>
 
-	{#if error}<p class="text-red-400 mb-4">{error}</p>{/if}
+	{#if error}<p class="text-red-400 mb-4" role="alert">{error}</p>{/if}
 
 	{#if loading}
-		<p class="text-slate-500">Loading…</p>
+		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading…</p>
 	{:else if filteredJobs.length === 0}
 		<div class="text-center py-12 text-slate-500">
 			<p>{statusFilter === 'all' ? 'No jobs yet. Run one to get started.' : `No ${statusFilter} jobs.`}</p>
@@ -170,6 +171,7 @@
 								<button
 									onclick={() => cancelJob(job.id)}
 									disabled={cancelling.has(job.id)}
+									aria-label="Cancel job"
 									class="text-xs text-red-400 hover:text-red-300 border border-red-900 px-2 py-0.5 rounded
 									       hover:bg-red-950 transition-colors disabled:opacity-50"
 								>
@@ -199,8 +201,8 @@
 <!-- Ad-hoc run modal -->
 {#if showModal}
 	<div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-		<div class="bg-navy-800 border border-navy-600 rounded-xl w-full max-w-2xl p-6 shadow-2xl">
-			<h3 class="font-serif text-gold text-lg font-bold mb-4">Run Ad-hoc Job</h3>
+		<div class="bg-navy-800 border border-navy-600 rounded-xl w-full max-w-2xl p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="adhoc-dialog-title">
+			<h3 id="adhoc-dialog-title" class="font-serif text-gold text-lg font-bold mb-4">Run Ad-hoc Job</h3>
 			<p class="text-slate-400 text-sm mb-4">
 				Leave a section empty to include all entities or attributes.
 			</p>

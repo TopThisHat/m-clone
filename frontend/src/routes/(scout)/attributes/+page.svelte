@@ -172,13 +172,13 @@
 		</div>
 	{:else}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
-			<table class="w-full text-sm">
+			<table class="w-full text-sm" aria-label="Attribute library">
 				<thead>
 					<tr class="border-b border-navy-700 text-slate-400">
-						<th class="text-left px-4 py-3">Label</th>
-						<th class="text-left px-4 py-3">Description</th>
-						<th class="text-left px-4 py-3 w-20">Weight</th>
-						<th class="px-4 py-3 w-24"></th>
+						<th scope="col" class="text-left px-4 py-3">Label</th>
+						<th scope="col" class="text-left px-4 py-3">Description</th>
+						<th scope="col" class="text-left px-4 py-3 w-20">Weight</th>
+						<th scope="col" class="px-4 py-3 w-24"><span class="sr-only">Actions</span></th>
 					</tr>
 				</thead>
 				<tbody>
@@ -186,12 +186,23 @@
 						{#if editing[attr.id]}
 							{@const e = editing[attr.id]}
 							<tr class="border-t border-navy-700 bg-navy-700/50">
-								<td class="px-4 py-2"><input bind:value={e.label} class="input-field w-full text-sm" /></td>
-								<td class="px-4 py-2"><input bind:value={e.description} class="input-field w-full text-sm" /></td>
-								<td class="px-4 py-2"><input type="number" bind:value={e.weight} min="0" step="0.1" class="input-field w-20 text-sm" /></td>
+								<td class="px-4 py-2">
+									<label class="sr-only" for="lib-attr-label-{attr.id}">Label</label>
+									<input id="lib-attr-label-{attr.id}" bind:value={e.label} class="input-field w-full text-sm" />
+								</td>
+								<td class="px-4 py-2">
+									<label class="sr-only" for="lib-attr-desc-{attr.id}">Description</label>
+									<input id="lib-attr-desc-{attr.id}" bind:value={e.description} class="input-field w-full text-sm" />
+								</td>
+								<td class="px-4 py-2">
+									<label class="sr-only" for="lib-attr-weight-{attr.id}">Weight</label>
+									<input id="lib-attr-weight-{attr.id}" type="number" bind:value={e.weight} min="0" step="0.1" class="input-field w-20 text-sm" />
+								</td>
 								<td class="px-4 py-2 text-right space-x-2">
-									<button onclick={() => saveEdit(attr.id)} class="text-green-400 hover:text-green-300 text-xs">Save</button>
-									<button onclick={() => cancelEdit(attr.id)} class="text-slate-500 hover:text-slate-400 text-xs">Cancel</button>
+									<button onclick={() => saveEdit(attr.id)} aria-label="Save changes to {attr.label}"
+										class="text-green-400 hover:text-green-300 text-xs">Save</button>
+									<button onclick={() => cancelEdit(attr.id)} aria-label="Cancel editing {attr.label}"
+										class="text-slate-500 hover:text-slate-400 text-xs">Cancel</button>
 								</td>
 							</tr>
 						{:else}
@@ -200,8 +211,10 @@
 								<td class="px-4 py-3 text-slate-500 truncate max-w-xs">{attr.description ?? '—'}</td>
 								<td class="px-4 py-3 text-slate-300 font-mono text-xs">{attr.weight.toFixed(1)}</td>
 								<td class="px-4 py-3 text-right space-x-2">
-									<button onclick={() => startEdit(attr)} class="text-slate-400 hover:text-gold text-xs">Edit</button>
-									<button onclick={() => deleteAttribute(attr.id)} class="text-red-400/60 hover:text-red-400 text-xs">Del</button>
+									<button onclick={() => startEdit(attr)} aria-label="Edit {attr.label}"
+										class="text-slate-400 hover:text-gold text-xs">Edit</button>
+									<button onclick={() => deleteAttribute(attr.id)} aria-label="Delete {attr.label}"
+										class="text-red-400/60 hover:text-red-400 text-xs">Del</button>
 								</td>
 							</tr>
 						{/if}
@@ -212,9 +225,3 @@
 	{/if}
 </div>
 
-<style>
-	.input-field {
-		@apply bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
-		       placeholder-slate-500 focus:outline-none focus:border-gold;
-	}
-</style>

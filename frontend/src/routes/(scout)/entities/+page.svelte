@@ -231,19 +231,20 @@
 		</div>
 	{:else}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
-			<table class="w-full text-sm">
+			<table class="w-full text-sm" aria-label="Entity library">
 				<thead>
 					<tr class="border-b border-navy-700 text-slate-400">
-						<th class="px-4 py-3 w-8">
+						<th scope="col" class="px-4 py-3 w-8">
 							<input type="checkbox"
 								checked={selectedIds.size === entities.length && entities.length > 0}
 								onchange={toggleSelectAll}
-								class="accent-gold" />
+								class="accent-gold"
+								aria-label="Select all entities" />
 						</th>
-						<th class="text-left px-4 py-3">Label</th>
-						<th class="text-left px-4 py-3">GWM ID</th>
-						<th class="text-left px-4 py-3">Description</th>
-						<th class="px-4 py-3 w-24"></th>
+						<th scope="col" class="text-left px-4 py-3">Label</th>
+						<th scope="col" class="text-left px-4 py-3">GWM ID</th>
+						<th scope="col" class="text-left px-4 py-3">Description</th>
+						<th scope="col" class="px-4 py-3 w-24"><span class="sr-only">Actions</span></th>
 					</tr>
 				</thead>
 				<tbody>
@@ -251,26 +252,40 @@
 						<tr class="border-t border-navy-700 hover:bg-navy-700/50">
 							<td class="px-4 py-3">
 								<input type="checkbox" checked={selectedIds.has(entity.id)}
-									onchange={() => toggleSelect(entity.id)} class="accent-gold" />
+									onchange={() => toggleSelect(entity.id)} class="accent-gold"
+									aria-label="Select {entity.label}" />
 							</td>
 							{#if editingId === entity.id}
-								<td class="px-4 py-2"><input bind:value={editForm.label} class="input-field w-full" /></td>
-								<td class="px-4 py-2"><input bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs" /></td>
-								<td class="px-4 py-2"><input bind:value={editForm.description} class="input-field w-full" /></td>
+								<td class="px-4 py-2">
+									<label class="sr-only" for="lib-edit-label-{entity.id}">Label</label>
+									<input id="lib-edit-label-{entity.id}" bind:value={editForm.label} class="input-field w-full" />
+								</td>
+								<td class="px-4 py-2">
+									<label class="sr-only" for="lib-edit-gwm-{entity.id}">GWM ID</label>
+									<input id="lib-edit-gwm-{entity.id}" bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs" />
+								</td>
+								<td class="px-4 py-2">
+									<label class="sr-only" for="lib-edit-desc-{entity.id}">Description</label>
+									<input id="lib-edit-desc-{entity.id}" bind:value={editForm.description} class="input-field w-full" />
+								</td>
 								<td class="px-4 py-2 text-right whitespace-nowrap">
 									<button onclick={() => saveEdit(entity)} disabled={editSaving}
+										aria-label="Save changes to {entity.label}"
 										class="text-gold hover:text-gold-light text-xs mr-2 disabled:opacity-50">
 										{editSaving ? '…' : 'Save'}
 									</button>
-									<button onclick={cancelEdit} class="text-slate-500 hover:text-slate-300 text-xs">Cancel</button>
+									<button onclick={cancelEdit} aria-label="Cancel editing {entity.label}"
+										class="text-slate-500 hover:text-slate-300 text-xs">Cancel</button>
 								</td>
 							{:else}
 								<td class="px-4 py-3 text-slate-200 font-medium">{entity.label}</td>
 								<td class="px-4 py-3 text-slate-400 font-mono text-xs">{entity.gwm_id ?? '—'}</td>
 								<td class="px-4 py-3 text-slate-500 truncate max-w-xs">{entity.description ?? '—'}</td>
 								<td class="px-4 py-3 text-right whitespace-nowrap">
-									<button onclick={() => startEdit(entity)} class="text-slate-500 hover:text-slate-300 text-xs mr-2">Edit</button>
-									<button onclick={() => deleteEntity(entity.id)} class="text-red-400/60 hover:text-red-400 text-xs">Delete</button>
+									<button onclick={() => startEdit(entity)} aria-label="Edit {entity.label}"
+										class="text-slate-500 hover:text-slate-300 text-xs mr-2">Edit</button>
+									<button onclick={() => deleteEntity(entity.id)} aria-label="Delete {entity.label}"
+										class="text-red-400/60 hover:text-red-400 text-xs">Delete</button>
 								</td>
 							{/if}
 						</tr>
@@ -281,9 +296,3 @@
 	{/if}
 </div>
 
-<style>
-	.input-field {
-		@apply bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
-		       placeholder-slate-500 focus:outline-none focus:border-gold;
-	}
-</style>

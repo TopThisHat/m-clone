@@ -160,7 +160,7 @@
 			] as s}
 				<div class="bg-navy-800 border border-navy-700 rounded-lg px-4 py-3">
 					<div class="flex items-center gap-1.5 mb-1">
-						<span class="text-slate-600 text-xs">{s.icon}</span>
+						<span class="text-slate-600 text-xs" aria-hidden="true">{s.icon}</span>
 						<span class="text-[10px] text-slate-500 uppercase tracking-widest">{s.label}</span>
 					</div>
 					<p class="text-xl font-mono font-semibold text-slate-200">{s.value.toLocaleString()}</p>
@@ -170,15 +170,15 @@
 	{/if}
 
 	{#if loading}
-		<div class="flex justify-center py-16">
-			<span class="flex gap-1">{#each [0,1,2] as j}<span class="w-2 h-2 bg-gold/40 rounded-full animate-bounce" style="animation-delay:{j*0.15}s"></span>{/each}</span>
+		<div class="flex justify-center py-16" aria-live="polite" aria-busy="true" aria-label="Loading campaigns">
+			<span class="flex gap-1" aria-hidden="true">{#each [0,1,2] as j}<span class="w-2 h-2 bg-gold/40 rounded-full animate-bounce" style="animation-delay:{j*0.15}s"></span>{/each}</span>
 		</div>
 	{:else if error}
-		<p class="text-red-400">{error}</p>
+		<p class="text-red-400" role="alert">{error}</p>
 	{:else if campaigns.length === 0}
 		<div class="text-center py-20 text-slate-500">
 			<div class="w-16 h-16 bg-navy-800 border border-navy-700 rounded-xl flex items-center justify-center mx-auto mb-4">
-				<span class="text-2xl text-slate-600">◈</span>
+				<span class="text-2xl text-slate-600" aria-hidden="true">◈</span>
 			</div>
 			<p class="text-lg mb-2">No campaigns yet.</p>
 			<a href="/campaigns/new" class="text-gold hover:underline text-sm">Create your first campaign →</a>
@@ -196,6 +196,8 @@
 						</a>
 						<button
 							onclick={(e) => toggleActive(c, e)}
+							aria-label="{c.is_active ? 'Pause' : 'Activate'} campaign {c.name}"
+							aria-pressed={c.is_active}
 							class="text-[10px] px-2 py-0.5 rounded-full cursor-pointer border transition-all flex-shrink-0
 								{c.is_active ? 'bg-green-950 text-green-400 border-green-800' : 'bg-navy-700 text-slate-500 border-navy-600'}"
 						>
@@ -236,7 +238,7 @@
 					<!-- Schedule -->
 					{#if c.schedule}
 						<p class="text-xs text-slate-500 flex items-center gap-1">
-							<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+							<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
 							{friendlySchedule(c.schedule)}
 						</p>
 					{/if}
@@ -244,7 +246,7 @@
 					<!-- Latest job -->
 					{#if job}
 						<div class="flex items-center gap-1.5 text-xs">
-							<span class="w-1.5 h-1.5 rounded-full {statusDot(job.status)}"></span>
+							<span class="w-1.5 h-1.5 rounded-full {statusDot(job.status)}" aria-hidden="true"></span>
 							<span class="{statusColor(job.status)}">{job.status}</span>
 							{#if job.status === 'running'}
 								<span class="text-slate-500">{job.completed_pairs}/{job.total_pairs} pairs</span>
@@ -266,6 +268,7 @@
 						<button
 							onclick={(e) => cloneCampaign(c.id, e)}
 							disabled={cloning.has(c.id)}
+							aria-label="Clone campaign {c.name}"
 							title="Clone campaign"
 							class="text-xs text-slate-600 hover:text-slate-300 p-1.5 rounded hover:bg-navy-700 transition-colors disabled:opacity-50"
 						>
@@ -277,6 +280,7 @@
 						</button>
 						<button
 							onclick={(e) => deleteCampaign(c.id, c.name, e)}
+							aria-label="Delete campaign {c.name}"
 							title="Delete campaign"
 							class="text-xs text-slate-600 hover:text-red-400 p-1.5 rounded hover:bg-navy-700 transition-colors"
 						>
@@ -284,6 +288,7 @@
 						</button>
 						<button
 							onclick={(e) => runNow(c.id, e)}
+							aria-label="Run campaign {c.name} now"
 							disabled={runningIds.has(c.id) || job?.status === 'running'}
 							class="text-xs bg-navy-700 hover:bg-navy-600 text-slate-300 hover:text-gold px-3 py-1.5 rounded-lg transition-all border border-navy-600 hover:border-gold/30 disabled:opacity-50 disabled:cursor-not-allowed"
 						>

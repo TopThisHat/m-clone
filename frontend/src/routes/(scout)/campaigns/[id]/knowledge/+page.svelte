@@ -56,9 +56,9 @@
 	<h2 class="font-serif text-gold text-xl font-bold mb-6">Knowledge Cache</h2>
 
 	{#if loading}
-		<p class="text-slate-500">Loading…</p>
+		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading…</p>
 	{:else if error}
-		<p class="text-red-400">{error}</p>
+		<p class="text-red-400" role="alert">{error}</p>
 	{:else if knowledge.length === 0}
 		<div class="text-center py-12 text-slate-500">
 			<p>No cached knowledge yet. Run a job to populate the knowledge cache.</p>
@@ -70,6 +70,7 @@
 				<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
 					<button
 						onclick={() => toggleCollapse(label)}
+						aria-expanded={!collapsed.has(label)}
 						class="w-full flex items-center justify-between px-4 py-3 hover:bg-navy-700 transition-colors text-left"
 					>
 						<div class="flex items-center gap-3">
@@ -82,6 +83,7 @@
 						<svg
 							class="w-4 h-4 text-slate-500 transition-transform {collapsed.has(label) ? '' : 'rotate-180'}"
 							fill="none" stroke="currentColor" viewBox="0 0 24 24"
+							aria-hidden="true"
 						>
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
 						</svg>
@@ -89,14 +91,14 @@
 
 					{#if !collapsed.has(label)}
 						<div class="border-t border-navy-700">
-							<table class="w-full text-sm">
+							<table class="w-full text-sm" aria-label="Knowledge for {label}">
 								<thead>
 									<tr class="text-slate-500 text-xs border-b border-navy-700">
-										<th class="text-left px-4 py-2">Attribute</th>
-										<th class="px-4 py-2 text-center">Present</th>
-										<th class="px-4 py-2 text-center">Confidence</th>
-										<th class="text-left px-4 py-2">Source Campaign</th>
-										<th class="text-left px-4 py-2">Last Updated</th>
+										<th scope="col" class="text-left px-4 py-2">Attribute</th>
+										<th scope="col" class="px-4 py-2 text-center">Present</th>
+										<th scope="col" class="px-4 py-2 text-center">Confidence</th>
+										<th scope="col" class="text-left px-4 py-2">Source Campaign</th>
+										<th scope="col" class="text-left px-4 py-2">Last Updated</th>
 									</tr>
 								</thead>
 								<tbody>

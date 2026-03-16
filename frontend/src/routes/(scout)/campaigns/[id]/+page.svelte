@@ -149,9 +149,9 @@
 	</div>
 
 	{#if loading}
-		<p class="text-slate-500">Loading…</p>
+		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading…</p>
 	{:else if error}
-		<p class="text-red-400">{error}</p>
+		<p class="text-red-400" role="alert">{error}</p>
 	{:else if campaign}
 		<div class="flex items-start justify-between mb-4">
 			<div>
@@ -160,7 +160,9 @@
 					<p class="text-slate-400 mt-1">{campaign.description}</p>
 				{/if}
 				{#if campaign.schedule}
-					<p class="text-xs text-slate-500 mt-1">⏰ {friendlySchedule(campaign.schedule)}
+					<p class="text-xs text-slate-500 mt-1">
+						<span aria-hidden="true">⏰</span>
+						{friendlySchedule(campaign.schedule)}
 						{#if nextRunCountdown()}
 							<span class="ml-2 text-slate-400">· Next run in {nextRunCountdown()}</span>
 						{/if}
@@ -170,14 +172,16 @@
 			<div class="flex items-center gap-2">
 				<button
 					onclick={openEdit}
+					aria-label="Edit campaign settings"
+					aria-expanded={showEdit}
 					class="text-slate-500 hover:text-slate-300 p-1.5 rounded transition-colors"
-					title="Edit campaign"
 				>
-					⚙
+					<span aria-hidden="true">⚙</span>
 				</button>
 				<button
 					onclick={runNow}
 					disabled={runningJobId !== null}
+					aria-disabled={runningJobId !== null}
 					class="bg-gold text-navy font-semibold px-4 py-2 rounded-lg hover:bg-gold-light
 					       transition-colors disabled:opacity-50 text-sm"
 				>
@@ -187,29 +191,35 @@
 		</div>
 
 		{#if runError}
-			<p class="text-red-400 text-sm mb-4">{runError}</p>
+			<p class="text-red-400 text-sm mb-4" role="alert">{runError}</p>
 		{/if}
 
 		<!-- Edit panel -->
 		{#if showEdit}
-			<form onsubmit={saveEdit} class="bg-navy-800 border border-navy-600 rounded-xl p-5 mb-6">
-				<h3 class="font-medium text-slate-200 mb-4">Edit Campaign</h3>
+			<form
+				onsubmit={saveEdit}
+				aria-label="Edit campaign"
+				class="bg-navy-800 border border-navy-600 rounded-xl p-5 mb-6"
+			>
+				<h2 class="font-medium text-slate-200 mb-4">Edit Campaign</h2>
 				{#if saveError}
-					<p class="text-red-400 text-sm mb-3">{saveError}</p>
+					<p class="text-red-400 text-sm mb-3" role="alert">{saveError}</p>
 				{/if}
 				<div class="space-y-4 mb-4">
 					<div class="grid grid-cols-2 gap-4">
 						<div>
-							<label class="block text-xs text-slate-400 mb-1">Name *</label>
-							<input bind:value={editName} required class="input-field w-full" />
+							<label for="edit-name" class="block text-xs text-slate-400 mb-1">Name *</label>
+							<input id="edit-name" bind:value={editName} required class="input-field w-full" />
 						</div>
 						<div>
-							<label class="block text-xs text-slate-400 mb-1">Description</label>
-							<input bind:value={editDesc} class="input-field w-full" />
+							<label for="edit-desc" class="block text-xs text-slate-400 mb-1">Description</label>
+							<input id="edit-desc" bind:value={editDesc} class="input-field w-full" />
 						</div>
 					</div>
 					<div>
-						<label class="block text-xs text-slate-400 mb-2">Schedule <span class="text-slate-600">(optional)</span></label>
+						<label class="block text-xs text-slate-400 mb-2">
+							Schedule <span class="text-slate-500">(optional)</span>
+						</label>
 						<SchedulePicker bind:value={editSchedule} />
 					</div>
 				</div>
@@ -225,8 +235,7 @@
 						        class="bg-gold text-navy font-semibold px-4 py-1.5 rounded-lg text-sm hover:bg-gold-light disabled:opacity-50">
 							{saving ? 'Saving…' : 'Save'}
 						</button>
-						<button type="button" onclick={() => (showEdit = false)}
-						        class="bg-navy-700 text-slate-300 px-4 py-1.5 rounded-lg text-sm border border-navy-600">
+						<button type="button" onclick={() => (showEdit = false)} class="btn-secondary py-1.5">
 							Cancel
 						</button>
 					</div>
@@ -239,24 +248,24 @@
 		{/if}
 
 		<!-- Stats row -->
-		<div class="grid grid-cols-3 gap-4 mb-6">
+		<dl class="grid grid-cols-3 gap-4 mb-6">
 			<div class="bg-navy-800 border border-navy-700 rounded-lg p-4 text-center">
-				<p class="text-2xl font-bold text-slate-200">{entityCount}</p>
-				<p class="text-sm text-slate-500 mt-1">Entities</p>
+				<dd class="text-2xl font-bold text-slate-200">{entityCount}</dd>
+				<dt class="text-sm text-slate-500 mt-1">Entities</dt>
 			</div>
 			<div class="bg-navy-800 border border-navy-700 rounded-lg p-4 text-center">
-				<p class="text-2xl font-bold text-slate-200">{attributeCount}</p>
-				<p class="text-sm text-slate-500 mt-1">Attributes</p>
+				<dd class="text-2xl font-bold text-slate-200">{attributeCount}</dd>
+				<dt class="text-sm text-slate-500 mt-1">Attributes</dt>
 			</div>
 			<div class="bg-navy-800 border border-navy-700 rounded-lg p-4 text-center">
-				<p class="text-2xl font-bold text-slate-200">{jobs.length}</p>
-				<p class="text-sm text-slate-500 mt-1">Jobs</p>
+				<dd class="text-2xl font-bold text-slate-200">{jobs.length}</dd>
+				<dt class="text-sm text-slate-500 mt-1">Jobs</dt>
 			</div>
-		</div>
+		</dl>
 
 		<!-- Active job progress -->
 		{#if runningJobId}
-			<div class="bg-navy-800 border border-navy-700 rounded-lg p-4 mb-6">
+			<div class="bg-navy-800 border border-navy-700 rounded-lg p-4 mb-6" aria-live="polite">
 				<p class="text-sm text-slate-400 mb-2">Active job</p>
 				<JobProgress jobId={runningJobId} onDone={onJobDone} />
 			</div>
@@ -275,25 +284,21 @@
 		{/if}
 
 		<!-- Nav tabs -->
-		<div class="flex gap-1 border-b border-navy-700 mb-6">
-			{#each tabs as tab}
-				<a
-					href="/campaigns/{campaignId}/{tab.href}"
-					class="px-4 py-2 text-sm font-medium rounded-t-lg transition-colors
-					       text-slate-400 hover:text-slate-200"
-				>
-					{tab.label}
-				</a>
-			{/each}
-		</div>
+		<nav aria-label="Campaign sections">
+			<div role="tablist" class="flex gap-1 border-b border-navy-700 mb-6">
+				{#each tabs as tab}
+					<a
+						role="tab"
+						href="/campaigns/{campaignId}/{tab.href}"
+						class="px-4 py-2 text-sm font-medium rounded-t-lg transition-colors
+						       text-slate-400 hover:text-slate-200 hover:bg-navy-700/40"
+					>
+						{tab.label}
+					</a>
+				{/each}
+			</div>
+		</nav>
 
 		<p class="text-slate-500 text-sm">Select a tab to manage this campaign.</p>
 	{/if}
 </div>
-
-<style>
-	.input-field {
-		@apply bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
-		       placeholder-slate-500 focus:outline-none focus:border-gold;
-	}
-</style>

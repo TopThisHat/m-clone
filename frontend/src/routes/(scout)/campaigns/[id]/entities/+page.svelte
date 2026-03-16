@@ -97,8 +97,8 @@
 		}
 	}
 
-	async function deleteEntity(id: string) {
-		if (!confirm('Delete this entity?')) return;
+	async function deleteEntity(id: string, label: string) {
+		if (!confirm(`Delete "${label}"?`)) return;
 		try {
 			await entitiesApi.delete(campaignId, id);
 			entities = entities.filter((e) => e.id !== id);
@@ -163,6 +163,9 @@
 			bulkDeleting = false;
 		}
 	}
+
+	let allSelected = $derived(entities.length > 0 && selectedIds.size === entities.length);
+	let someSelected = $derived(selectedIds.size > 0 && selectedIds.size < entities.length);
 </script>
 
 <div class="max-w-4xl mx-auto">
@@ -172,12 +175,15 @@
 
 	<div class="flex items-center justify-between mb-6">
 		<div class="flex items-center gap-3">
-			<h2 class="font-serif text-gold text-xl font-bold">Entities ({entities.length})</h2>
+			<h2 class="font-serif text-gold text-xl font-bold">
+				Entities
+				<span class="text-slate-500 font-normal text-base ml-1">({entities.length})</span>
+			</h2>
 			{#if selectedIds.size > 0}
 				<button
 					onclick={bulkDelete}
 					disabled={bulkDeleting}
-					class="text-xs bg-red-950 border border-red-800 text-red-400 px-3 py-1 rounded-lg hover:bg-red-900 transition-colors disabled:opacity-50"
+					class="btn-danger"
 				>
 					{bulkDeleting ? 'Deleting…' : `Delete selected (${selectedIds.size})`}
 				</button>
@@ -186,22 +192,22 @@
 		<div class="flex gap-2">
 			<button
 				onclick={openImport}
-				class="text-sm bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg
-				       hover:bg-navy-600 transition-colors"
+				aria-expanded={showImport}
+				class="btn-secondary text-sm py-1.5"
 			>
 				↗ Import from Campaign
 			</button>
 			<button
 				onclick={() => { showCSV = !showCSV; showAddForm = false; showImport = false; }}
-				class="text-sm bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg
-				       hover:bg-navy-600 transition-colors"
+				aria-expanded={showCSV}
+				class="btn-secondary text-sm py-1.5"
 			>
-				📄 Upload CSV
+				<span aria-hidden="true">📄</span> Upload CSV
 			</button>
 			<button
 				onclick={() => { showAddForm = !showAddForm; showCSV = false; showImport = false; }}
-				class="text-sm bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg
-				       hover:bg-gold-light transition-colors"
+				aria-expanded={showAddForm}
+				class="bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg text-sm hover:bg-gold-light transition-colors"
 			>
 				+ Add Entity
 			</button>
@@ -209,15 +215,16 @@
 	</div>
 
 	{#if showImport}
-		<div class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
+		<section aria-label="Import entities from another campaign" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
 			<h3 class="font-medium text-slate-200 mb-4">Import Entities from Another Campaign</h3>
 			<p class="text-slate-500 text-sm mb-4">
-				Entities with gwm_id will be skipped if the same gwm_id already exists. Entities without gwm_id will be skipped if the label already exists.
+				Entities with gwm_id will be skipped if the same gwm_id already exists.
+				Entities without gwm_id will be skipped if the label already exists.
 			</p>
 			<div class="flex gap-3 items-end">
 				<div class="flex-1">
-					<label class="block text-xs text-slate-400 mb-1">Source Campaign</label>
-					<select bind:value={selectedSourceId} class="input-field w-full">
+					<label for="import-source" class="block text-xs text-slate-400 mb-1">Source Campaign</label>
+					<select id="import-source" bind:value={selectedSourceId} class="input-field w-full">
 						<option value="">— Select a campaign —</option>
 						{#each otherCampaigns as c (c.id)}
 							<option value={c.id}>{c.name}</option>
@@ -231,46 +238,46 @@
 				>
 					{importing ? 'Importing…' : 'Import'}
 				</button>
-				<button
-					onclick={() => { showImport = false; importResult = ''; }}
-					class="bg-navy-700 text-slate-300 px-4 py-1.5 rounded-lg text-sm border border-navy-600"
-				>
+				<button onclick={() => { showImport = false; importResult = ''; }} class="btn-secondary py-1.5 text-sm">
 					Cancel
 				</button>
 			</div>
 			{#if importResult}
-				<p class="mt-3 text-sm {importResult.startsWith('Error') ? 'text-red-400' : 'text-green-400'}">{importResult}</p>
+				<p
+					aria-live="polite"
+					class="mt-3 text-sm {importResult.startsWith('Error') ? 'text-red-400' : 'text-green-400'}"
+				>{importResult}</p>
 			{/if}
-		</div>
+		</section>
 	{/if}
 
 	{#if showCSV}
-		<div class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
+		<section aria-label="Upload entities via CSV" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
 			<h3 class="font-medium text-slate-200 mb-4">Upload CSV</h3>
 			<CSVUpload
 				{campaignId}
 				onUploaded={() => { load(); showCSV = false; }}
 			/>
-		</div>
+		</section>
 	{/if}
 
 	{#if showAddForm}
-		<form onsubmit={addEntity} class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
+		<form onsubmit={addEntity} aria-label="Add entity" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
 			<h3 class="font-medium text-slate-200 mb-4">Add Entity</h3>
 			<div class="grid grid-cols-3 gap-4 mb-4">
 				<div>
-					<label class="block text-xs text-slate-400 mb-1">Label *</label>
-					<input bind:value={newLabel} required placeholder="Name or entity label"
+					<label for="new-label" class="block text-xs text-slate-400 mb-1">Label *</label>
+					<input id="new-label" bind:value={newLabel} required placeholder="Name or entity label"
 					       class="input-field w-full" />
 				</div>
 				<div>
-					<label class="block text-xs text-slate-400 mb-1">GWM ID</label>
-					<input bind:value={newGwmId} placeholder="Optional identifier"
+					<label for="new-gwm" class="block text-xs text-slate-400 mb-1">GWM ID</label>
+					<input id="new-gwm" bind:value={newGwmId} placeholder="Optional identifier"
 					       class="input-field w-full" />
 				</div>
 				<div>
-					<label class="block text-xs text-slate-400 mb-1">Description</label>
-					<input bind:value={newDesc} placeholder="Optional description"
+					<label for="new-desc" class="block text-xs text-slate-400 mb-1">Description</label>
+					<input id="new-desc" bind:value={newDesc} placeholder="Optional description"
 					       class="input-field w-full" />
 				</div>
 			</div>
@@ -279,8 +286,7 @@
 				        class="bg-gold text-navy font-semibold px-4 py-1.5 rounded-lg text-sm hover:bg-gold-light disabled:opacity-50">
 					{adding ? 'Adding…' : 'Add'}
 				</button>
-				<button type="button" onclick={() => (showAddForm = false)}
-				        class="bg-navy-700 text-slate-300 px-4 py-1.5 rounded-lg text-sm border border-navy-600">
+				<button type="button" onclick={() => (showAddForm = false)} class="btn-secondary py-1.5 text-sm">
 					Cancel
 				</button>
 			</div>
@@ -288,32 +294,36 @@
 	{/if}
 
 	{#if error}
-		<p class="text-red-400 mb-4">{error}</p>
+		<p class="text-red-400 mb-4" role="alert">{error}</p>
 	{/if}
 
 	{#if loading}
-		<p class="text-slate-500">Loading…</p>
+		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading…</p>
 	{:else if entities.length === 0}
 		<div class="text-center py-12 text-slate-500">
 			<p>No entities yet. Add them manually, upload a CSV, or import from another campaign.</p>
 		</div>
 	{:else}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
-			<table class="w-full text-sm">
+			<table class="w-full text-sm" aria-label="Entities">
 				<thead>
 					<tr class="border-b border-navy-700 text-slate-400">
-						<th class="px-4 py-3 w-8">
+						<th scope="col" class="px-4 py-3 w-8">
 							<input
 								type="checkbox"
-								checked={selectedIds.size === entities.length && entities.length > 0}
+								checked={allSelected}
+								indeterminate={someSelected}
 								onchange={toggleSelectAll}
 								class="accent-gold"
+								aria-label="Select all entities"
 							/>
 						</th>
-						<th class="text-left px-4 py-3">Label</th>
-						<th class="text-left px-4 py-3">GWM ID</th>
-						<th class="text-left px-4 py-3">Description</th>
-						<th class="px-4 py-3 w-24"></th>
+						<th scope="col" class="text-left px-4 py-3">Label</th>
+						<th scope="col" class="text-left px-4 py-3">GWM ID</th>
+						<th scope="col" class="text-left px-4 py-3">Description</th>
+						<th scope="col" class="px-4 py-3 w-24">
+							<span class="sr-only">Actions</span>
+						</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -325,27 +335,36 @@
 									checked={selectedIds.has(entity.id)}
 									onchange={() => toggleSelect(entity.id)}
 									class="accent-gold"
+									aria-label="Select {entity.label}"
 								/>
 							</td>
 							{#if editingId === entity.id}
 								<td class="px-4 py-2">
-									<input bind:value={editForm.label} class="input-field w-full" />
+									<label class="sr-only" for="edit-label-{entity.id}">Label</label>
+									<input id="edit-label-{entity.id}" bind:value={editForm.label} class="input-field w-full" />
 								</td>
 								<td class="px-4 py-2">
-									<input bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs" />
+									<label class="sr-only" for="edit-gwm-{entity.id}">GWM ID</label>
+									<input id="edit-gwm-{entity.id}" bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs" />
 								</td>
 								<td class="px-4 py-2">
-									<input bind:value={editForm.description} class="input-field w-full" />
+									<label class="sr-only" for="edit-desc-{entity.id}">Description</label>
+									<input id="edit-desc-{entity.id}" bind:value={editForm.description} class="input-field w-full" />
 								</td>
 								<td class="px-4 py-2 text-right whitespace-nowrap">
 									<button
 										onclick={() => saveEdit(entity)}
 										disabled={editSaving}
+										aria-label="Save changes to {entity.label}"
 										class="text-gold hover:text-gold-light text-xs mr-2 disabled:opacity-50"
 									>
 										{editSaving ? '…' : 'Save'}
 									</button>
-									<button onclick={cancelEdit} class="text-slate-500 hover:text-slate-300 text-xs">
+									<button
+										onclick={cancelEdit}
+										aria-label="Cancel editing {entity.label}"
+										class="text-slate-500 hover:text-slate-300 text-xs"
+									>
 										Cancel
 									</button>
 								</td>
@@ -356,12 +375,14 @@
 								<td class="px-4 py-3 text-right whitespace-nowrap">
 									<button
 										onclick={() => startEdit(entity)}
+										aria-label="Edit {entity.label}"
 										class="text-slate-500 hover:text-slate-300 transition-colors text-xs mr-2"
 									>
 										Edit
 									</button>
 									<button
-										onclick={() => deleteEntity(entity.id)}
+										onclick={() => deleteEntity(entity.id, entity.label)}
+										aria-label="Delete {entity.label}"
 										class="text-red-400/60 hover:text-red-400 transition-colors text-xs"
 									>
 										Delete
@@ -375,10 +396,3 @@
 		</div>
 	{/if}
 </div>
-
-<style>
-	.input-field {
-		@apply bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
-		       placeholder-slate-500 focus:outline-none focus:border-gold;
-	}
-</style>
