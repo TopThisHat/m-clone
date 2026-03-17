@@ -4,6 +4,7 @@
 	import { jobsApi, type Score, type Result, type Knowledge } from '$lib/api/jobs';
 	import { entitiesApi, type Entity } from '$lib/api/entities';
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
+	import { marked } from 'marked';
 	import ScoreBoard from '$lib/components/ScoreBoard.svelte';
 	import AttributeMatrix from '$lib/components/AttributeMatrix.svelte';
 	import EntityDetailDrawer from '$lib/components/EntityDetailDrawer.svelte';
@@ -106,30 +107,7 @@
 	}
 
 	function exportCSV() {
-		const rows: string[][] = [['Entity', 'Score %', 'Present', 'Checked', 'Attribute', 'Confidence', 'Evidence']];
-		for (const sc of filteredScores) {
-			const entityRs = results.filter((r) => r.entity_id === sc.entity_id);
-			if (entityRs.length === 0) {
-				rows.push([sc.entity_label ?? '', (sc.total_score * 100).toFixed(1), String(sc.attributes_present), String(sc.attributes_checked), '', '', '']);
-			} else {
-				for (const r of entityRs) {
-					rows.push([
-						r.entity_label ?? '',
-						(sc.total_score * 100).toFixed(1),
-						String(r.present),
-						'',
-						r.attribute_label ?? '',
-						r.confidence != null ? (r.confidence * 100).toFixed(0) + '%' : '',
-						r.evidence ?? '',
-					]);
-				}
-			}
-		}
-		const csv = rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
-		const a = document.createElement('a');
-		a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-		a.download = `campaign-results.csv`;
-		a.click();
+		window.location.href = `/api/campaigns/${campaignId}/export?format=csv`;
 	}
 
 	onMount(async () => {
@@ -395,7 +373,9 @@
 			{#if modalResult.report_md}
 				<div>
 					<p class="text-xs text-slate-500 mb-1 uppercase tracking-wide">Research Report</p>
-					<pre class="text-slate-400 text-xs whitespace-pre-wrap font-mono bg-navy-900 rounded-lg p-3 max-h-64 overflow-y-auto">{modalResult.report_md}</pre>
+					<div class="prose prose-sm prose-invert max-w-none bg-navy-900 rounded-lg p-3 max-h-64 overflow-y-auto">
+						{@html marked.parse(modalResult.report_md)}
+					</div>
 				</div>
 			{/if}
 		</div>

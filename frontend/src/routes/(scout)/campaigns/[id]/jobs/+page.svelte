@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import { jobsApi, type Job } from '$lib/api/jobs';
+	import { jobsApi, type Job, type JobDiff } from '$lib/api/jobs';
 	import { entitiesApi, type Entity } from '$lib/api/entities';
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
 	import JobProgress from '$lib/components/JobProgress.svelte';
@@ -27,6 +27,12 @@
 	let selectedEntities = $state<Set<string>>(new Set());
 	let selectedAttributes = $state<Set<string>>(new Set());
 	let launching = $state(false);
+
+	// Compare mode
+	let compareMode = $state(false);
+	let compareSelection = $state<string[]>([]);
+	let diffResults = $state<JobDiff[]>([]);
+	let loadingDiff = $state(false);
 
 	onMount(async () => {
 		try {
@@ -111,6 +117,43 @@
 	}
 
 	const filterOptions = ['all', 'queued', 'running', 'done', 'failed', 'cancelled'];
+
+	function toggleCompareJob(jobId: string) {
+		if (compareSelection.includes(jobId)) {
+			compareSelection = compareSelection.filter((x) => x !== jobId);
+		} else if (compareSelection.length < 2) {
+			compareSelection = [...compareSelection, jobId];
+		}
+	}
+
+	async function runCompare() {
+		if (compareSelection.length !== 2) return;
+		loadingDiff = true;
+		try {
+			diffResults = await jobsApi.compareJobs(campaignId, compareSelection[0], compareSelection[1]);
+		} catch (err: unknown) {
+			alert(err instanceof Error ? err.message : 'Failed to compare');
+		} finally {
+			loadingDiff = false;
+		}
+	}
+
+	function exitCompare() {
+		compareMode = false;
+		compareSelection = [];
+		diffResults = [];
+	}
+
+	let doneJobs = $derived(jobs.filter((j) => j.status === 'done'));
+
+	function diffColor(status: string): string {
+		return {
+			added: 'text-green-400',
+			removed: 'text-red-400',
+			changed: 'text-gold',
+			unchanged: 'text-slate-500',
+		}[status] ?? 'text-slate-500';
+	}
 </script>
 
 <div class="max-w-4xl mx-auto">
@@ -120,12 +163,33 @@
 
 	<div class="flex items-center justify-between mb-4">
 		<h2 class="font-serif text-gold text-xl font-bold">Jobs ({jobs.length})</h2>
-		<button
-			onclick={() => (showModal = true)}
-			class="bg-gold text-navy font-semibold px-4 py-2 rounded-lg hover:bg-gold-light transition-colors text-sm"
-		>
-			Run Ad-hoc
-		</button>
+		<div class="flex gap-2">
+			{#if doneJobs.length >= 2}
+				{#if compareMode}
+					<button onclick={exitCompare}
+						class="text-xs bg-navy-700 border border-navy-600 text-slate-300 px-3 py-2 rounded-lg hover:bg-navy-600 transition-colors">
+						Exit Compare
+					</button>
+					{#if compareSelection.length === 2}
+						<button onclick={runCompare} disabled={loadingDiff}
+							class="bg-gold text-navy font-semibold px-4 py-2 rounded-lg hover:bg-gold-light transition-colors text-sm disabled:opacity-50">
+							{loadingDiff ? 'Comparing...' : 'Compare Selected'}
+						</button>
+					{/if}
+				{:else}
+					<button onclick={() => (compareMode = true)}
+						class="text-xs bg-navy-700 border border-navy-600 text-slate-300 px-3 py-2 rounded-lg hover:bg-navy-600 transition-colors">
+						Compare Jobs
+					</button>
+				{/if}
+			{/if}
+			<button
+				onclick={() => (showModal = true)}
+				class="bg-gold text-navy font-semibold px-4 py-2 rounded-lg hover:bg-gold-light transition-colors text-sm"
+			>
+				Run Ad-hoc
+			</button>
+		</div>
 	</div>
 
 	<!-- Status filter pills -->
@@ -158,6 +222,15 @@
 				<div class="bg-navy-800 border border-navy-700 rounded-xl p-4">
 					<div class="flex items-center justify-between mb-2">
 						<div class="flex items-center gap-3">
+							{#if compareMode && job.status === 'done'}
+								<input
+									type="checkbox"
+									checked={compareSelection.includes(job.id)}
+									onchange={() => toggleCompareJob(job.id)}
+									disabled={!compareSelection.includes(job.id) && compareSelection.length >= 2}
+									class="accent-gold"
+								/>
+							{/if}
 							<span class="text-xs px-2 py-0.5 rounded font-medium {statusColor(job.status)}">
 								{job.status}
 							</span>
@@ -200,6 +273,46 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Diff results -->
+{#if diffResults.length > 0}
+	<div class="mt-6 bg-navy-800 border border-navy-700 rounded-xl p-4">
+		<h3 class="text-sm font-medium text-slate-200 mb-3">Job Comparison</h3>
+		<div class="overflow-auto max-h-96">
+			<table class="w-full text-xs">
+				<thead>
+					<tr class="text-slate-500 border-b border-navy-700">
+						<th class="text-left py-1.5 px-2">Entity</th>
+						<th class="text-left py-1.5 px-2">Attribute</th>
+						<th class="text-left py-1.5 px-2">Status</th>
+						<th class="text-left py-1.5 px-2">Job A</th>
+						<th class="text-left py-1.5 px-2">Job B</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each diffResults.filter((d) => d.diff_status !== 'unchanged') as row (row.entity_id + row.attribute_id)}
+						<tr class="border-b border-navy-700/50">
+							<td class="py-1.5 px-2 text-slate-300">{row.entity_label}</td>
+							<td class="py-1.5 px-2 text-slate-400">{row.attribute_label}</td>
+							<td class="py-1.5 px-2 {diffColor(row.diff_status)} font-medium">{row.diff_status}</td>
+							<td class="py-1.5 px-2 text-slate-400">
+								{row.present_a != null ? (row.present_a ? 'Yes' : 'No') : '-'}
+								{#if row.confidence_a != null}<span class="text-slate-600"> ({(row.confidence_a * 100).toFixed(0)}%)</span>{/if}
+							</td>
+							<td class="py-1.5 px-2 text-slate-400">
+								{row.present_b != null ? (row.present_b ? 'Yes' : 'No') : '-'}
+								{#if row.confidence_b != null}<span class="text-slate-600"> ({(row.confidence_b * 100).toFixed(0)}%)</span>{/if}
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+		<p class="text-xs text-slate-600 mt-2">
+			{diffResults.filter((d) => d.diff_status === 'unchanged').length} unchanged pairs hidden
+		</p>
+	</div>
+{/if}
 
 <!-- Ad-hoc run modal -->
 {#if showModal}

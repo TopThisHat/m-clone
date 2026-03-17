@@ -59,6 +59,36 @@ export interface Knowledge {
 	last_updated: string | null;
 }
 
+export interface TrendPoint {
+	job_id: string;
+	completed_at: string;
+	entity_id: string;
+	entity_label: string;
+	score: number;
+}
+
+export interface JobDiff {
+	entity_id: string;
+	entity_label: string;
+	attribute_id: string;
+	attribute_label: string;
+	present_a: boolean | null;
+	present_b: boolean | null;
+	confidence_a: number | null;
+	confidence_b: number | null;
+	diff_status: 'added' | 'removed' | 'changed' | 'unchanged';
+}
+
+export interface DeadJob {
+	id: string;
+	job_type: string;
+	payload: Record<string, unknown>;
+	attempts: number;
+	last_error: string | null;
+	created_at: string;
+	completed_at: string | null;
+}
+
 export const jobsApi = {
 	create: (campaignId: string, data: JobCreate = {}): Promise<Job> =>
 		apiFetch(`/api/campaigns/${campaignId}/jobs`, {
@@ -94,4 +124,18 @@ export const jobsApi = {
 
 	cancel: (jobId: string): Promise<{ cancelled: boolean }> =>
 		apiFetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' }),
+
+	listDeadJobs: (campaignId: string): Promise<DeadJob[]> =>
+		apiFetch(`/api/campaigns/${campaignId}/dead-jobs`),
+
+	retryJob: (jobId: string): Promise<{ retried: boolean }> =>
+		apiFetch(`/api/jobs/${jobId}/retry`, { method: 'POST' }),
+
+	getTrends: (campaignId: string, entityId?: string): Promise<TrendPoint[]> => {
+		const q = entityId ? `?entity_id=${entityId}` : '';
+		return apiFetch(`/api/campaigns/${campaignId}/trends${q}`);
+	},
+
+	compareJobs: (campaignId: string, jobIdA: string, jobIdB: string): Promise<JobDiff[]> =>
+		apiFetch(`/api/campaigns/${campaignId}/diff?job_id_a=${jobIdA}&job_id_b=${jobIdB}`),
 };

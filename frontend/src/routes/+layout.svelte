@@ -75,6 +75,12 @@
 					>
 						Scout
 					</a>
+					<a
+						href="/knowledge-graph"
+						class="text-xs text-slate-500 hover:text-gold transition-colors px-2 py-1 rounded hover:bg-navy-800"
+					>
+						KG
+					</a>
 					<NotificationBell />
 				{/if}
 				<ThemeToggle />

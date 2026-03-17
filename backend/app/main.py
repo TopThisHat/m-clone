@@ -23,6 +23,7 @@ from app.routers.attributes import router as attributes_router
 from app.routers.jobs import router as jobs_router
 from app.routers.templates import router as templates_router
 from app.routers.library import router as library_router
+from app.routers.knowledge_graph import router as kg_router
 
 app = FastAPI(
     title="m-clone Research Agent",
@@ -54,6 +55,7 @@ app.include_router(attributes_router)
 app.include_router(jobs_router)
 app.include_router(templates_router)
 app.include_router(library_router)
+app.include_router(kg_router)
 
 
 @app.on_event("startup")

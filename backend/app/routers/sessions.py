@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from app.export import markdown_to_docx
+
 from app.auth import get_current_user, get_optional_user
 from app.db import (
     DatabaseNotConfigured,
@@ -309,6 +311,42 @@ async def get_session_diff(session_id: str, user=Depends(get_optional_user)):
         return diff
     except DatabaseNotConfigured:
         raise _no_db()
+
+
+# ── Export ────────────────────────────────────────────────────────────────────
+
+@router.get("/{session_id}/export")
+async def export_session(
+    session_id: str,
+    format: str = Query(default="md"),
+    user=Depends(get_current_user),
+):
+    try:
+        row = await db_get_session(session_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.get("owner_sid") != user["sub"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    report = row.get("report_markdown", "")
+    title = row.get("title", "Research Report")
+
+    if format == "docx":
+        docx_bytes = markdown_to_docx(title, report)
+        return Response(
+            content=docx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{title}.docx"'},
+        )
+
+    # Default: markdown
+    return Response(
+        content=report,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{title}.md"'},
+    )
 
 
 # ── Public share read endpoint ────────────────────────────────────────────────

@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import csv
+import io
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
     db_cancel_job,
+    db_compare_jobs,
     db_create_and_enqueue_validation_job,
+    db_export_campaign_results,
     db_get_campaign,
     db_get_knowledge_for_campaign,
     db_get_queue_job_owner,
+    db_get_score_trends,
     db_get_scores,
     db_get_validation_job,
     db_is_team_member,
@@ -143,6 +148,72 @@ async def cancel_job(job_id: str, user=Depends(get_current_user)):
     except DatabaseNotConfigured:
         raise _no_db()
     return {"cancelled": cancelled}
+
+
+@router.get("/api/campaigns/{campaign_id}/trends")
+async def get_score_trends(
+    campaign_id: str,
+    entity_id: str | None = Query(default=None),
+    user=Depends(get_current_user),
+):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_get_score_trends(campaign_id, entity_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/api/campaigns/{campaign_id}/diff")
+async def compare_jobs(
+    campaign_id: str,
+    job_id_a: str = Query(),
+    job_id_b: str = Query(),
+    user=Depends(get_current_user),
+):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_compare_jobs(job_id_a, job_id_b)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/api/campaigns/{campaign_id}/export")
+async def export_campaign_results(
+    campaign_id: str,
+    format: str = Query(default="csv"),
+    user=Depends(get_current_user),
+):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        rows = await db_export_campaign_results(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "Entity", "GWM ID", "Attribute", "Present", "Confidence",
+        "Evidence", "Score %", "Attrs Present", "Attrs Checked", "Date",
+    ])
+    for r in rows:
+        writer.writerow([
+            r.get("entity_label", ""),
+            r.get("gwm_id", ""),
+            r.get("attribute_label", ""),
+            r.get("present", ""),
+            f"{r['confidence'] * 100:.0f}%" if r.get("confidence") is not None else "",
+            r.get("evidence", ""),
+            f"{r['total_score'] * 100:.1f}" if r.get("total_score") is not None else "",
+            r.get("attributes_present", ""),
+            r.get("attributes_checked", ""),
+            str(r["created_at"]) if r.get("created_at") else "",
+        ])
+
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="campaign-{campaign_id}-results.csv"'},
+    )
 
 
 @router.get("/api/campaigns/{campaign_id}/dead-jobs")

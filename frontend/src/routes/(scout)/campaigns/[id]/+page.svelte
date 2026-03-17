@@ -138,6 +138,8 @@
 		{ label: 'Jobs', href: 'jobs' },
 		{ label: 'Results', href: 'results' },
 		{ label: 'Knowledge', href: 'knowledge' },
+		{ label: 'Trends', href: 'trends' },
+		{ label: 'Failed Jobs', href: 'dead-jobs' },
 	];
 </script>
 
