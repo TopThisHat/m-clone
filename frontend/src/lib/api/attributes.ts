@@ -1,4 +1,7 @@
 import { apiFetch } from './apiFetch';
+import type { PaginatedResponse } from './entities';
+
+export type { PaginatedResponse };
 
 export interface Attribute {
 	id: string;
@@ -27,8 +30,17 @@ export interface BulkAttributeResult {
 }
 
 export const attributesApi = {
-	list: (campaignId: string): Promise<Attribute[]> =>
-		apiFetch(`/api/campaigns/${campaignId}/attributes`),
+	list: (
+		campaignId: string,
+		opts?: { limit?: number; offset?: number; search?: string }
+	): Promise<PaginatedResponse<Attribute>> => {
+		const params = new URLSearchParams();
+		if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+		if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
+		if (opts?.search) params.set('search', opts.search);
+		const qs = params.toString();
+		return apiFetch(`/api/campaigns/${campaignId}/attributes${qs ? `?${qs}` : ''}`);
+	},
 
 	create: (campaignId: string, data: AttributeCreate): Promise<Attribute> =>
 		apiFetch(`/api/campaigns/${campaignId}/attributes`, {

@@ -2,10 +2,28 @@
 	import { libraryAttributesApi, type LibraryAttribute, type LibraryAttributeCreate } from '$lib/api/library';
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
 	import AttributeCSVUpload from '$lib/components/AttributeCSVUpload.svelte';
+	import Pagination from '$lib/components/Pagination.svelte';
 
 	let attributes = $state<LibraryAttribute[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let totalCount = $state(0);
+
+	// Pagination & search
+	const pageSize = 50;
+	let currentPage = $state(0);
+	let searchQuery = $state('');
+	let debouncedSearch = $state('');
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+	$effect(() => {
+		const q = searchQuery;
+		clearTimeout(debounceTimer);
+		debounceTimer = setTimeout(() => {
+			debouncedSearch = q;
+			currentPage = 0;
+		}, 300);
+	});
 
 	// Add form
 	let newLabel = $state('');
@@ -19,11 +37,17 @@
 	// Inline edit
 	let editing = $state<Record<string, LibraryAttribute>>({});
 
-	async function loadAttributes(teamId: string | null) {
+	async function loadAttributes(teamId: string | null, search: string, page: number) {
 		loading = true;
 		error = '';
 		try {
-			attributes = await libraryAttributesApi.list(teamId);
+			const resp = await libraryAttributesApi.list(teamId, {
+				limit: pageSize,
+				offset: page * pageSize,
+				search: search || undefined,
+			});
+			attributes = resp.items;
+			totalCount = resp.total;
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to load library';
 		} finally {
@@ -31,23 +55,23 @@
 		}
 	}
 
-	$effect(() => { loadAttributes($scoutTeam); });
+	$effect(() => { loadAttributes($scoutTeam, debouncedSearch, currentPage); });
 
 	async function addAttribute(e: Event) {
 		e.preventDefault();
 		if (!newLabel.trim()) return;
 		adding = true;
 		try {
-			const attr = await libraryAttributesApi.create({
+			await libraryAttributesApi.create({
 				label: newLabel.trim(),
 				description: newDesc.trim() || undefined,
 				weight: newWeight,
 				team_id: $scoutTeam ?? undefined,
 			});
-			attributes = [...attributes, attr];
 			newLabel = '';
 			newDesc = '';
 			newWeight = 1.0;
+			loadAttributes($scoutTeam, debouncedSearch, currentPage);
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to add attribute';
 		} finally {
@@ -85,7 +109,7 @@
 		if (!confirm('Delete this attribute from the library?')) return;
 		try {
 			await libraryAttributesApi.delete(id);
-			attributes = attributes.filter((a) => a.id !== id);
+			loadAttributes($scoutTeam, debouncedSearch, currentPage);
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to delete');
 		}
@@ -108,8 +132,8 @@
 	<div class="flex items-center justify-between mb-4">
 		{#if !loading}
 			<p class="text-sm text-slate-400">
-				<span class="text-slate-200 font-medium">{attributes.length}</span>
-				{attributes.length === 1 ? 'attribute' : 'attributes'} in library
+				<span class="text-slate-200 font-medium">{totalCount}</span>
+				{totalCount === 1 ? 'attribute' : 'attributes'} in library
 			</p>
 		{:else}
 			<span></span>
@@ -118,6 +142,16 @@
 			class="text-sm bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg hover:bg-navy-600 transition-colors">
 			Upload CSV / Excel
 		</button>
+	</div>
+
+	<!-- Search -->
+	<div class="mb-4">
+		<input
+			bind:value={searchQuery}
+			placeholder="Search attributes…"
+			aria-label="Search attributes"
+			class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
+		/>
 	</div>
 
 	{#if showUpload}
@@ -130,7 +164,7 @@
 				onBulkCreate={libraryBulkCreate}
 				onUploaded={async () => {
 					showUpload = false;
-					attributes = await libraryAttributesApi.list($scoutTeam);
+					loadAttributes($scoutTeam, debouncedSearch, currentPage);
 				}}
 			/>
 		</div>
@@ -167,8 +201,12 @@
 		<p class="text-slate-500">Loading…</p>
 	{:else if attributes.length === 0}
 		<div class="text-center py-12 text-slate-500">
-			<p>No attributes in the library yet. Add them above or upload a CSV.</p>
-			<p class="text-sm mt-2">Attributes added here can be imported into any campaign.</p>
+			{#if debouncedSearch}
+				<p>No attributes match "{debouncedSearch}".</p>
+			{:else}
+				<p>No attributes in the library yet. Add them above or upload a CSV.</p>
+				<p class="text-sm mt-2">Attributes added here can be imported into any campaign.</p>
+			{/if}
 		</div>
 	{:else}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
@@ -221,7 +259,12 @@
 					{/each}
 				</tbody>
 			</table>
+			<Pagination
+				total={totalCount}
+				{pageSize}
+				{currentPage}
+				onPageChange={(p) => { currentPage = p; }}
+			/>
 		</div>
 	{/if}
 </div>
-

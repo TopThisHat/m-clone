@@ -135,7 +135,7 @@ async def fail(job_id: str, error: str, backoff_seconds: float = 0) -> bool:
             WHERE id = $1::uuid
             RETURNING attempts, max_attempts, status
             """,
-            job_id, error, str(int(backoff_seconds)),
+            job_id, error, str(round(backoff_seconds, 1)),
         )
         if not row:
             return False
@@ -187,7 +187,7 @@ async def reclaim_stale(stale_threshold_seconds: int) -> int:
     from job_runner.config import settings
     pool = await get_pool()
     async with pool.acquire() as conn:
-        result = await conn.execute(
+        rows = await conn.fetch(
             """
             UPDATE job_queue
             SET status = 'pending', worker_id = NULL, heartbeat_at = NULL
@@ -196,14 +196,16 @@ async def reclaim_stale(stale_threshold_seconds: int) -> int:
                   heartbeat_at IS NULL
                   OR heartbeat_at < NOW() - ($1 || ' seconds')::interval
               )
+            RETURNING id, job_type, worker_id AS old_worker
             """,
             str(stale_threshold_seconds),
         )
-        count = int(result.split()[-1])
-        if count > 0:
+        if rows:
             await conn.execute("SELECT pg_notify($1, 'reclaim')", settings.listen_channel)
-            logger.info("Reclaimed %d stale jobs", count)
-        return count
+            for r in rows:
+                logger.info("Reclaimed stale job %s (%s) from worker %s",
+                            r["id"], r["job_type"], r["old_worker"])
+        return len(rows)
 
 
 async def enqueue_many(

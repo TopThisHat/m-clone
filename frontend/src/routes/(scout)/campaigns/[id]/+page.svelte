@@ -3,8 +3,6 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
-	import { entitiesApi } from '$lib/api/entities';
-	import { attributesApi } from '$lib/api/attributes';
 	import { jobsApi, type Job } from '$lib/api/jobs';
 	import JobProgress from '$lib/components/JobProgress.svelte';
 	import SchedulePicker from '$lib/components/SchedulePicker.svelte';
@@ -30,12 +28,12 @@
 
 	onMount(async () => {
 		try {
-			[campaign, , , jobs] = await Promise.all([
+			[campaign, jobs] = await Promise.all([
 				campaignsApi.get(campaignId),
-				entitiesApi.list(campaignId).then((e) => { entityCount = e.length; }),
-				attributesApi.list(campaignId).then((a) => { attributeCount = a.length; }),
 				jobsApi.list(campaignId),
 			]);
+			entityCount = campaign?.entity_count ?? 0;
+			attributeCount = campaign?.attribute_count ?? 0;
 			const running = jobs.find((j) => j.status === 'running' || j.status === 'queued');
 			if (running) runningJobId = running.id;
 		} catch (err: unknown) {

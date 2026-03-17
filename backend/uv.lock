@@ -1494,8 +1494,10 @@ name = "m-clone-backend"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anthropic" },
     { name = "asyncpg" },
     { name = "authlib" },
+    { name = "boto3" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "itsdangerous" },
@@ -1515,13 +1517,15 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anthropic", specifier = ">=0.25" },
     { name = "asyncpg", specifier = ">=0.29" },
     { name = "authlib", specifier = ">=1.3" },
+    { name = "boto3", specifier = ">=1.34" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "itsdangerous", specifier = ">=2.1" },
     { name = "pdfplumber", specifier = ">=0.11" },
-    { name = "pydantic-ai", extras = ["openai"], specifier = ">=0.0.20" },
+    { name = "pydantic-ai", extras = ["openai", "anthropic"], specifier = ">=0.0.20" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "python-jose", extras = ["cryptography"], specifier = ">=3.3" },

@@ -2,10 +2,28 @@
 	import { libraryEntitiesApi, type LibraryEntity, type LibraryEntityCreate } from '$lib/api/library';
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
 	import CSVUpload from '$lib/components/CSVUpload.svelte';
+	import Pagination from '$lib/components/Pagination.svelte';
 
 	let entities = $state<LibraryEntity[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let totalCount = $state(0);
+
+	// Pagination & search
+	const pageSize = 50;
+	let currentPage = $state(0);
+	let searchQuery = $state('');
+	let debouncedSearch = $state('');
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+	$effect(() => {
+		const q = searchQuery;
+		clearTimeout(debounceTimer);
+		debounceTimer = setTimeout(() => {
+			debouncedSearch = q;
+			currentPage = 0;
+		}, 300);
+	});
 
 	// Add form
 	let showAddForm = $state(false);
@@ -24,11 +42,17 @@
 	let selectedIds = $state<Set<string>>(new Set());
 	let bulkDeleting = $state(false);
 
-	async function loadEntities(teamId: string | null) {
+	async function loadEntities(teamId: string | null, search: string, page: number) {
 		loading = true;
 		error = '';
 		try {
-			entities = await libraryEntitiesApi.list(teamId);
+			const resp = await libraryEntitiesApi.list(teamId, {
+				limit: pageSize,
+				offset: page * pageSize,
+				search: search || undefined,
+			});
+			entities = resp.items;
+			totalCount = resp.total;
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to load library';
 		} finally {
@@ -36,24 +60,24 @@
 		}
 	}
 
-	$effect(() => { loadEntities($scoutTeam); });
+	$effect(() => { loadEntities($scoutTeam, debouncedSearch, currentPage); });
 
 	async function addEntity(e: Event) {
 		e.preventDefault();
 		if (!newLabel.trim()) return;
 		adding = true;
 		try {
-			const entity = await libraryEntitiesApi.create({
+			await libraryEntitiesApi.create({
 				label: newLabel.trim(),
 				gwm_id: newGwmId.trim() || undefined,
 				description: newDesc.trim() || undefined,
 				team_id: $scoutTeam ?? undefined,
 			});
-			entities = [...entities, entity];
 			newLabel = '';
 			newGwmId = '';
 			newDesc = '';
 			showAddForm = false;
+			loadEntities($scoutTeam, debouncedSearch, currentPage);
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to add entity';
 		} finally {
@@ -89,10 +113,10 @@
 		if (!confirm('Delete this entity from the library?')) return;
 		try {
 			await libraryEntitiesApi.delete(id);
-			entities = entities.filter((e) => e.id !== id);
 			const next = new Set(selectedIds);
 			next.delete(id);
 			selectedIds = next;
+			loadEntities($scoutTeam, debouncedSearch, currentPage);
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to delete');
 		}
@@ -115,8 +139,8 @@
 		bulkDeleting = true;
 		try {
 			await Promise.all([...selectedIds].map((id) => libraryEntitiesApi.delete(id)));
-			entities = entities.filter((e) => !selectedIds.has(e.id));
 			selectedIds = new Set();
+			loadEntities($scoutTeam, debouncedSearch, currentPage);
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to delete');
 		} finally {
@@ -142,8 +166,8 @@
 		<div class="flex items-center gap-3">
 			{#if !loading}
 				<p class="text-sm text-slate-400">
-					<span class="text-slate-200 font-medium">{entities.length}</span>
-					{entities.length === 1 ? 'entity' : 'entities'} in library
+					<span class="text-slate-200 font-medium">{totalCount}</span>
+					{totalCount === 1 ? 'entity' : 'entities'} in library
 				</p>
 			{/if}
 			{#if selectedIds.size > 0}
@@ -172,6 +196,16 @@
 		</div>
 	</div>
 
+	<!-- Search -->
+	<div class="mb-4">
+		<input
+			bind:value={searchQuery}
+			placeholder="Search entities…"
+			aria-label="Search entities"
+			class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
+		/>
+	</div>
+
 	{#if showCSV}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
 			<div class="flex items-center justify-between mb-4">
@@ -182,7 +216,7 @@
 				onBulkCreate={libraryBulkCreate}
 				onUploaded={async () => {
 					showCSV = false;
-					entities = await libraryEntitiesApi.list($scoutTeam);
+					loadEntities($scoutTeam, debouncedSearch, currentPage);
 				}}
 			/>
 		</div>
@@ -226,8 +260,12 @@
 		<p class="text-slate-500">Loading…</p>
 	{:else if entities.length === 0}
 		<div class="text-center py-12 text-slate-500">
-			<p>No entities in the library yet. Add them manually or upload a CSV.</p>
-			<p class="text-sm mt-2">Entities added here can be imported into any campaign.</p>
+			{#if debouncedSearch}
+				<p>No entities match "{debouncedSearch}".</p>
+			{:else}
+				<p>No entities in the library yet. Add them manually or upload a CSV.</p>
+				<p class="text-sm mt-2">Entities added here can be imported into any campaign.</p>
+			{/if}
 		</div>
 	{:else}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
@@ -239,7 +277,7 @@
 								checked={selectedIds.size === entities.length && entities.length > 0}
 								onchange={toggleSelectAll}
 								class="accent-gold"
-								aria-label="Select all entities" />
+								aria-label="Select all entities on this page" />
 						</th>
 						<th scope="col" class="text-left px-4 py-3">Label</th>
 						<th scope="col" class="text-left px-4 py-3">GWM ID</th>
@@ -292,7 +330,12 @@
 					{/each}
 				</tbody>
 			</table>
+			<Pagination
+				total={totalCount}
+				{pageSize}
+				{currentPage}
+				onPageChange={(p) => { currentPage = p; selectedIds = new Set(); }}
+			/>
 		</div>
 	{/if}
 </div>
-

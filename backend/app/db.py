@@ -1623,13 +1623,36 @@ async def db_bulk_create_entities(campaign_id: str, entities: list[dict[str, Any
     return {"inserted": inserted, "skipped": max(0, skipped)}
 
 
-async def db_list_entities(campaign_id: str) -> list[dict[str, Any]]:
+async def db_list_entities(
+    campaign_id: str,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    search: str | None = None,
+) -> dict[str, Any]:
     async with _acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM entities WHERE campaign_id = $1::uuid ORDER BY created_at ASC",
-            campaign_id,
-        )
-    return [_entity_row_to_dict(r) for r in rows]
+        if limit == 0:
+            rows = await conn.fetch(
+                """SELECT *, COUNT(*) OVER() AS _total FROM entities
+                   WHERE campaign_id = $1::uuid
+                     AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
+                   ORDER BY created_at ASC""",
+                campaign_id, search,
+            )
+        else:
+            rows = await conn.fetch(
+                """SELECT *, COUNT(*) OVER() AS _total FROM entities
+                   WHERE campaign_id = $1::uuid
+                     AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
+                   ORDER BY created_at ASC
+                   LIMIT $3 OFFSET $4""",
+                campaign_id, search, limit, offset,
+            )
+    total = int(rows[0]["_total"]) if rows else 0
+    items = [_entity_row_to_dict(r) for r in rows]
+    for item in items:
+        item.pop("_total", None)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 async def db_get_entity(entity_id: str) -> dict[str, Any] | None:
@@ -1775,13 +1798,36 @@ async def db_bulk_create_attributes(campaign_id: str, attributes: list[dict[str,
     return {"inserted": inserted, "skipped": max(0, skipped)}
 
 
-async def db_list_attributes(campaign_id: str) -> list[dict[str, Any]]:
+async def db_list_attributes(
+    campaign_id: str,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    search: str | None = None,
+) -> dict[str, Any]:
     async with _acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM attributes WHERE campaign_id = $1::uuid ORDER BY created_at ASC",
-            campaign_id,
-        )
-    return [_attribute_row_to_dict(r) for r in rows]
+        if limit == 0:
+            rows = await conn.fetch(
+                """SELECT *, COUNT(*) OVER() AS _total FROM attributes
+                   WHERE campaign_id = $1::uuid
+                     AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
+                   ORDER BY created_at ASC""",
+                campaign_id, search,
+            )
+        else:
+            rows = await conn.fetch(
+                """SELECT *, COUNT(*) OVER() AS _total FROM attributes
+                   WHERE campaign_id = $1::uuid
+                     AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
+                   ORDER BY created_at ASC
+                   LIMIT $3 OFFSET $4""",
+                campaign_id, search, limit, offset,
+            )
+    total = int(rows[0]["_total"]) if rows else 0
+    items = [_attribute_row_to_dict(r) for r in rows]
+    for item in items:
+        item.pop("_total", None)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 async def db_get_attribute(attribute_id: str) -> dict[str, Any] | None:
@@ -2533,7 +2579,12 @@ async def db_retry_dead_job(job_id: str) -> bool:
             """,
             job_id,
         )
-    return int(result.split()[-1]) > 0
+        updated = int(result.split()[-1]) > 0
+        if updated:
+            await conn.execute(
+                "SELECT pg_notify('job_available', $1)", job_id
+            )
+    return updated
 
 
 # ── Batch knowledge cache lookup ───────────────────────────────────────────────
@@ -2567,26 +2618,29 @@ async def db_lookup_knowledge_batch(
 
 
 async def db_insert_results_batch(job_id: str, hits: list[dict[str, Any]]) -> None:
-    """Insert validation results for cache hits in a single transaction."""
+    """Insert validation results for cache hits in a single round-trip using unnest."""
     if not hits:
         return
+    entity_ids = [hit["entity_id"] for hit in hits]
+    attribute_ids = [hit["attribute_id"] for hit in hits]
+    presents = [hit["present"] for hit in hits]
+    confidences = [hit.get("confidence") for hit in hits]
+    evidences = [hit.get("evidence") for hit in hits]
     async with _acquire() as conn:
         async with conn.transaction():
-            for hit in hits:
-                await conn.execute(
-                    """
-                    INSERT INTO validation_results
-                        (job_id, entity_id, attribute_id, present, confidence, evidence, report_md)
-                    VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, '')
-                    ON CONFLICT (job_id, entity_id, attribute_id) DO UPDATE SET
-                        present    = EXCLUDED.present,
-                        confidence = EXCLUDED.confidence,
-                        evidence   = EXCLUDED.evidence
-                    """,
-                    job_id, hit["entity_id"], hit["attribute_id"],
-                    hit["present"], hit.get("confidence"), hit.get("evidence"),
-                )
-            # Single count-based progress update after all rows are inserted
+            await conn.execute(
+                """
+                INSERT INTO validation_results
+                    (job_id, entity_id, attribute_id, present, confidence, evidence, report_md)
+                SELECT $1::uuid, unnest($2::uuid[]), unnest($3::uuid[]),
+                       unnest($4::bool[]), unnest($5::float[]), unnest($6::text[]), ''
+                ON CONFLICT (job_id, entity_id, attribute_id) DO UPDATE SET
+                    present    = EXCLUDED.present,
+                    confidence = EXCLUDED.confidence,
+                    evidence   = EXCLUDED.evidence
+                """,
+                job_id, entity_ids, attribute_ids, presents, confidences, evidences,
+            )
             await conn.execute(
                 """
                 UPDATE validation_jobs
@@ -2613,19 +2667,56 @@ def _lib_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     return d
 
 
-async def db_list_entity_library(owner_sid: str, team_id: str | None = None) -> list[dict[str, Any]]:
+async def db_list_entity_library(
+    owner_sid: str,
+    team_id: str | None = None,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    search: str | None = None,
+) -> dict[str, Any]:
     async with _acquire() as conn:
         if team_id:
-            rows = await conn.fetch(
-                "SELECT * FROM entity_library WHERE owner_sid=$1 OR team_id=$2::uuid ORDER BY created_at ASC",
-                owner_sid, team_id,
-            )
+            if limit == 0:
+                rows = await conn.fetch(
+                    """SELECT *, COUNT(*) OVER() AS _total FROM entity_library
+                       WHERE (owner_sid=$1 OR team_id=$2::uuid)
+                         AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
+                       ORDER BY created_at ASC""",
+                    owner_sid, team_id, search,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT *, COUNT(*) OVER() AS _total FROM entity_library
+                       WHERE (owner_sid=$1 OR team_id=$2::uuid)
+                         AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
+                       ORDER BY created_at ASC
+                       LIMIT $4 OFFSET $5""",
+                    owner_sid, team_id, search, limit, offset,
+                )
         else:
-            rows = await conn.fetch(
-                "SELECT * FROM entity_library WHERE owner_sid=$1 AND team_id IS NULL ORDER BY created_at ASC",
-                owner_sid,
-            )
-    return [_lib_row_to_dict(r) for r in rows]
+            if limit == 0:
+                rows = await conn.fetch(
+                    """SELECT *, COUNT(*) OVER() AS _total FROM entity_library
+                       WHERE owner_sid=$1 AND team_id IS NULL
+                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
+                       ORDER BY created_at ASC""",
+                    owner_sid, search,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT *, COUNT(*) OVER() AS _total FROM entity_library
+                       WHERE owner_sid=$1 AND team_id IS NULL
+                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
+                       ORDER BY created_at ASC
+                       LIMIT $3 OFFSET $4""",
+                    owner_sid, search, limit, offset,
+                )
+    total = int(rows[0]["_total"]) if rows else 0
+    items = [_lib_row_to_dict(r) for r in rows]
+    for item in items:
+        item.pop("_total", None)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 async def db_create_entity_library(owner_sid: str, team_id: str | None, label: str,
@@ -2696,19 +2787,56 @@ async def db_delete_entity_library(item_id: str, owner_sid: str) -> None:
         )
 
 
-async def db_list_attribute_library(owner_sid: str, team_id: str | None = None) -> list[dict[str, Any]]:
+async def db_list_attribute_library(
+    owner_sid: str,
+    team_id: str | None = None,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    search: str | None = None,
+) -> dict[str, Any]:
     async with _acquire() as conn:
         if team_id:
-            rows = await conn.fetch(
-                "SELECT * FROM attribute_library WHERE owner_sid=$1 OR team_id=$2::uuid ORDER BY created_at ASC",
-                owner_sid, team_id,
-            )
+            if limit == 0:
+                rows = await conn.fetch(
+                    """SELECT *, COUNT(*) OVER() AS _total FROM attribute_library
+                       WHERE (owner_sid=$1 OR team_id=$2::uuid)
+                         AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
+                       ORDER BY created_at ASC""",
+                    owner_sid, team_id, search,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT *, COUNT(*) OVER() AS _total FROM attribute_library
+                       WHERE (owner_sid=$1 OR team_id=$2::uuid)
+                         AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
+                       ORDER BY created_at ASC
+                       LIMIT $4 OFFSET $5""",
+                    owner_sid, team_id, search, limit, offset,
+                )
         else:
-            rows = await conn.fetch(
-                "SELECT * FROM attribute_library WHERE owner_sid=$1 AND team_id IS NULL ORDER BY created_at ASC",
-                owner_sid,
-            )
-    return [_lib_row_to_dict(r) for r in rows]
+            if limit == 0:
+                rows = await conn.fetch(
+                    """SELECT *, COUNT(*) OVER() AS _total FROM attribute_library
+                       WHERE owner_sid=$1 AND team_id IS NULL
+                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
+                       ORDER BY created_at ASC""",
+                    owner_sid, search,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT *, COUNT(*) OVER() AS _total FROM attribute_library
+                       WHERE owner_sid=$1 AND team_id IS NULL
+                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
+                       ORDER BY created_at ASC
+                       LIMIT $3 OFFSET $4""",
+                    owner_sid, search, limit, offset,
+                )
+    total = int(rows[0]["_total"]) if rows else 0
+    items = [_lib_row_to_dict(r) for r in rows]
+    for item in items:
+        item.pop("_total", None)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 async def db_create_attribute_library(owner_sid: str, team_id: str | None, label: str,

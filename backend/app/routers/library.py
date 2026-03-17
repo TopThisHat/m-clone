@@ -73,10 +73,13 @@ class BulkLibraryAttributeBody(BaseModel):
 @router.get("/entities")
 async def list_library_entities(
     team_id: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=0, le=10000),
+    offset: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None),
     user=Depends(get_current_user),
 ):
     try:
-        return await db_list_entity_library(user["sub"], team_id)
+        return await db_list_entity_library(user["sub"], team_id, limit=limit, offset=offset, search=search)
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -130,10 +133,13 @@ async def delete_library_entity(item_id: str, user=Depends(get_current_user)):
 @router.get("/attributes")
 async def list_library_attributes(
     team_id: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=0, le=10000),
+    offset: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None),
     user=Depends(get_current_user),
 ):
     try:
-        return await db_list_attribute_library(user["sub"], team_id)
+        return await db_list_attribute_library(user["sub"], team_id, limit=limit, offset=offset, search=search)
     except DatabaseNotConfigured:
         raise _no_db()
 

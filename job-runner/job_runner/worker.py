@@ -87,19 +87,37 @@ class WorkerPool:
 
     async def _listen_loop(self) -> None:
         from job_runner.db import get_pool
-        pool = await get_pool()
-        conn = await pool.acquire()
-        self._listen_conn = conn
-        try:
-            await conn.add_listener(settings.listen_channel, self._on_notify)
-            logger.debug("LISTEN on channel %s", settings.listen_channel)
-            await self._shutdown.wait()
-        finally:
+        backoff = 1.0
+        while not self._shutdown.is_set():
+            conn: asyncpg.Connection | None = None
             try:
-                await conn.remove_listener(settings.listen_channel, self._on_notify)
-            except Exception:
-                pass
-            await pool.release(conn)
+                pool = await get_pool()
+                conn = await pool.acquire()
+                self._listen_conn = conn
+                await conn.add_listener(settings.listen_channel, self._on_notify)
+                logger.debug("LISTEN on channel %s", settings.listen_channel)
+                backoff = 1.0  # reset on successful connect
+                await self._shutdown.wait()
+                # Clean shutdown requested
+                break
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("LISTEN connection lost (%s), reconnecting in %.1fs", exc, backoff)
+                await asyncio.sleep(min(backoff, 30.0))
+                backoff = min(backoff * 2, 30.0)
+            finally:
+                if conn is not None:
+                    try:
+                        await conn.remove_listener(settings.listen_channel, self._on_notify)
+                    except Exception:
+                        pass
+                    try:
+                        pool = await get_pool()
+                        await pool.release(conn)
+                    except Exception:
+                        pass
+                self._listen_conn = None
 
     def _on_notify(self, conn, pid, channel, payload) -> None:
         self._wake.set()

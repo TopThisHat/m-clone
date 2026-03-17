@@ -80,8 +80,8 @@
 		if (!campaign || !templateName.trim()) return;
 		savingTemplate = true;
 		try {
-			const attrs = await attributesApi.list(campaign.id);
-			await templatesApi.create({ name: templateName.trim(), attributes: attrs.map((a) => ({ label: a.label, description: a.description ?? undefined, weight: a.weight })) });
+			const resp = await attributesApi.list(campaign.id, { limit: 0 });
+			await templatesApi.create({ name: templateName.trim(), attributes: resp.items.map((a) => ({ label: a.label, description: a.description ?? undefined, weight: a.weight })) });
 			templateName = '';
 			alert('Template saved!');
 		} catch { /* ignore */ } finally { savingTemplate = false; }
@@ -149,13 +149,31 @@
 		}
 	}
 
+	// Library entity search + pagination
+	let libEntitySearch = $state('');
+	let libEntityPage = $state(0);
+	let libEntityTotal = $state(0);
+	const libPageSize = 50;
+
 	async function openEntityLibrary() {
 		showEntityLibrary = !showEntityLibrary;
 		showEntityUpload = false;
 		if (showEntityLibrary && !_libEntitiesLoaded) {
 			_libEntitiesLoaded = true;
-			try { libraryEntities = await libraryEntitiesApi.list($scoutTeam); } catch { /* ignore */ }
+			await loadLibraryEntities();
 		}
+	}
+
+	async function loadLibraryEntities() {
+		try {
+			const resp = await libraryEntitiesApi.list($scoutTeam, {
+				limit: libPageSize,
+				offset: libEntityPage * libPageSize,
+				search: libEntitySearch || undefined,
+			});
+			libraryEntities = resp.items;
+			libEntityTotal = resp.total;
+		} catch { /* ignore */ }
 	}
 
 	function toggleLibraryEntity(id: string) {
@@ -177,13 +195,30 @@
 		}
 	}
 
+	// Library attribute search + pagination
+	let libAttrSearch = $state('');
+	let libAttrPage = $state(0);
+	let libAttrTotal = $state(0);
+
 	async function openAttrLibrary() {
 		showAttrLibrary = !showAttrLibrary;
 		showAttrUpload = false;
 		if (showAttrLibrary && !_libAttrsLoaded) {
 			_libAttrsLoaded = true;
-			try { libraryAttrs = await libraryAttributesApi.list($scoutTeam); } catch { /* ignore */ }
+			await loadLibraryAttrs();
 		}
+	}
+
+	async function loadLibraryAttrs() {
+		try {
+			const resp = await libraryAttributesApi.list($scoutTeam, {
+				limit: libPageSize,
+				offset: libAttrPage * libPageSize,
+				search: libAttrSearch || undefined,
+			});
+			libraryAttrs = resp.items;
+			libAttrTotal = resp.total;
+		} catch { /* ignore */ }
 	}
 
 	function toggleLibraryAttr(id: string) {
@@ -351,8 +386,8 @@
 							campaignId={campaign.id}
 							onUploaded={async () => {
 								showEntityUpload = false;
-								const all = await entitiesApi.list(campaign!.id);
-								entityCount = all.length;
+								const resp = await entitiesApi.list(campaign!.id, { limit: 0 });
+								entityCount = resp.total;
 							}}
 						/>
 					</div>
@@ -360,12 +395,19 @@
 
 				{#if showEntityLibrary}
 					<div class="mt-3 border-t border-navy-700 pt-3">
+						<input
+							bind:value={libEntitySearch}
+							oninput={() => { libEntityPage = 0; _libEntitiesLoaded = false; loadLibraryEntities(); _libEntitiesLoaded = true; }}
+							placeholder="Search library entities…"
+							aria-label="Search library entities"
+							class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold mb-2"
+						/>
 						{#if libraryEntities.length === 0}
 							<p class="text-xs text-slate-500 italic">
-								No entities in your library yet. <a href="/entities" class="text-gold hover:underline">Add some →</a>
+								{libEntitySearch ? 'No matches.' : 'No entities in your library yet.'} <a href="/entities" class="text-gold hover:underline">Add some →</a>
 							</p>
 						{:else}
-							<p class="text-xs text-slate-400 mb-2">Select entities to import:</p>
+							<p class="text-xs text-slate-400 mb-2">Showing {libraryEntities.length} of {libEntityTotal} — select entities to import:</p>
 							<div class="max-h-48 overflow-y-auto space-y-1 mb-3">
 								{#each libraryEntities as lib (lib.id)}
 									<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-navy-700 cursor-pointer">
@@ -377,6 +419,17 @@
 									</label>
 								{/each}
 							</div>
+							{#if libEntityTotal > libPageSize}
+								<div class="flex items-center gap-2 mb-3">
+									<button onclick={() => { libEntityPage = Math.max(0, libEntityPage - 1); loadLibraryEntities(); }}
+										disabled={libEntityPage === 0}
+										class="text-xs px-2 py-1 border border-navy-600 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30">← Prev</button>
+									<span class="text-xs text-slate-500">Page {libEntityPage + 1} of {Math.ceil(libEntityTotal / libPageSize)}</span>
+									<button onclick={() => { libEntityPage++; loadLibraryEntities(); }}
+										disabled={libEntityPage >= Math.ceil(libEntityTotal / libPageSize) - 1}
+										class="text-xs px-2 py-1 border border-navy-600 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30">Next →</button>
+								</div>
+							{/if}
 							<button onclick={importFromEntityLibrary}
 								disabled={libraryEntitySelectedIds.size === 0 || importingEntityLib}
 								class="bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50">
@@ -490,8 +543,8 @@
 							campaignId={campaign.id}
 							onUploaded={async () => {
 								showAttrUpload = false;
-								const all = await attributesApi.list(campaign!.id);
-								attrCount = all.length;
+								const resp = await attributesApi.list(campaign!.id, { limit: 0 });
+								attrCount = resp.total;
 							}}
 						/>
 					</div>
@@ -499,12 +552,19 @@
 
 				{#if showAttrLibrary}
 					<div class="mt-3 border-t border-navy-700 pt-3">
+						<input
+							bind:value={libAttrSearch}
+							oninput={() => { libAttrPage = 0; _libAttrsLoaded = false; loadLibraryAttrs(); _libAttrsLoaded = true; }}
+							placeholder="Search library attributes…"
+							aria-label="Search library attributes"
+							class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold mb-2"
+						/>
 						{#if libraryAttrs.length === 0}
 							<p class="text-xs text-slate-500 italic">
-								No attributes in your library yet. <a href="/attributes" class="text-gold hover:underline">Add some →</a>
+								{libAttrSearch ? 'No matches.' : 'No attributes in your library yet.'} <a href="/attributes" class="text-gold hover:underline">Add some →</a>
 							</p>
 						{:else}
-							<p class="text-xs text-slate-400 mb-2">Select attributes to import:</p>
+							<p class="text-xs text-slate-400 mb-2">Showing {libraryAttrs.length} of {libAttrTotal} — select attributes to import:</p>
 							<div class="max-h-48 overflow-y-auto space-y-1 mb-3">
 								{#each libraryAttrs as lib (lib.id)}
 									<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-navy-700 cursor-pointer">
@@ -516,6 +576,17 @@
 									</label>
 								{/each}
 							</div>
+							{#if libAttrTotal > libPageSize}
+								<div class="flex items-center gap-2 mb-3">
+									<button onclick={() => { libAttrPage = Math.max(0, libAttrPage - 1); loadLibraryAttrs(); }}
+										disabled={libAttrPage === 0}
+										class="text-xs px-2 py-1 border border-navy-600 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30">← Prev</button>
+									<span class="text-xs text-slate-500">Page {libAttrPage + 1} of {Math.ceil(libAttrTotal / libPageSize)}</span>
+									<button onclick={() => { libAttrPage++; loadLibraryAttrs(); }}
+										disabled={libAttrPage >= Math.ceil(libAttrTotal / libPageSize) - 1}
+										class="text-xs px-2 py-1 border border-navy-600 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30">Next →</button>
+								</div>
+							{/if}
 							<button onclick={importFromAttrLibrary}
 								disabled={libraryAttrSelectedIds.size === 0 || importingAttrLib}
 								class="bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50">

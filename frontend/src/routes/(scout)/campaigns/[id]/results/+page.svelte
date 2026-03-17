@@ -134,12 +134,16 @@
 
 	onMount(async () => {
 		try {
-			[scores, entities, attributes, knowledge] = await Promise.all([
+			const [scoresResult, entitiesResult, attributesResult, knowledgeResult] = await Promise.all([
 				jobsApi.getScores(campaignId),
-				entitiesApi.list(campaignId),
-				attributesApi.list(campaignId),
+				entitiesApi.list(campaignId, { limit: 0 }),
+				attributesApi.list(campaignId, { limit: 0 }),
 				jobsApi.getKnowledge(campaignId),
 			]);
+			scores = scoresResult;
+			entities = entitiesResult.items;
+			attributes = attributesResult.items;
+			knowledge = knowledgeResult;
 			const jobs = await jobsApi.list(campaignId);
 			const doneJobs = jobs.filter((j) => j.status === 'done');
 			if (doneJobs.length > 0) {

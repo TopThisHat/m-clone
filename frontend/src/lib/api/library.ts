@@ -1,4 +1,7 @@
 import { apiFetch } from './apiFetch';
+import type { PaginatedResponse } from './entities';
+
+export type { PaginatedResponse };
 
 export interface LibraryEntity {
 	id: string;
@@ -42,9 +45,17 @@ export interface BulkLibraryResult<T> {
 }
 
 export const libraryEntitiesApi = {
-	list: (teamId?: string | null): Promise<LibraryEntity[]> => {
-		const params = teamId ? `?team_id=${teamId}` : '';
-		return apiFetch(`/api/library/entities${params}`);
+	list: (
+		teamId?: string | null,
+		opts?: { limit?: number; offset?: number; search?: string }
+	): Promise<PaginatedResponse<LibraryEntity>> => {
+		const params = new URLSearchParams();
+		if (teamId) params.set('team_id', teamId);
+		if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+		if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
+		if (opts?.search) params.set('search', opts.search);
+		const qs = params.toString();
+		return apiFetch(`/api/library/entities${qs ? `?${qs}` : ''}`);
 	},
 
 	create: (data: LibraryEntityCreate): Promise<LibraryEntity> =>
@@ -76,9 +87,17 @@ export const libraryEntitiesApi = {
 };
 
 export const libraryAttributesApi = {
-	list: (teamId?: string | null): Promise<LibraryAttribute[]> => {
-		const params = teamId ? `?team_id=${teamId}` : '';
-		return apiFetch(`/api/library/attributes${params}`);
+	list: (
+		teamId?: string | null,
+		opts?: { limit?: number; offset?: number; search?: string }
+	): Promise<PaginatedResponse<LibraryAttribute>> => {
+		const params = new URLSearchParams();
+		if (teamId) params.set('team_id', teamId);
+		if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+		if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
+		if (opts?.search) params.set('search', opts.search);
+		const qs = params.toString();
+		return apiFetch(`/api/library/attributes${qs ? `?${qs}` : ''}`);
 	},
 
 	create: (data: LibraryAttributeCreate): Promise<LibraryAttribute> =>

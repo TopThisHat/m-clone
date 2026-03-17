@@ -4,11 +4,29 @@
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
 	import AttributeCSVUpload from '$lib/components/AttributeCSVUpload.svelte';
+	import Pagination from '$lib/components/Pagination.svelte';
 
 	let campaignId = $derived($page.params.id as string);
 	let attributes = $state<Attribute[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let totalCount = $state(0);
+
+	// Pagination & search
+	const pageSize = 50;
+	let currentPage = $state(0);
+	let searchQuery = $state('');
+	let debouncedSearch = $state('');
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+	$effect(() => {
+		const q = searchQuery;
+		clearTimeout(debounceTimer);
+		debounceTimer = setTimeout(() => {
+			debouncedSearch = q;
+			currentPage = 0;
+		}, 300);
+	});
 
 	// Add form
 	let newLabel = $state('');
@@ -16,7 +34,7 @@
 	let newWeight = $state(1.0);
 	let adding = $state(false);
 
-	// Inline edit state: attributeId → editing flag
+	// Inline edit state
 	let editing = $state<Record<string, Attribute & { _orig: Attribute }>>({});
 
 	// Upload modal state
@@ -30,8 +48,15 @@
 	let importResult = $state('');
 
 	async function load() {
+		loading = true;
 		try {
-			attributes = await attributesApi.list(campaignId);
+			const resp = await attributesApi.list(campaignId, {
+				limit: pageSize,
+				offset: currentPage * pageSize,
+				search: debouncedSearch || undefined,
+			});
+			attributes = resp.items;
+			totalCount = resp.total;
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to load attributes';
 		} finally {
@@ -40,6 +65,12 @@
 	}
 
 	onMount(load);
+
+	$effect(() => {
+		debouncedSearch;
+		currentPage;
+		load();
+	});
 
 	async function openImport() {
 		showImport = true;
@@ -59,8 +90,8 @@
 		importResult = '';
 		try {
 			const imported = await attributesApi.importFrom(campaignId, selectedSourceId);
-			attributes = await attributesApi.list(campaignId);
 			importResult = `Imported ${imported.length} new ${imported.length === 1 ? 'attribute' : 'attributes'}.`;
+			load();
 		} catch (err: unknown) {
 			importResult = `Error: ${err instanceof Error ? err.message : 'Import failed'}`;
 		} finally {
@@ -73,15 +104,15 @@
 		if (!newLabel.trim()) return;
 		adding = true;
 		try {
-			const attr = await attributesApi.create(campaignId, {
+			await attributesApi.create(campaignId, {
 				label: newLabel.trim(),
 				description: newDesc.trim() || undefined,
 				weight: newWeight,
 			});
-			attributes = [...attributes, attr];
 			newLabel = '';
 			newDesc = '';
 			newWeight = 1.0;
+			load();
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to add attribute';
 		} finally {
@@ -119,7 +150,7 @@
 		if (!confirm(`Delete "${label}"?`)) return;
 		try {
 			await attributesApi.delete(campaignId, id);
-			attributes = attributes.filter((a) => a.id !== id);
+			load();
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to delete');
 		}
@@ -134,7 +165,7 @@
 	<div class="flex items-center justify-between mb-6">
 		<h2 class="font-serif text-gold text-xl font-bold">
 			Attributes
-			<span class="text-slate-500 font-normal text-base ml-1">({attributes.length})</span>
+			<span class="text-slate-500 font-normal text-base ml-1">({totalCount})</span>
 		</h2>
 		<div class="flex gap-2">
 			<button
@@ -154,6 +185,16 @@
 		</div>
 	</div>
 
+	<!-- Search -->
+	<div class="mb-4">
+		<input
+			bind:value={searchQuery}
+			placeholder="Search attributes…"
+			aria-label="Search attributes"
+			class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
+		/>
+	</div>
+
 	{#if showUpload}
 		<section aria-label="Upload attributes via CSV" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
 			<div class="flex items-center justify-between mb-4">
@@ -168,7 +209,7 @@
 				{campaignId}
 				onUploaded={async () => {
 					showUpload = false;
-					attributes = await attributesApi.list(campaignId);
+					load();
 				}}
 			/>
 		</section>
@@ -246,7 +287,11 @@
 		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading…</p>
 	{:else if attributes.length === 0}
 		<div class="text-center py-12 text-slate-500">
-			<p>No attributes yet. Add them above or import from another campaign.</p>
+			{#if debouncedSearch}
+				<p>No attributes match "{debouncedSearch}".</p>
+			{:else}
+				<p>No attributes yet. Add them above or import from another campaign.</p>
+			{/if}
 		</div>
 	{:else}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
@@ -314,6 +359,12 @@
 					{/each}
 				</tbody>
 			</table>
+			<Pagination
+				total={totalCount}
+				{pageSize}
+				{currentPage}
+				onPageChange={(p) => { currentPage = p; }}
+			/>
 		</div>
 	{/if}
 </div>

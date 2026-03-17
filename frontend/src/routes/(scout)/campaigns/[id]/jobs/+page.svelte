@@ -30,11 +30,14 @@
 
 	onMount(async () => {
 		try {
-			[jobs, entities, attributes] = await Promise.all([
+			const [jobsResult, entitiesResult, attributesResult] = await Promise.all([
 				jobsApi.list(campaignId),
-				entitiesApi.list(campaignId),
-				attributesApi.list(campaignId),
+				entitiesApi.list(campaignId, { limit: 0 }),
+				attributesApi.list(campaignId, { limit: 0 }),
 			]);
+			jobs = jobsResult;
+			entities = entitiesResult.items;
+			attributes = attributesResult.items;
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to load';
 		} finally {

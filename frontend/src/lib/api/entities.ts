@@ -22,9 +22,25 @@ export interface BulkEntityResult {
 	skipped: number;
 }
 
+export interface PaginatedResponse<T> {
+	items: T[];
+	total: number;
+	limit: number;
+	offset: number;
+}
+
 export const entitiesApi = {
-	list: (campaignId: string): Promise<Entity[]> =>
-		apiFetch(`/api/campaigns/${campaignId}/entities`),
+	list: (
+		campaignId: string,
+		opts?: { limit?: number; offset?: number; search?: string }
+	): Promise<PaginatedResponse<Entity>> => {
+		const params = new URLSearchParams();
+		if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
+		if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
+		if (opts?.search) params.set('search', opts.search);
+		const qs = params.toString();
+		return apiFetch(`/api/campaigns/${campaignId}/entities${qs ? `?${qs}` : ''}`);
+	},
 
 	create: (campaignId: string, data: EntityCreate): Promise<Entity> =>
 		apiFetch(`/api/campaigns/${campaignId}/entities`, {

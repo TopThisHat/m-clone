@@ -4,14 +4,32 @@
 	import { entitiesApi, type Entity } from '$lib/api/entities';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
 	import CSVUpload from '$lib/components/CSVUpload.svelte';
+	import Pagination from '$lib/components/Pagination.svelte';
 
 	let campaignId = $derived($page.params.id as string);
 	let entities = $state<Entity[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let totalCount = $state(0);
 	let showCSV = $state(false);
 	let showAddForm = $state(false);
 	let showImport = $state(false);
+
+	// Pagination & search
+	const pageSize = 50;
+	let currentPage = $state(0);
+	let searchQuery = $state('');
+	let debouncedSearch = $state('');
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+	$effect(() => {
+		const q = searchQuery;
+		clearTimeout(debounceTimer);
+		debounceTimer = setTimeout(() => {
+			debouncedSearch = q;
+			currentPage = 0;
+		}, 300);
+	});
 
 	// Add form state
 	let newLabel = $state('');
@@ -35,8 +53,15 @@
 	let bulkDeleting = $state(false);
 
 	async function load() {
+		loading = true;
 		try {
-			entities = await entitiesApi.list(campaignId);
+			const resp = await entitiesApi.list(campaignId, {
+				limit: pageSize,
+				offset: currentPage * pageSize,
+				search: debouncedSearch || undefined,
+			});
+			entities = resp.items;
+			totalCount = resp.total;
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to load entities';
 		} finally {
@@ -45,6 +70,13 @@
 	}
 
 	onMount(load);
+
+	$effect(() => {
+		// Re-load when search or page changes (skip initial mount)
+		debouncedSearch;
+		currentPage;
+		load();
+	});
 
 	async function openImport() {
 		showImport = true;
@@ -66,8 +98,8 @@
 		importResult = '';
 		try {
 			const imported = await entitiesApi.importFrom(campaignId, selectedSourceId);
-			entities = await entitiesApi.list(campaignId);
 			importResult = `Imported ${imported.length} new ${imported.length === 1 ? 'entity' : 'entities'}.`;
+			load();
 		} catch (err: unknown) {
 			importResult = `Error: ${err instanceof Error ? err.message : 'Import failed'}`;
 		} finally {
@@ -80,16 +112,16 @@
 		if (!newLabel.trim()) return;
 		adding = true;
 		try {
-			const entity = await entitiesApi.create(campaignId, {
+			await entitiesApi.create(campaignId, {
 				label: newLabel.trim(),
 				gwm_id: newGwmId.trim() || undefined,
 				description: newDesc.trim() || undefined,
 			});
-			entities = [...entities, entity];
 			newLabel = '';
 			newGwmId = '';
 			newDesc = '';
 			showAddForm = false;
+			load();
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to add entity';
 		} finally {
@@ -101,10 +133,10 @@
 		if (!confirm(`Delete "${label}"?`)) return;
 		try {
 			await entitiesApi.delete(campaignId, id);
-			entities = entities.filter((e) => e.id !== id);
 			const next = new Set(selectedIds);
 			next.delete(id);
 			selectedIds = next;
+			load();
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to delete');
 		}
@@ -155,8 +187,8 @@
 		bulkDeleting = true;
 		try {
 			await Promise.all([...selectedIds].map((id) => entitiesApi.delete(campaignId, id)));
-			entities = entities.filter((e) => !selectedIds.has(e.id));
 			selectedIds = new Set();
+			load();
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to delete');
 		} finally {
@@ -177,7 +209,7 @@
 		<div class="flex items-center gap-3">
 			<h2 class="font-serif text-gold text-xl font-bold">
 				Entities
-				<span class="text-slate-500 font-normal text-base ml-1">({entities.length})</span>
+				<span class="text-slate-500 font-normal text-base ml-1">({totalCount})</span>
 			</h2>
 			{#if selectedIds.size > 0}
 				<button
@@ -212,6 +244,16 @@
 				+ Add Entity
 			</button>
 		</div>
+	</div>
+
+	<!-- Search -->
+	<div class="mb-4">
+		<input
+			bind:value={searchQuery}
+			placeholder="Search entities…"
+			aria-label="Search entities"
+			class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
+		/>
 	</div>
 
 	{#if showImport}
@@ -301,7 +343,11 @@
 		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading…</p>
 	{:else if entities.length === 0}
 		<div class="text-center py-12 text-slate-500">
-			<p>No entities yet. Add them manually, upload a CSV, or import from another campaign.</p>
+			{#if debouncedSearch}
+				<p>No entities match "{debouncedSearch}".</p>
+			{:else}
+				<p>No entities yet. Add them manually, upload a CSV, or import from another campaign.</p>
+			{/if}
 		</div>
 	{:else}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
@@ -315,7 +361,7 @@
 								indeterminate={someSelected}
 								onchange={toggleSelectAll}
 								class="accent-gold"
-								aria-label="Select all entities"
+								aria-label="Select all entities on this page"
 							/>
 						</th>
 						<th scope="col" class="text-left px-4 py-3">Label</th>
@@ -393,6 +439,12 @@
 					{/each}
 				</tbody>
 			</table>
+			<Pagination
+				total={totalCount}
+				{pageSize}
+				{currentPage}
+				onPageChange={(p) => { currentPage = p; selectedIds = new Set(); }}
+			/>
 		</div>
 	{/if}
 </div>

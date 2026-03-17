@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -46,11 +46,17 @@ async def _get_owned_campaign(campaign_id: str, user_sid: str):
     return campaign
 
 
-@router.get("/{campaign_id}/attributes", response_model=list[AttributeOut])
-async def list_attributes(campaign_id: str, user=Depends(get_current_user)):
+@router.get("/{campaign_id}/attributes")
+async def list_attributes(
+    campaign_id: str,
+    user=Depends(get_current_user),
+    limit: int = Query(default=50, ge=0, le=10000),
+    offset: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None),
+):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
-        return await db_list_attributes(campaign_id)
+        return await db_list_attributes(campaign_id, limit=limit, offset=offset, search=search)
     except DatabaseNotConfigured:
         raise _no_db()
 
