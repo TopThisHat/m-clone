@@ -4,6 +4,8 @@
 	import { page } from '$app/stores';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
 	import { jobsApi, type Job } from '$lib/api/jobs';
+	import { entitiesApi } from '$lib/api/entities';
+	import { attributesApi } from '$lib/api/attributes';
 	import JobProgress from '$lib/components/JobProgress.svelte';
 	import SchedulePicker from '$lib/components/SchedulePicker.svelte';
 
@@ -91,7 +93,13 @@
 			return;
 		}
 		try {
-			const job = await jobsApi.create(campaignId, {});
+			const [entRes, attrRes] = await Promise.all([
+				entitiesApi.list(campaignId, { limit: 0 }),
+				attributesApi.list(campaignId, { limit: 0 }),
+			]);
+			const entity_ids = entRes.items.map((e) => e.id);
+			const attribute_ids = attrRes.items.map((a) => a.id);
+			const job = await jobsApi.create(campaignId, { entity_ids, attribute_ids });
 			jobs = [job, ...jobs];
 			runningJobId = job.id;
 		} catch (err: unknown) {

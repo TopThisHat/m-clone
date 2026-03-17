@@ -127,7 +127,7 @@
 							<div class="flex-1 bg-navy-700 rounded-full h-1.5 max-w-40">
 								<div class="h-1.5 rounded-full bg-gold transition-all" style="width:{(score.total_score / maxScore) * 100}%"></div>
 							</div>
-							<span class="text-gold font-mono text-sm">{(score.total_score * 100).toFixed(0)}%</span>
+							<span class="text-gold font-mono text-sm">{score.total_score.toFixed(2)}</span>
 							<span class="text-xs text-slate-500">{score.attributes_present}/{score.attributes_checked}</span>
 						</div>
 					</div>
@@ -177,7 +177,7 @@
 									</div>
 								{/if}
 								{#if r.evidence}
-									<p class="text-slate-500 text-xs mt-0.5 truncate">{r.evidence}</p>
+									<p class="text-slate-500 text-xs mt-0.5 line-clamp-3" title={r.evidence}>{r.evidence}</p>
 								{/if}
 							</div>
 						</div>

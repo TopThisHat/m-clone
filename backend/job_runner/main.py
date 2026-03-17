@@ -1,22 +1,20 @@
 """
-job-runner entry point.
+Job manager entry point.
+
+Manages the job queue: dequeues jobs, dispatches to workers, handles
+heartbeat/reclaim/reconciliation. Workers execute the actual workflow logic.
 
 Start with:
-    cd job-runner && python -m job_runner.main
+    cd backend && python -m job_runner.main
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import signal
-import sys
-from pathlib import Path
-
-# Allow importing backend app/worker modules
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv()
 
 import app.agent  # noqa: F401 — registers research_agent tool decorators
 import job_runner.workflows  # noqa: F401 — registers all workflow handlers
@@ -26,8 +24,6 @@ from job_runner.db import close_pool, init_db_pool
 from job_runner.worker import WorkerPool
 
 logger = logging.getLogger(__name__)
-
-_pool: WorkerPool | None = None
 
 
 async def _shutdown(worker: WorkerPool) -> None:

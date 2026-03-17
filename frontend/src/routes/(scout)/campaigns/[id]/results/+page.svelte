@@ -27,7 +27,6 @@
 	let sortAsc = $state(false);
 	let minConfidence = $state(0);
 	let minScore = $state(0);
-	let maxScore = $state(100);
 	let presenceOnly = $state(false);
 
 	// Selection + re-validate
@@ -41,13 +40,10 @@
 	// Evidence modal (matrix tab)
 	let modalResult = $state<Result | null>(null);
 
-	const scoreMax = $derived(Math.max(...scores.map((s) => s.total_score * 100), 1));
-
 	const filteredScores = $derived.by(() => {
 		let s = scores.filter((sc) => {
 			if (searchQuery && !(sc.entity_label ?? '').toLowerCase().includes(searchQuery.toLowerCase())) return false;
-			const pct = sc.total_score * 100;
-			if (pct < minScore || pct > maxScore) return false;
+			if (sc.total_score < minScore) return false;
 			if (presenceOnly && sc.attributes_present === 0) return false;
 			return true;
 		});
@@ -83,13 +79,12 @@
 		searchQuery = '';
 		selectedAttrs = new Set();
 		minScore = 0;
-		maxScore = 100;
 		presenceOnly = false;
 		minConfidence = 0;
 	}
 
 	const hasActiveFilters = $derived(
-		searchQuery !== '' || selectedAttrs.size > 0 || minScore > 0 || maxScore < 100 || presenceOnly || minConfidence > 0
+		searchQuery !== '' || selectedAttrs.size > 0 || minScore > 0 || presenceOnly || minConfidence > 0
 	);
 
 	async function startRevalidate(entityIds: string[]) {
@@ -235,12 +230,9 @@
 
 		<!-- Score range -->
 		<div class="flex items-center gap-3">
-			<span class="text-xs text-slate-500 whitespace-nowrap">Score:</span>
-			<span class="text-xs text-slate-400 font-mono w-8">{minScore}%</span>
-			<input type="range" min="0" max="100" step="5" bind:value={minScore} aria-label="Minimum score" aria-valuenow={minScore} class="flex-1 accent-gold" />
-			<span class="text-xs text-slate-400">–</span>
-			<input type="range" min="0" max="100" step="5" bind:value={maxScore} aria-label="Maximum score" aria-valuenow={maxScore} class="flex-1 accent-gold" />
-			<span class="text-xs text-slate-400 font-mono w-8">{maxScore}%</span>
+			<span class="text-xs text-slate-500 whitespace-nowrap">Min score:</span>
+			<input type="range" min="0" max="1" step="0.05" bind:value={minScore} aria-label="Minimum score" aria-valuenow={minScore} class="flex-1 max-w-40 accent-gold" />
+			<span class="text-xs text-slate-400 font-mono w-10">{minScore.toFixed(2)}</span>
 		</div>
 
 		<!-- Confidence slider -->

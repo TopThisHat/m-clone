@@ -318,7 +318,7 @@
 							{:else}
 								<td class="px-4 py-3 text-slate-200 font-medium">{entity.label}</td>
 								<td class="px-4 py-3 text-slate-400 font-mono text-xs">{entity.gwm_id ?? '—'}</td>
-								<td class="px-4 py-3 text-slate-500 truncate max-w-xs">{entity.description ?? '—'}</td>
+								<td class="px-4 py-3 text-slate-500 max-w-sm" title={entity.description ?? ''}><span class="line-clamp-2">{entity.description ?? '—'}</span></td>
 								<td class="px-4 py-3 text-right whitespace-nowrap">
 									<button onclick={() => startEdit(entity)} aria-label="Edit {entity.label}"
 										class="text-slate-500 hover:text-slate-300 text-xs mr-2">Edit</button>

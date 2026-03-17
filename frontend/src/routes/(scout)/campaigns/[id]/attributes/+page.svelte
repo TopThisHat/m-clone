@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
+	import { libraryAttributesApi, type LibraryAttribute } from '$lib/api/library';
 	import AttributeCSVUpload from '$lib/components/AttributeCSVUpload.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
 
@@ -155,6 +156,57 @@
 			alert(err instanceof Error ? err.message : 'Failed to delete');
 		}
 	}
+
+	// Library import state
+	let showLibrary = $state(false);
+	let libraryAttrs = $state<LibraryAttribute[]>([]);
+	let librarySearch = $state('');
+	let librarySelected = $state<Set<string>>(new Set());
+	let libraryImporting = $state(false);
+	let libraryResult = $state('');
+
+	async function openLibraryImport() {
+		showLibrary = true;
+		showUpload = false;
+		showImport = false;
+		librarySearch = '';
+		librarySelected = new Set();
+		libraryResult = '';
+		try {
+			const res = await libraryAttributesApi.list(null, { limit: 0 });
+			libraryAttrs = res.items;
+		} catch {
+			libraryAttrs = [];
+		}
+	}
+
+	let filteredLibrary = $derived(
+		librarySearch === ''
+			? libraryAttrs
+			: libraryAttrs.filter((a) => a.label.toLowerCase().includes(librarySearch.toLowerCase()))
+	);
+
+	function toggleLibrarySelect(id: string) {
+		const next = new Set(librarySelected);
+		if (next.has(id)) next.delete(id); else next.add(id);
+		librarySelected = next;
+	}
+
+	async function doLibraryImport() {
+		if (librarySelected.size === 0) return;
+		libraryImporting = true;
+		libraryResult = '';
+		try {
+			const imported = await attributesApi.importFromLibrary(campaignId, [...librarySelected]);
+			libraryResult = `Imported ${imported.length} ${imported.length === 1 ? 'attribute' : 'attributes'}.`;
+			librarySelected = new Set();
+			load();
+		} catch (err: unknown) {
+			libraryResult = `Error: ${err instanceof Error ? err.message : 'Import failed'}`;
+		} finally {
+			libraryImporting = false;
+		}
+	}
 </script>
 
 <div class="max-w-4xl mx-auto">
@@ -169,11 +221,18 @@
 		</h2>
 		<div class="flex gap-2">
 			<button
+				onclick={openLibraryImport}
+				aria-expanded={showLibrary}
+				class="btn-secondary text-sm py-1.5"
+			>
+				Import from Library
+			</button>
+			<button
 				onclick={() => (showUpload = !showUpload)}
 				aria-expanded={showUpload}
 				class="btn-secondary text-sm py-1.5"
 			>
-				↑ Upload CSV / Excel
+				Upload CSV / Excel
 			</button>
 			<button
 				onclick={openImport}
@@ -194,6 +253,48 @@
 			class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
 		/>
 	</div>
+
+	{#if showLibrary}
+		<section aria-label="Import attributes from library" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="font-medium text-slate-200">Import from Library</h3>
+				<button onclick={() => { showLibrary = false; libraryResult = ''; }} class="text-slate-500 hover:text-slate-300 text-xs">Close</button>
+			</div>
+			<input
+				bind:value={librarySearch}
+				placeholder="Search library attributes…"
+				class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold mb-3"
+			/>
+			<div class="max-h-64 overflow-y-auto border border-navy-700 rounded-lg mb-3">
+				{#if filteredLibrary.length === 0}
+					<p class="text-slate-500 text-sm text-center py-4">No library attributes found.</p>
+				{:else}
+					{#each filteredLibrary as la (la.id)}
+						<label class="flex items-center gap-3 px-3 py-2 hover:bg-navy-700/50 cursor-pointer border-b border-navy-700 last:border-b-0">
+							<input type="checkbox" checked={librarySelected.has(la.id)} onchange={() => toggleLibrarySelect(la.id)} class="accent-gold" />
+							<div class="min-w-0 flex-1">
+								<span class="text-sm text-slate-200">{la.label}</span>
+								<span class="text-xs text-slate-500 ml-2">w:{la.weight.toFixed(1)}</span>
+								{#if la.description}<p class="text-xs text-slate-500 line-clamp-1">{la.description}</p>{/if}
+							</div>
+						</label>
+					{/each}
+				{/if}
+			</div>
+			<div class="flex items-center gap-3">
+				<button
+					onclick={doLibraryImport}
+					disabled={librarySelected.size === 0 || libraryImporting}
+					class="bg-gold text-navy font-semibold px-4 py-1.5 rounded-lg text-sm hover:bg-gold-light disabled:opacity-50"
+				>
+					{libraryImporting ? 'Importing…' : `Import ${librarySelected.size} selected`}
+				</button>
+				{#if libraryResult}
+					<span class="text-sm {libraryResult.startsWith('Error') ? 'text-red-400' : 'text-green-400'}">{libraryResult}</span>
+				{/if}
+			</div>
+		</section>
+	{/if}
 
 	{#if showUpload}
 		<section aria-label="Upload attributes via CSV" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
@@ -340,7 +441,7 @@
 						{:else}
 							<tr class="border-t border-navy-700 hover:bg-navy-700/50">
 								<td class="px-4 py-3 text-slate-200 font-medium">{attr.label}</td>
-								<td class="px-4 py-3 text-slate-500 truncate max-w-xs">{attr.description ?? '—'}</td>
+								<td class="px-4 py-3 text-slate-500 max-w-sm" title={attr.description ?? ''}><span class="line-clamp-2">{attr.description ?? '—'}</span></td>
 								<td class="px-4 py-3 text-slate-300 font-mono text-xs">{attr.weight.toFixed(1)}</td>
 								<td class="px-4 py-3 text-right space-x-2">
 									<button

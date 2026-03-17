@@ -4,12 +4,7 @@ Validation workflows: campaign fan-out + per-pair research/scoring.
 from __future__ import annotations
 
 import logging
-import sys
 from datetime import datetime, timezone
-from pathlib import Path
-
-# Allow importing backend app/worker modules without code duplication
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "backend"))
 
 from job_runner.registry import BaseWorkflow, registry
 
@@ -110,7 +105,7 @@ class ValidationCampaignWorkflow(BaseWorkflow):
                 # Idempotency: skip if pairs already enqueued for this root job
                 # (handles the case where the campaign job itself is retried)
                 existing = await conn.fetchval(
-                    "SELECT COUNT(*) FROM job_queue WHERE root_job_id = $1::uuid",
+                    "SELECT COUNT(*) FROM playbook.job_queue WHERE root_job_id = $1::uuid",
                     self.job_id,
                 )
                 if existing > 0:
@@ -139,7 +134,7 @@ class ValidationCampaignWorkflow(BaseWorkflow):
 
                 await conn.execute(
                     """
-                    UPDATE validation_jobs
+                    UPDATE playbook.validation_jobs
                     SET status = 'running', total_pairs = $2, started_at = $3
                     WHERE id = $1::uuid AND status = 'queued'
                     """,
@@ -191,11 +186,11 @@ async def finalize_validation_job(validation_job_id: str, root_queue_job_id: str
                     COUNT(*) FILTER (WHERE status = 'dead') AS dead_count,
                     COUNT(*) FILTER (WHERE status = 'done') AS done_count,
                     COUNT(*) AS total
-                FROM job_queue
+                FROM playbook.job_queue
                 WHERE root_job_id = $1::uuid
             ),
             upd AS (
-                UPDATE validation_jobs
+                UPDATE playbook.validation_jobs
                 SET
                     status = CASE
                         WHEN (SELECT dead_count = total AND total > 0 FROM counts) THEN 'failed'
@@ -213,7 +208,7 @@ async def finalize_validation_job(validation_job_id: str, root_queue_job_id: str
                 WHERE id = $2::uuid
                   AND status = 'running'
                   AND NOT EXISTS (
-                      SELECT 1 FROM job_queue
+                      SELECT 1 FROM playbook.job_queue
                       WHERE root_job_id = $1::uuid
                         AND status NOT IN ('done', 'dead')
                   )
@@ -371,7 +366,7 @@ class ValidationPairWorkflow(BaseWorkflow):
         async with pool.acquire() as conn:
             pending = await conn.fetchval(
                 """
-                SELECT COUNT(*) FROM job_queue
+                SELECT COUNT(*) FROM playbook.job_queue
                 WHERE root_job_id = $1::uuid
                   AND status NOT IN ('done', 'dead')
                 """,
@@ -402,7 +397,7 @@ class ValidationPairWorkflow(BaseWorkflow):
         async with pool.acquire() as conn:
             pending = await conn.fetchval(
                 """
-                SELECT COUNT(*) FROM job_queue
+                SELECT COUNT(*) FROM playbook.job_queue
                 WHERE root_job_id = $1::uuid
                   AND id != $2::uuid
                   AND status NOT IN ('done', 'dead')

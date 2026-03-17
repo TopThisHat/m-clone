@@ -246,7 +246,7 @@
 						{:else}
 							<tr class="border-t border-navy-700 hover:bg-navy-700/50">
 								<td class="px-4 py-3 text-slate-200 font-medium">{attr.label}</td>
-								<td class="px-4 py-3 text-slate-500 truncate max-w-xs">{attr.description ?? '—'}</td>
+								<td class="px-4 py-3 text-slate-500 max-w-sm" title={attr.description ?? ''}><span class="line-clamp-2">{attr.description ?? '—'}</span></td>
 								<td class="px-4 py-3 text-slate-300 font-mono text-xs">{attr.weight.toFixed(1)}</td>
 								<td class="px-4 py-3 text-right space-x-2">
 									<button onclick={() => startEdit(attr)} aria-label="Edit {attr.label}"

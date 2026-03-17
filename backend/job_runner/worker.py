@@ -149,14 +149,14 @@ class WorkerPool:
                     stuck = await conn.fetch(
                         """
                         SELECT vj.id AS validation_job_id, root.id AS root_queue_job_id
-                        FROM validation_jobs vj
-                        JOIN job_queue root
+                        FROM playbook.validation_jobs vj
+                        JOIN playbook.job_queue root
                           ON root.validation_job_id = vj.id
                          AND root.job_type = 'validation_campaign'
                          AND root.status IN ('done', 'dead')
                         WHERE vj.status = 'running'
                           AND NOT EXISTS (
-                              SELECT 1 FROM job_queue children
+                              SELECT 1 FROM playbook.job_queue children
                               WHERE children.root_job_id = root.id
                                 AND children.status NOT IN ('done', 'dead')
                           )

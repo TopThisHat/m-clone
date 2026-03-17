@@ -28,7 +28,7 @@ async def enqueue(
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO job_queue
+            INSERT INTO playbook.job_queue
                 (job_type, payload, parent_job_id, root_job_id,
                  max_attempts, priority, run_at, validation_job_id)
             VALUES
@@ -57,7 +57,7 @@ async def dequeue(worker_id: str, batch_size: int = 1) -> list[dict[str, Any]]:
             rows = await conn.fetch(
                 """
                 SELECT *
-                FROM job_queue
+                FROM playbook.job_queue
                 WHERE status = 'pending' AND run_at <= NOW()
                 ORDER BY priority DESC, created_at ASC
                 LIMIT $1
@@ -72,7 +72,7 @@ async def dequeue(worker_id: str, batch_size: int = 1) -> list[dict[str, Any]]:
             # can recover this job if the worker dies before the first heartbeat tick.
             await conn.execute(
                 """
-                UPDATE job_queue
+                UPDATE playbook.job_queue
                 SET status = 'claimed',
                     claimed_at = NOW(),
                     heartbeat_at = NOW(),
@@ -89,7 +89,7 @@ async def mark_running(job_id: str) -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE job_queue SET status = 'running', started_at = NOW() WHERE id = $1::uuid",
+            "UPDATE playbook.job_queue SET status = 'running', started_at = NOW() WHERE id = $1::uuid",
             job_id,
         )
 
@@ -98,7 +98,7 @@ async def ack(job_id: str) -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE job_queue SET status = 'done', completed_at = NOW() WHERE id = $1::uuid",
+            "UPDATE playbook.job_queue SET status = 'done', completed_at = NOW() WHERE id = $1::uuid",
             job_id,
         )
 
@@ -115,7 +115,7 @@ async def fail(job_id: str, error: str, backoff_seconds: float = 0) -> bool:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            UPDATE job_queue
+            UPDATE playbook.job_queue
             SET
                 attempts    = attempts + 1,
                 last_error  = $2,
@@ -155,7 +155,7 @@ async def retry_dead(job_id: str) -> bool:
     async with pool.acquire() as conn:
         result = await conn.execute(
             """
-            UPDATE job_queue
+            UPDATE playbook.job_queue
             SET status = 'pending',
                 attempts = 0,
                 last_error = NULL,
@@ -178,7 +178,7 @@ async def update_heartbeat(job_id: str) -> None:
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE job_queue SET heartbeat_at = NOW() WHERE id = $1::uuid",
+            "UPDATE playbook.job_queue SET heartbeat_at = NOW() WHERE id = $1::uuid",
             job_id,
         )
 
@@ -189,7 +189,7 @@ async def reclaim_stale(stale_threshold_seconds: int) -> int:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            UPDATE job_queue
+            UPDATE playbook.job_queue
             SET status = 'pending', worker_id = NULL, heartbeat_at = NULL
             WHERE status IN ('claimed', 'running')
               AND (
@@ -242,7 +242,7 @@ async def enqueue_many(
 
     rows = await conn.fetch(
         """
-        INSERT INTO job_queue
+        INSERT INTO playbook.job_queue
             (job_type, payload, parent_job_id, root_job_id,
              max_attempts, priority, run_at, validation_job_id)
         SELECT

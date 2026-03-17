@@ -83,10 +83,16 @@ async def _trigger_campaign(campaign: dict) -> None:
         return
 
     try:
-        from app.db import db_create_and_enqueue_validation_job
+        from app.db import db_create_and_enqueue_validation_job, db_list_entities, db_list_attributes
+        ent_page = await db_list_entities(campaign["id"], limit=0)
+        attr_page = await db_list_attributes(campaign["id"], limit=0)
+        entity_ids = [e["id"] for e in ent_page["items"]]
+        attribute_ids = [a["id"] for a in attr_page["items"]]
         job = await db_create_and_enqueue_validation_job(
             campaign_id=campaign["id"],
             triggered_by="scheduler",
+            entity_filter=entity_ids,
+            attribute_filter=attribute_ids,
         )
         logger.info("Scheduled job %s created and enqueued for campaign %s", job["id"], campaign["id"])
     except Exception as exc:

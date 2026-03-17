@@ -32,7 +32,7 @@ services:
   job-runner:
     build:
       context: .
-      dockerfile: job-runner/Dockerfile
+      dockerfile: backend/Dockerfile.job-runner
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/research
       MAX_CONCURRENCY: "20"

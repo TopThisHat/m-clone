@@ -48,27 +48,45 @@
 		const base = lowConf ? 'opacity-40 ' : '';
 		if (cached) return base + 'bg-yellow-950 text-yellow-300 border-2 border-yellow-500';
 		if (!result) return 'bg-navy-700 text-slate-600';
-		return base + (result.present
-			? 'bg-green-900 text-green-300 border border-green-700'
-			: 'bg-red-950 text-red-400 border border-red-900');
+		if (!result.present) return base + 'bg-red-950 text-red-400 border border-red-900';
+		// Color-code by confidence
+		const conf = result.confidence ?? 0;
+		if (conf >= 0.8) return base + 'bg-green-900 text-green-300 border border-green-700';
+		if (conf >= 0.5) return base + 'bg-yellow-900/50 text-yellow-300 border border-yellow-700';
+		return base + 'bg-orange-950 text-orange-300 border border-orange-800';
 	}
 
 	function cellLabel(result: Result | undefined, cached: Knowledge | undefined): string {
 		if (cached) return '⚡';
 		if (!result) return '—';
+		if (result.confidence != null) return result.confidence.toFixed(1);
 		return result.present ? '✓' : '✗';
 	}
 
 	function handleClick(result: Result | undefined, cached: Knowledge | undefined) {
 		if (result && oncellclick) oncellclick(result);
 	}
+
+	// Per-entity score for row sorting
+	let entityScoreMap = $derived(() => {
+		const map = new Map<string, number>();
+		for (const entity of entities) {
+			let present = 0, total = 0;
+			for (const attr of attributes) {
+				const r = getCell(entity.id, attr.id);
+				if (r) { total++; if (r.present) present++; }
+			}
+			map.set(entity.id, total > 0 ? present / total : 0);
+		}
+		return map;
+	});
 </script>
 
 <div class="overflow-auto">
 	<table class="text-sm border-collapse">
-		<thead>
+		<thead class="sticky top-0 z-20 bg-navy-900">
 			<tr>
-				<th class="text-left px-3 py-2 text-slate-400 font-medium sticky left-0 bg-navy-900 z-10 min-w-40">
+				<th class="text-left px-3 py-2 text-slate-400 font-medium sticky left-0 bg-navy-900 z-30 min-w-40">
 					Entity
 				</th>
 				{#each attributes as attr (attr.id)}

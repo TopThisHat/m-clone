@@ -142,7 +142,7 @@ async def init_schema() -> None:
             await conn.execute("SET search_path TO playbook, public")
             await conn.execute("""
             -- Users (populated on first SSO login or dev-login)
-            CREATE TABLE IF NOT EXISTS users (
+            CREATE TABLE IF NOT EXISTS playbook.users (
                 sid          TEXT PRIMARY KEY,
                 display_name TEXT NOT NULL,
                 email        TEXT,
@@ -151,7 +151,7 @@ async def init_schema() -> None:
                 last_login   TIMESTAMPTZ DEFAULT NOW()
             );
 
-            CREATE TABLE IF NOT EXISTS sessions (
+            CREATE TABLE IF NOT EXISTS playbook.sessions (
                 id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 title            TEXT NOT NULL,
                 query            TEXT NOT NULL,
@@ -164,12 +164,12 @@ async def init_schema() -> None:
             CREATE INDEX IF NOT EXISTS sessions_updated_at_idx
                 ON sessions (updated_at DESC);
 
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS theme TEXT DEFAULT 'dark';
+            ALTER TABLE playbook.users ADD COLUMN IF NOT EXISTS theme TEXT DEFAULT 'dark';
 
-            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT FALSE;
-            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS usage_tokens INTEGER DEFAULT 0;
-            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS owner_sid TEXT REFERENCES users(sid);
-            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
+            ALTER TABLE playbook.sessions ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT FALSE;
+            ALTER TABLE playbook.sessions ADD COLUMN IF NOT EXISTS usage_tokens INTEGER DEFAULT 0;
+            ALTER TABLE playbook.sessions ADD COLUMN IF NOT EXISTS owner_sid TEXT REFERENCES users(sid);
+            ALTER TABLE playbook.sessions ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
             CREATE INDEX IF NOT EXISTS sessions_is_public_idx ON sessions (is_public) WHERE is_public;
             CREATE INDEX IF NOT EXISTS sessions_owner_idx ON sessions (owner_sid);
 
@@ -183,7 +183,7 @@ async def init_schema() -> None:
             );
             CREATE INDEX IF NOT EXISTS agent_memory_entity_idx ON agent_memory (entity);
 
-            CREATE TABLE IF NOT EXISTS research_jobs (
+            CREATE TABLE IF NOT EXISTS playbook.research_jobs (
                 id                UUID PRIMARY KEY,
                 query             TEXT NOT NULL,
                 webhook_url       TEXT NOT NULL,
@@ -195,7 +195,7 @@ async def init_schema() -> None:
             );
 
             -- Teams
-            CREATE TABLE IF NOT EXISTS teams (
+            CREATE TABLE IF NOT EXISTS playbook.teams (
                 id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 slug         TEXT UNIQUE NOT NULL,
                 display_name TEXT NOT NULL,
@@ -205,7 +205,7 @@ async def init_schema() -> None:
             );
 
             -- Team membership with roles
-            CREATE TABLE IF NOT EXISTS team_members (
+            CREATE TABLE IF NOT EXISTS playbook.team_members (
                 team_id   UUID REFERENCES teams(id) ON DELETE CASCADE,
                 sid       TEXT REFERENCES users(sid) ON DELETE CASCADE,
                 role      TEXT NOT NULL DEFAULT 'member',
@@ -214,7 +214,7 @@ async def init_schema() -> None:
             );
 
             -- Session <-> Team sharing
-            CREATE TABLE IF NOT EXISTS session_teams (
+            CREATE TABLE IF NOT EXISTS playbook.session_teams (
                 session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
                 team_id    UUID REFERENCES teams(id) ON DELETE CASCADE,
                 shared_at  TIMESTAMPTZ DEFAULT NOW(),
@@ -222,7 +222,7 @@ async def init_schema() -> None:
             );
 
             -- Comments with @mentions
-            CREATE TABLE IF NOT EXISTS comments (
+            CREATE TABLE IF NOT EXISTS playbook.comments (
                 id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
                 author_sid TEXT REFERENCES users(sid),
@@ -233,10 +233,10 @@ async def init_schema() -> None:
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             );
             CREATE INDEX IF NOT EXISTS comments_session_idx ON comments (session_id);
-            ALTER TABLE comments ADD COLUMN IF NOT EXISTS highlight_anchor JSONB;
+            ALTER TABLE playbook.comments ADD COLUMN IF NOT EXISTS highlight_anchor JSONB;
 
             -- Pinned sessions per user
-            CREATE TABLE IF NOT EXISTS pinned_sessions (
+            CREATE TABLE IF NOT EXISTS playbook.pinned_sessions (
                 sid        TEXT REFERENCES users(sid) ON DELETE CASCADE,
                 session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
                 team_id    UUID REFERENCES teams(id) ON DELETE CASCADE,
@@ -245,7 +245,7 @@ async def init_schema() -> None:
             );
 
             -- Notifications (polled every 30s)
-            CREATE TABLE IF NOT EXISTS notifications (
+            CREATE TABLE IF NOT EXISTS playbook.notifications (
                 id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 recipient_sid TEXT REFERENCES users(sid) ON DELETE CASCADE,
                 type          TEXT NOT NULL,
@@ -257,7 +257,7 @@ async def init_schema() -> None:
                 ON notifications (recipient_sid, read);
 
             -- Team activity feed
-            CREATE TABLE IF NOT EXISTS team_activity (
+            CREATE TABLE IF NOT EXISTS playbook.team_activity (
                 id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 team_id    UUID REFERENCES teams(id) ON DELETE CASCADE,
                 actor_sid  TEXT REFERENCES users(sid),
@@ -269,7 +269,7 @@ async def init_schema() -> None:
                 ON team_activity (team_id, created_at DESC);
 
             -- Scheduled monitors
-            CREATE TABLE IF NOT EXISTS monitors (
+            CREATE TABLE IF NOT EXISTS playbook.monitors (
                 id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 owner_sid   TEXT NOT NULL,
                 label       TEXT NOT NULL,
@@ -282,13 +282,13 @@ async def init_schema() -> None:
             );
             -- migration: add is_active to monitors
             DO $$ BEGIN
-                ALTER TABLE monitors ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+                ALTER TABLE playbook.monitors ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
             EXCEPTION WHEN others THEN NULL;
             END $$;
 
             -- ── Scout: Entity Validation & Scoring Platform ──────────────────
 
-            CREATE TABLE IF NOT EXISTS campaigns (
+            CREATE TABLE IF NOT EXISTS playbook.campaigns (
                 id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 owner_sid   TEXT NOT NULL,
                 name        TEXT NOT NULL,
@@ -301,7 +301,7 @@ async def init_schema() -> None:
                 updated_at  TIMESTAMPTZ DEFAULT NOW()
             );
 
-            CREATE TABLE IF NOT EXISTS entities (
+            CREATE TABLE IF NOT EXISTS playbook.entities (
                 id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 campaign_id UUID REFERENCES campaigns(id) ON DELETE CASCADE,
                 label       TEXT NOT NULL,
@@ -312,7 +312,7 @@ async def init_schema() -> None:
             );
             CREATE INDEX IF NOT EXISTS entities_campaign_idx ON entities(campaign_id);
 
-            CREATE TABLE IF NOT EXISTS attributes (
+            CREATE TABLE IF NOT EXISTS playbook.attributes (
                 id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 campaign_id UUID REFERENCES campaigns(id) ON DELETE CASCADE,
                 label       TEXT NOT NULL,
@@ -321,7 +321,7 @@ async def init_schema() -> None:
                 created_at  TIMESTAMPTZ DEFAULT NOW()
             );
 
-            CREATE TABLE IF NOT EXISTS validation_jobs (
+            CREATE TABLE IF NOT EXISTS playbook.validation_jobs (
                 id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 campaign_id      UUID REFERENCES campaigns(id) ON DELETE CASCADE,
                 triggered_by     TEXT,
@@ -337,7 +337,7 @@ async def init_schema() -> None:
                 completed_at     TIMESTAMPTZ
             );
 
-            CREATE TABLE IF NOT EXISTS validation_results (
+            CREATE TABLE IF NOT EXISTS playbook.validation_results (
                 id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 job_id       UUID REFERENCES validation_jobs(id) ON DELETE CASCADE,
                 entity_id    UUID REFERENCES entities(id) ON DELETE CASCADE,
@@ -352,7 +352,7 @@ async def init_schema() -> None:
             CREATE INDEX IF NOT EXISTS results_entity_attr_idx
                 ON validation_results(entity_id, attribute_id);
 
-            CREATE TABLE IF NOT EXISTS entity_scores (
+            CREATE TABLE IF NOT EXISTS playbook.entity_scores (
                 entity_id          UUID REFERENCES entities(id) ON DELETE CASCADE,
                 campaign_id        UUID REFERENCES campaigns(id) ON DELETE CASCADE,
                 total_score        FLOAT DEFAULT 0,
@@ -364,7 +364,7 @@ async def init_schema() -> None:
 
             -- Global knowledge cache: gwm_id × attribute_label → research result
             -- Only updated on fresh research (not cache hits), so source reflects origin campaign
-            CREATE TABLE IF NOT EXISTS entity_attribute_knowledge (
+            CREATE TABLE IF NOT EXISTS playbook.entity_attribute_knowledge (
                 gwm_id               TEXT NOT NULL,
                 attribute_label      TEXT NOT NULL,
                 present              BOOLEAN NOT NULL,
@@ -380,7 +380,7 @@ async def init_schema() -> None:
 
             -- ── Knowledge Graph ───────────────────────────────────────────────
 
-            CREATE TABLE IF NOT EXISTS kg_entities (
+            CREATE TABLE IF NOT EXISTS playbook.kg_entities (
                 id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 name        TEXT NOT NULL,
                 entity_type TEXT NOT NULL,
@@ -391,7 +391,7 @@ async def init_schema() -> None:
             );
             CREATE UNIQUE INDEX IF NOT EXISTS kg_entities_name_idx ON kg_entities (LOWER(name));
 
-            CREATE TABLE IF NOT EXISTS kg_relationships (
+            CREATE TABLE IF NOT EXISTS playbook.kg_relationships (
                 id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 subject_id        UUID NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
                 predicate         TEXT NOT NULL,
@@ -407,7 +407,7 @@ async def init_schema() -> None:
                 ON kg_relationships (subject_id, object_id, predicate_family)
                 WHERE is_active = TRUE;
 
-            CREATE TABLE IF NOT EXISTS kg_relationship_conflicts (
+            CREATE TABLE IF NOT EXISTS playbook.kg_relationship_conflicts (
                 id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 old_relationship_id  UUID NOT NULL REFERENCES kg_relationships(id),
                 new_relationship_id  UUID NOT NULL REFERENCES kg_relationships(id),
@@ -420,7 +420,7 @@ async def init_schema() -> None:
 
             -- ── Job Queue (PostgreSQL-native, SKIP LOCKED) ────────────────────
 
-            CREATE TABLE IF NOT EXISTS job_queue (
+            CREATE TABLE IF NOT EXISTS playbook.job_queue (
                 id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 job_type          TEXT NOT NULL,
                 payload           JSONB NOT NULL DEFAULT '{}',
@@ -462,7 +462,7 @@ async def init_schema() -> None:
                 ON job_queue (validation_job_id)
                 WHERE validation_job_id IS NOT NULL;
 
-            CREATE TABLE IF NOT EXISTS attribute_templates (
+            CREATE TABLE IF NOT EXISTS playbook.attribute_templates (
                 id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 owner_sid  TEXT NOT NULL REFERENCES users(sid) ON DELETE CASCADE,
                 team_id    UUID REFERENCES teams(id) ON DELETE CASCADE,
@@ -473,7 +473,7 @@ async def init_schema() -> None:
         """)
             # Full-text search on sessions (title + query)
             await conn.execute("""
-                ALTER TABLE sessions ADD COLUMN IF NOT EXISTS search_vec tsvector
+                ALTER TABLE playbook.sessions ADD COLUMN IF NOT EXISTS search_vec tsvector
                     GENERATED ALWAYS AS (
                         to_tsvector('english', coalesce(title,'') || ' ' || coalesce(query,''))
                     ) STORED
@@ -483,7 +483,7 @@ async def init_schema() -> None:
             """)
             # Team-scoped campaigns
             await conn.execute("""
-                ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL
+                ALTER TABLE playbook.campaigns ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL
             """)
             # Uniqueness constraints within a campaign
             await conn.execute("""
@@ -501,19 +501,19 @@ async def init_schema() -> None:
             """)
             # ── Collaboration features ──────────────────────────────────────────
             await conn.execute("""
-                ALTER TABLE sessions ADD COLUMN IF NOT EXISTS parent_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL
+                ALTER TABLE playbook.sessions ADD COLUMN IF NOT EXISTS parent_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL
             """)
             await conn.execute("""
-                ALTER TABLE comments ADD COLUMN IF NOT EXISTS comment_type TEXT NOT NULL DEFAULT 'comment'
+                ALTER TABLE playbook.comments ADD COLUMN IF NOT EXISTS comment_type TEXT NOT NULL DEFAULT 'comment'
             """)
             await conn.execute("""
-                ALTER TABLE comments ADD COLUMN IF NOT EXISTS proposed_text TEXT
+                ALTER TABLE playbook.comments ADD COLUMN IF NOT EXISTS proposed_text TEXT
             """)
             await conn.execute("""
-                ALTER TABLE comments ADD COLUMN IF NOT EXISTS suggestion_status TEXT DEFAULT 'open'
+                ALTER TABLE playbook.comments ADD COLUMN IF NOT EXISTS suggestion_status TEXT DEFAULT 'open'
             """)
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS comment_reactions (
+                CREATE TABLE IF NOT EXISTS playbook.comment_reactions (
                     comment_id UUID REFERENCES comments(id) ON DELETE CASCADE,
                     user_sid   TEXT REFERENCES users(sid)   ON DELETE CASCADE,
                     emoji      TEXT NOT NULL CHECK (emoji IN ('👍','❤️','🔥','💡','✅','❓')),
@@ -522,7 +522,7 @@ async def init_schema() -> None:
                 )
             """)
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS session_subscriptions (
+                CREATE TABLE IF NOT EXISTS playbook.session_subscriptions (
                     session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
                     user_sid   TEXT REFERENCES users(sid)   ON DELETE CASCADE,
                     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -530,7 +530,7 @@ async def init_schema() -> None:
                 )
             """)
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS session_presence (
+                CREATE TABLE IF NOT EXISTS playbook.session_presence (
                     session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
                     user_sid   TEXT REFERENCES users(sid)   ON DELETE CASCADE,
                     last_seen  TIMESTAMPTZ DEFAULT NOW(),
@@ -543,7 +543,7 @@ async def init_schema() -> None:
             """)
             # ── Global entity / attribute library ───────────────────────────
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS entity_library (
+                CREATE TABLE IF NOT EXISTS playbook.entity_library (
                     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     owner_sid   TEXT NOT NULL REFERENCES users(sid) ON DELETE CASCADE,
                     team_id     UUID REFERENCES teams(id) ON DELETE SET NULL,
@@ -555,7 +555,7 @@ async def init_schema() -> None:
                 )
             """)
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS attribute_library (
+                CREATE TABLE IF NOT EXISTS playbook.attribute_library (
                     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     owner_sid   TEXT NOT NULL REFERENCES users(sid) ON DELETE CASCADE,
                     team_id     UUID REFERENCES teams(id) ON DELETE SET NULL,
@@ -598,7 +598,7 @@ async def db_list_sessions(owner_sid: str | None = None, search: str | None = No
             "SELECT id, title, query, created_at, updated_at, "
             "COALESCE(is_public, FALSE) AS is_public, COALESCE(usage_tokens, 0) AS usage_tokens, "
             "owner_sid, COALESCE(visibility, 'private') AS visibility "
-            "FROM sessions "
+            "FROM playbook.sessions "
         )
         if owner_sid and search:
             rows = await conn.fetch(
@@ -630,7 +630,7 @@ async def db_get_session(session_id: str) -> dict[str, Any] | None:
             "SELECT *, COALESCE(is_public, FALSE) AS is_public, "
             "COALESCE(usage_tokens, 0) AS usage_tokens, "
             "COALESCE(visibility, 'private') AS visibility "
-            "FROM sessions WHERE id = $1",
+            "FROM playbook.sessions WHERE id = $1",
             session_id,
         )
     return _row_to_dict(row) if row else None
@@ -643,7 +643,7 @@ async def db_get_public_session(session_id: str) -> dict[str, Any] | None:
             "SELECT *, COALESCE(is_public, FALSE) AS is_public, "
             "COALESCE(usage_tokens, 0) AS usage_tokens, "
             "COALESCE(visibility, 'private') AS visibility "
-            "FROM sessions WHERE id = $1 AND is_public = TRUE",
+            "FROM playbook.sessions WHERE id = $1 AND is_public = TRUE",
             session_id,
         )
     return _row_to_dict(row) if row else None
@@ -653,7 +653,7 @@ async def db_create_session(data: dict[str, Any]) -> dict[str, Any]:
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO sessions (title, query, report_markdown, message_history, trace_steps, owner_sid, visibility)
+            INSERT INTO playbook.sessions (title, query, report_markdown, message_history, trace_steps, owner_sid, visibility)
             VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)
             RETURNING *, COALESCE(is_public, FALSE) AS is_public,
                          COALESCE(usage_tokens, 0) AS usage_tokens,
@@ -692,7 +692,7 @@ async def db_update_session(session_id: str, patch: dict[str, Any]) -> dict[str,
     values.append(session_id)
 
     sql = (
-        f"UPDATE sessions SET {', '.join(set_parts)} WHERE id = ${idx} "
+        f"UPDATE playbook.sessions SET {', '.join(set_parts)} WHERE id = ${idx} "
         "RETURNING *, COALESCE(is_public, FALSE) AS is_public, "
         "COALESCE(usage_tokens, 0) AS usage_tokens, "
         "COALESCE(visibility, 'private') AS visibility"
@@ -705,7 +705,7 @@ async def db_update_session(session_id: str, patch: dict[str, Any]) -> dict[str,
 
 async def db_delete_session(session_id: str) -> bool:
     async with _acquire() as conn:
-        result = await conn.execute("DELETE FROM sessions WHERE id = $1", session_id)
+        result = await conn.execute("DELETE FROM playbook.sessions WHERE id = $1", session_id)
     return result.endswith("1")
 
 
@@ -724,7 +724,7 @@ async def db_create_job(job_id: str, query: str, webhook_url: str) -> dict[str, 
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO research_jobs (id, query, webhook_url, status)
+            INSERT INTO playbook.research_jobs (id, query, webhook_url, status)
             VALUES ($1::uuid, $2, $3, 'queued')
             RETURNING *
             """,
@@ -750,7 +750,7 @@ async def db_update_job(job_id: str, patch: dict[str, Any]) -> dict[str, Any] | 
         idx += 1
 
     values.append(job_id)
-    sql = f"UPDATE research_jobs SET {', '.join(set_parts)} WHERE id = ${idx} RETURNING *"
+    sql = f"UPDATE playbook.research_jobs SET {', '.join(set_parts)} WHERE id = ${idx} RETURNING *"
 
     async with _acquire() as conn:
         row = await conn.fetchrow(sql, *values)
@@ -759,7 +759,7 @@ async def db_update_job(job_id: str, patch: dict[str, Any]) -> dict[str, Any] | 
 
 async def db_get_job(job_id: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM research_jobs WHERE id = $1::uuid", job_id)
+        row = await conn.fetchrow("SELECT * FROM playbook.research_jobs WHERE id = $1::uuid", job_id)
     return _job_row_to_dict(row) if row else None
 
 
@@ -769,7 +769,7 @@ async def db_upsert_user(sid: str, display_name: str, email: str = "") -> dict[s
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO users (sid, display_name, email, last_login)
+            INSERT INTO playbook.users (sid, display_name, email, last_login)
             VALUES ($1, $2, $3, NOW())
             ON CONFLICT (sid) DO UPDATE SET
                 display_name = EXCLUDED.display_name,
@@ -784,14 +784,14 @@ async def db_upsert_user(sid: str, display_name: str, email: str = "") -> dict[s
 
 async def db_get_user(sid: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM users WHERE sid = $1", sid)
+        row = await conn.fetchrow("SELECT * FROM playbook.users WHERE sid = $1", sid)
     return _row_to_dict(row) if row else None
 
 
 async def db_update_user_theme(sid: str, theme: str) -> None:
     async with _acquire() as conn:
         await conn.execute(
-            "UPDATE users SET theme = $1 WHERE sid = $2",
+            "UPDATE playbook.users SET theme = $1 WHERE sid = $2",
             theme, sid,
         )
 
@@ -802,7 +802,7 @@ async def db_create_team(slug: str, display_name: str, description: str, created
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO teams (slug, display_name, description, created_by)
+            INSERT INTO playbook.teams (slug, display_name, description, created_by)
             VALUES ($1, $2, $3, $4)
             RETURNING *
             """,
@@ -811,7 +811,7 @@ async def db_create_team(slug: str, display_name: str, description: str, created
         team = _row_to_dict(row)
         # Creator becomes owner
         await conn.execute(
-            "INSERT INTO team_members (team_id, sid, role) VALUES ($1, $2, 'owner')",
+            "INSERT INTO playbook.team_members (team_id, sid, role) VALUES ($1, $2, 'owner')",
             row["id"], created_by,
         )
     return team
@@ -819,13 +819,13 @@ async def db_create_team(slug: str, display_name: str, description: str, created
 
 async def db_get_team(slug: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM teams WHERE slug = $1", slug)
+        row = await conn.fetchrow("SELECT * FROM playbook.teams WHERE slug = $1", slug)
     return _row_to_dict(row) if row else None
 
 
 async def db_get_team_by_id(team_id: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM teams WHERE id = $1::uuid", team_id)
+        row = await conn.fetchrow("SELECT * FROM playbook.teams WHERE id = $1::uuid", team_id)
     return _row_to_dict(row) if row else None
 
 
@@ -834,8 +834,8 @@ async def db_list_user_teams(sid: str) -> list[dict[str, Any]]:
         rows = await conn.fetch(
             """
             SELECT t.*, tm.role, tm.joined_at
-            FROM teams t
-            JOIN team_members tm ON t.id = tm.team_id
+            FROM playbook.teams t
+            JOIN playbook.team_members tm ON t.id = tm.team_id
             WHERE tm.sid = $1
             ORDER BY t.display_name
             """,
@@ -851,7 +851,7 @@ async def db_update_team(slug: str, patch: dict[str, Any]) -> dict[str, Any] | N
         return await db_get_team(slug)
     set_parts = [f"{k} = ${i+1}" for i, k in enumerate(fields)]
     values = list(fields.values()) + [slug]
-    sql = f"UPDATE teams SET {', '.join(set_parts)} WHERE slug = ${len(values)} RETURNING *"
+    sql = f"UPDATE playbook.teams SET {', '.join(set_parts)} WHERE slug = ${len(values)} RETURNING *"
     async with _acquire() as conn:
         row = await conn.fetchrow(sql, *values)
     return _row_to_dict(row) if row else None
@@ -859,7 +859,7 @@ async def db_update_team(slug: str, patch: dict[str, Any]) -> dict[str, Any] | N
 
 async def db_delete_team(slug: str) -> bool:
     async with _acquire() as conn:
-        result = await conn.execute("DELETE FROM teams WHERE slug = $1", slug)
+        result = await conn.execute("DELETE FROM playbook.teams WHERE slug = $1", slug)
     return result.endswith("1")
 
 
@@ -871,8 +871,8 @@ async def db_list_team_members(team_id: str) -> list[dict[str, Any]]:
             """
             SELECT u.sid, u.display_name, u.email, u.avatar_url,
                    tm.role, tm.joined_at
-            FROM team_members tm
-            JOIN users u ON tm.sid = u.sid
+            FROM playbook.team_members tm
+            JOIN playbook.users u ON tm.sid = u.sid
             WHERE tm.team_id = $1::uuid
             ORDER BY tm.role, u.display_name
             """,
@@ -884,7 +884,7 @@ async def db_list_team_members(team_id: str) -> list[dict[str, Any]]:
 async def db_get_member_role(team_id: str, sid: str) -> str | None:
     async with _acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT role FROM team_members WHERE team_id = $1::uuid AND sid = $2",
+            "SELECT role FROM playbook.team_members WHERE team_id = $1::uuid AND sid = $2",
             team_id, sid,
         )
     return row["role"] if row else None
@@ -894,7 +894,7 @@ async def db_add_member(team_id: str, sid: str, role: str = "member") -> dict[st
     async with _acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO team_members (team_id, sid, role)
+            INSERT INTO playbook.team_members (team_id, sid, role)
             VALUES ($1::uuid, $2, $3)
             ON CONFLICT (team_id, sid) DO UPDATE SET role = EXCLUDED.role
             """,
@@ -906,7 +906,7 @@ async def db_add_member(team_id: str, sid: str, role: str = "member") -> dict[st
 async def db_update_member_role(team_id: str, sid: str, role: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
-            "UPDATE team_members SET role = $1 WHERE team_id = $2::uuid AND sid = $3",
+            "UPDATE playbook.team_members SET role = $1 WHERE team_id = $2::uuid AND sid = $3",
             role, team_id, sid,
         )
     return result.endswith("1")
@@ -915,7 +915,7 @@ async def db_update_member_role(team_id: str, sid: str, role: str) -> bool:
 async def db_remove_member(team_id: str, sid: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
-            "DELETE FROM team_members WHERE team_id = $1::uuid AND sid = $2",
+            "DELETE FROM playbook.team_members WHERE team_id = $1::uuid AND sid = $2",
             team_id, sid,
         )
     return result.endswith("1")
@@ -927,7 +927,7 @@ async def db_share_session_to_team(session_id: str, team_id: str) -> dict[str, A
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO session_teams (session_id, team_id)
+            INSERT INTO playbook.session_teams (session_id, team_id)
             VALUES ($1::uuid, $2::uuid)
             ON CONFLICT DO NOTHING
             RETURNING *
@@ -940,7 +940,7 @@ async def db_share_session_to_team(session_id: str, team_id: str) -> dict[str, A
 async def db_unshare_session(session_id: str, team_id: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
-            "DELETE FROM session_teams WHERE session_id = $1::uuid AND team_id = $2::uuid",
+            "DELETE FROM playbook.session_teams WHERE session_id = $1::uuid AND team_id = $2::uuid",
             session_id, team_id,
         )
     return result.endswith("1")
@@ -955,8 +955,8 @@ async def db_get_team_sessions(team_id: str, limit: int = 50, offset: int = 0) -
                    COALESCE(s.usage_tokens, 0) AS usage_tokens,
                    s.owner_sid, COALESCE(s.visibility, 'private') AS visibility,
                    st.shared_at
-            FROM sessions s
-            JOIN session_teams st ON s.id = st.session_id
+            FROM playbook.sessions s
+            JOIN playbook.session_teams st ON s.id = st.session_id
             WHERE st.team_id = $1::uuid AND s.visibility != 'private'
             ORDER BY st.shared_at DESC
             LIMIT $2 OFFSET $3
@@ -970,7 +970,7 @@ async def db_get_session_teams(session_id: str) -> list[str]:
     """Return list of team_ids this session is shared to."""
     async with _acquire() as conn:
         rows = await conn.fetch(
-            "SELECT team_id::text FROM session_teams WHERE session_id = $1::uuid",
+            "SELECT team_id::text FROM playbook.session_teams WHERE session_id = $1::uuid",
             session_id,
         )
     return [r["team_id"] for r in rows]
@@ -982,9 +982,9 @@ async def db_get_session_mentionable_users(session_id: str) -> list[dict[str, An
         rows = await conn.fetch(
             """
             SELECT DISTINCT ON (u.sid) u.sid, u.display_name, u.avatar_url
-            FROM session_teams st
-            JOIN team_members tm ON tm.team_id = st.team_id
-            JOIN users u ON u.sid = tm.sid
+            FROM playbook.session_teams st
+            JOIN playbook.team_members tm ON tm.team_id = st.team_id
+            JOIN playbook.users u ON u.sid = tm.sid
             WHERE st.session_id = $1::uuid
             ORDER BY u.sid, u.display_name
             """,
@@ -999,7 +999,7 @@ async def db_pin_session(sid: str, session_id: str, team_id: str) -> dict[str, A
     async with _acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO pinned_sessions (sid, session_id, team_id)
+            INSERT INTO playbook.pinned_sessions (sid, session_id, team_id)
             VALUES ($1, $2::uuid, $3::uuid)
             ON CONFLICT DO NOTHING
             """,
@@ -1011,7 +1011,7 @@ async def db_pin_session(sid: str, session_id: str, team_id: str) -> dict[str, A
 async def db_unpin_session(sid: str, session_id: str, team_id: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
-            "DELETE FROM pinned_sessions WHERE sid = $1 AND session_id = $2::uuid AND team_id = $3::uuid",
+            "DELETE FROM playbook.pinned_sessions WHERE sid = $1 AND session_id = $2::uuid AND team_id = $3::uuid",
             sid, session_id, team_id,
         )
     return result.endswith("1")
@@ -1026,8 +1026,8 @@ async def db_get_pinned_sessions(sid: str, team_id: str) -> list[dict[str, Any]]
                    COALESCE(s.usage_tokens, 0) AS usage_tokens,
                    s.owner_sid, COALESCE(s.visibility, 'private') AS visibility,
                    ps.pinned_at
-            FROM pinned_sessions ps
-            JOIN sessions s ON ps.session_id = s.id
+            FROM playbook.pinned_sessions ps
+            JOIN playbook.sessions s ON ps.session_id = s.id
             WHERE ps.sid = $1 AND ps.team_id = $2::uuid
             ORDER BY ps.pinned_at DESC
             """,
@@ -1051,7 +1051,7 @@ async def db_create_comment(
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO comments (session_id, author_sid, body, mentions, parent_id, highlight_anchor, comment_type, proposed_text)
+            INSERT INTO playbook.comments (session_id, author_sid, body, mentions, parent_id, highlight_anchor, comment_type, proposed_text)
             VALUES ($1::uuid, $2, $3, $4::jsonb, $5::uuid, $6::jsonb, $7, $8)
             RETURNING *
             """,
@@ -1069,8 +1069,8 @@ async def db_list_comments(session_id: str) -> list[dict[str, Any]]:
         rows = await conn.fetch(
             """
             SELECT c.*, u.display_name AS author_name, u.avatar_url AS author_avatar
-            FROM comments c
-            LEFT JOIN users u ON c.author_sid = u.sid
+            FROM playbook.comments c
+            LEFT JOIN playbook.users u ON c.author_sid = u.sid
             WHERE c.session_id = $1::uuid
             ORDER BY c.created_at ASC
             """,
@@ -1103,13 +1103,13 @@ async def db_list_comments(session_id: str) -> list[dict[str, Any]]:
 
 async def db_get_comment(comment_id: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM comments WHERE id = $1::uuid", comment_id)
+        row = await conn.fetchrow("SELECT * FROM playbook.comments WHERE id = $1::uuid", comment_id)
     return _row_to_dict(row) if row else None
 
 
 async def db_delete_comment(comment_id: str) -> bool:
     async with _acquire() as conn:
-        result = await conn.execute("DELETE FROM comments WHERE id = $1::uuid", comment_id)
+        result = await conn.execute("DELETE FROM playbook.comments WHERE id = $1::uuid", comment_id)
     return result.endswith("1")
 
 
@@ -1117,7 +1117,7 @@ async def db_update_comment(comment_id: str, body: str, mentions: list[str]) -> 
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            UPDATE comments SET body=$2, updated_at=NOW(), mentions=$3::jsonb
+            UPDATE playbook.comments SET body=$2, updated_at=NOW(), mentions=$3::jsonb
             WHERE id=$1::uuid RETURNING *
             """,
             comment_id, body, json.dumps(mentions),
@@ -1129,7 +1129,7 @@ async def db_resolve_suggestion(comment_id: str, status: str) -> dict[str, Any] 
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            UPDATE comments SET suggestion_status=$2, updated_at=NOW()
+            UPDATE playbook.comments SET suggestion_status=$2, updated_at=NOW()
             WHERE id=$1::uuid AND comment_type='suggestion' RETURNING *
             """,
             comment_id, status,
@@ -1141,21 +1141,21 @@ async def db_toggle_reaction(comment_id: str, user_sid: str, emoji: str) -> dict
     async with _acquire() as conn:
         async with conn.transaction():
             existing = await conn.fetchrow(
-                "SELECT 1 FROM comment_reactions WHERE comment_id=$1::uuid AND user_sid=$2 AND emoji=$3",
+                "SELECT 1 FROM playbook.comment_reactions WHERE comment_id=$1::uuid AND user_sid=$2 AND emoji=$3",
                 comment_id, user_sid, emoji,
             )
             if existing:
                 await conn.execute(
-                    "DELETE FROM comment_reactions WHERE comment_id=$1::uuid AND user_sid=$2 AND emoji=$3",
+                    "DELETE FROM playbook.comment_reactions WHERE comment_id=$1::uuid AND user_sid=$2 AND emoji=$3",
                     comment_id, user_sid, emoji,
                 )
             else:
                 await conn.execute(
-                    "INSERT INTO comment_reactions (comment_id, user_sid, emoji) VALUES ($1::uuid, $2, $3) ON CONFLICT DO NOTHING",
+                    "INSERT INTO playbook.comment_reactions (comment_id, user_sid, emoji) VALUES ($1::uuid, $2, $3) ON CONFLICT DO NOTHING",
                     comment_id, user_sid, emoji,
                 )
             rows = await conn.fetch(
-                "SELECT emoji, user_sid FROM comment_reactions WHERE comment_id=$1::uuid",
+                "SELECT emoji, user_sid FROM playbook.comment_reactions WHERE comment_id=$1::uuid",
                 comment_id,
             )
     result: dict[str, list[str]] = {}
@@ -1169,7 +1169,7 @@ async def db_get_reactions_bulk(comment_ids: list[str]) -> dict[str, dict[str, l
         return {}
     async with _acquire() as conn:
         rows = await conn.fetch(
-            "SELECT comment_id::text, emoji, user_sid FROM comment_reactions WHERE comment_id = ANY($1::uuid[])",
+            "SELECT comment_id::text, emoji, user_sid FROM playbook.comment_reactions WHERE comment_id = ANY($1::uuid[])",
             comment_ids,
         )
     result: dict[str, dict[str, list[str]]] = {}
@@ -1184,7 +1184,7 @@ async def db_get_reactions_bulk(comment_ids: list[str]) -> dict[str, dict[str, l
 async def db_list_team_member_sids(team_id: str) -> list[str]:
     async with _acquire() as conn:
         rows = await conn.fetch(
-            "SELECT sid FROM team_members WHERE team_id = $1::uuid",
+            "SELECT sid FROM playbook.team_members WHERE team_id = $1::uuid",
             team_id,
         )
     return [r["sid"] for r in rows]
@@ -1196,9 +1196,9 @@ async def db_fork_session(source_id: str, new_owner_sid: str) -> dict[str, Any]:
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO sessions (title, query, report_markdown, message_history, trace_steps, owner_sid, visibility)
+            INSERT INTO playbook.sessions (title, query, report_markdown, message_history, trace_steps, owner_sid, visibility)
             SELECT 'Fork: ' || title, query, report_markdown, message_history, '[]'::jsonb, $2, 'private'
-            FROM sessions WHERE id=$1::uuid
+            FROM playbook.sessions WHERE id=$1::uuid
             RETURNING *, COALESCE(is_public, FALSE) AS is_public,
                          COALESCE(usage_tokens, 0) AS usage_tokens,
                          COALESCE(visibility, 'private') AS visibility
@@ -1213,7 +1213,7 @@ async def db_fork_session(source_id: str, new_owner_sid: str) -> dict[str, Any]:
 async def db_subscribe(session_id: str, user_sid: str) -> None:
     async with _acquire() as conn:
         await conn.execute(
-            "INSERT INTO session_subscriptions (session_id, user_sid) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING",
+            "INSERT INTO playbook.session_subscriptions (session_id, user_sid) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING",
             session_id, user_sid,
         )
 
@@ -1221,7 +1221,7 @@ async def db_subscribe(session_id: str, user_sid: str) -> None:
 async def db_unsubscribe(session_id: str, user_sid: str) -> None:
     async with _acquire() as conn:
         await conn.execute(
-            "DELETE FROM session_subscriptions WHERE session_id=$1::uuid AND user_sid=$2",
+            "DELETE FROM playbook.session_subscriptions WHERE session_id=$1::uuid AND user_sid=$2",
             session_id, user_sid,
         )
 
@@ -1229,7 +1229,7 @@ async def db_unsubscribe(session_id: str, user_sid: str) -> None:
 async def db_is_subscribed(session_id: str, user_sid: str) -> bool:
     async with _acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT 1 FROM session_subscriptions WHERE session_id=$1::uuid AND user_sid=$2",
+            "SELECT 1 FROM playbook.session_subscriptions WHERE session_id=$1::uuid AND user_sid=$2",
             session_id, user_sid,
         )
     return row is not None
@@ -1238,7 +1238,7 @@ async def db_is_subscribed(session_id: str, user_sid: str) -> bool:
 async def db_get_subscriber_sids(session_id: str) -> list[str]:
     async with _acquire() as conn:
         rows = await conn.fetch(
-            "SELECT user_sid FROM session_subscriptions WHERE session_id=$1::uuid",
+            "SELECT user_sid FROM playbook.session_subscriptions WHERE session_id=$1::uuid",
             session_id,
         )
     return [r["user_sid"] for r in rows]
@@ -1250,7 +1250,7 @@ async def db_heartbeat_presence(session_id: str, user_sid: str) -> None:
     async with _acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO session_presence (session_id, user_sid, last_seen)
+            INSERT INTO playbook.session_presence (session_id, user_sid, last_seen)
             VALUES ($1::uuid, $2, NOW())
             ON CONFLICT (session_id, user_sid) DO UPDATE SET last_seen=NOW()
             """,
@@ -1263,8 +1263,8 @@ async def db_get_active_viewers(session_id: str, window_seconds: int = 30) -> li
         rows = await conn.fetch(
             """
             SELECT sp.user_sid, u.display_name, u.avatar_url
-            FROM session_presence sp
-            JOIN users u ON sp.user_sid = u.sid
+            FROM playbook.session_presence sp
+            JOIN playbook.users u ON sp.user_sid = u.sid
             WHERE sp.session_id=$1::uuid AND sp.last_seen > NOW() - ($2 || ' seconds')::interval
             ORDER BY sp.last_seen DESC
             """,
@@ -1284,7 +1284,7 @@ async def db_get_active_viewers(session_id: str, window_seconds: int = 30) -> li
 async def db_get_session_diff(session_id: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT parent_session_id, report_markdown FROM sessions WHERE id=$1::uuid",
+            "SELECT parent_session_id, report_markdown FROM playbook.sessions WHERE id=$1::uuid",
             session_id,
         )
     if not row or not row["parent_session_id"]:
@@ -1293,7 +1293,7 @@ async def db_get_session_diff(session_id: str) -> dict[str, Any] | None:
     current_md = row["report_markdown"] or ""
     async with _acquire() as conn:
         parent_row = await conn.fetchrow(
-            "SELECT report_markdown, created_at FROM sessions WHERE id=$1::uuid",
+            "SELECT report_markdown, created_at FROM playbook.sessions WHERE id=$1::uuid",
             parent_id,
         )
     if not parent_row:
@@ -1312,7 +1312,7 @@ async def db_create_notification(recipient_sid: str, type_: str, payload: dict[s
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO notifications (recipient_sid, type, payload)
+            INSERT INTO playbook.notifications (recipient_sid, type, payload)
             VALUES ($1, $2, $3::jsonb)
             RETURNING *
             """,
@@ -1325,7 +1325,7 @@ async def db_list_notifications(recipient_sid: str, limit: int = 50) -> list[dic
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT * FROM notifications
+            SELECT * FROM playbook.notifications
             WHERE recipient_sid = $1
             ORDER BY created_at DESC
             LIMIT $2
@@ -1348,7 +1348,7 @@ async def db_list_notifications(recipient_sid: str, limit: int = 50) -> list[dic
 async def db_mark_notification_read(notification_id: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
-            "UPDATE notifications SET read = TRUE WHERE id = $1::uuid",
+            "UPDATE playbook.notifications SET read = TRUE WHERE id = $1::uuid",
             notification_id,
         )
     return result.endswith("1")
@@ -1357,7 +1357,7 @@ async def db_mark_notification_read(notification_id: str) -> bool:
 async def db_mark_all_notifications_read(recipient_sid: str) -> None:
     async with _acquire() as conn:
         await conn.execute(
-            "UPDATE notifications SET read = TRUE WHERE recipient_sid = $1 AND read = FALSE",
+            "UPDATE playbook.notifications SET read = TRUE WHERE recipient_sid = $1 AND read = FALSE",
             recipient_sid,
         )
 
@@ -1368,7 +1368,7 @@ async def db_record_activity(team_id: str, actor_sid: str, action: str, payload:
     async with _acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO team_activity (team_id, actor_sid, action, payload)
+            INSERT INTO playbook.team_activity (team_id, actor_sid, action, payload)
             VALUES ($1::uuid, $2, $3, $4::jsonb)
             """,
             team_id, actor_sid, action, json.dumps(payload),
@@ -1380,8 +1380,8 @@ async def db_list_team_activity(team_id: str, limit: int = 50, offset: int = 0) 
         rows = await conn.fetch(
             """
             SELECT ta.*, u.display_name AS actor_name, u.avatar_url AS actor_avatar
-            FROM team_activity ta
-            LEFT JOIN users u ON ta.actor_sid = u.sid
+            FROM playbook.team_activity ta
+            LEFT JOIN playbook.users u ON ta.actor_sid = u.sid
             WHERE ta.team_id = $1::uuid
             ORDER BY ta.created_at DESC
             LIMIT $2 OFFSET $3
@@ -1419,7 +1419,7 @@ async def db_create_monitor(owner_sid: str, label: str, query: str, frequency: s
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO monitors (owner_sid, label, query, frequency)
+            INSERT INTO playbook.monitors (owner_sid, label, query, frequency)
             VALUES ($1, $2, $3, $4)
             RETURNING *
             """,
@@ -1431,7 +1431,7 @@ async def db_create_monitor(owner_sid: str, label: str, query: str, frequency: s
 async def db_list_monitors(owner_sid: str) -> list[dict[str, Any]]:
     async with _acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM monitors WHERE owner_sid = $1 ORDER BY created_at DESC",
+            "SELECT * FROM playbook.monitors WHERE owner_sid = $1 ORDER BY created_at DESC",
             owner_sid,
         )
     return [_monitor_row_to_dict(r) for r in rows]
@@ -1440,7 +1440,7 @@ async def db_list_monitors(owner_sid: str) -> list[dict[str, Any]]:
 async def db_delete_monitor(monitor_id: str, owner_sid: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
-            "DELETE FROM monitors WHERE id = $1::uuid AND owner_sid = $2",
+            "DELETE FROM playbook.monitors WHERE id = $1::uuid AND owner_sid = $2",
             monitor_id, owner_sid,
         )
     return result.endswith("1")
@@ -1449,7 +1449,7 @@ async def db_delete_monitor(monitor_id: str, owner_sid: str) -> bool:
 async def db_get_monitor(monitor_id: str, owner_sid: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT * FROM monitors WHERE id = $1::uuid AND owner_sid = $2",
+            "SELECT * FROM playbook.monitors WHERE id = $1::uuid AND owner_sid = $2",
             monitor_id, owner_sid,
         )
     return _monitor_row_to_dict(row) if row else None
@@ -1467,7 +1467,7 @@ async def db_update_monitor(monitor_id: str, owner_sid: str, patch: dict[str, An
             vals.append(v)
     if not sets:
         return await db_get_monitor(monitor_id, owner_sid)
-    sql = f"UPDATE monitors SET {', '.join(sets)} WHERE id = $1::uuid AND owner_sid = $2 RETURNING *"
+    sql = f"UPDATE playbook.monitors SET {', '.join(sets)} WHERE id = $1::uuid AND owner_sid = $2 RETURNING *"
     async with _acquire() as conn:
         row = await conn.fetchrow(sql, monitor_id, owner_sid, *vals)
     return _monitor_row_to_dict(row) if row else None
@@ -1477,7 +1477,7 @@ async def db_list_monitor_runs(monitor_id: str, owner_sid: str) -> list[dict[str
     """Find sessions that were generated by a monitor (matching query + owner)."""
     async with _acquire() as conn:
         monitor = await conn.fetchrow(
-            "SELECT query, owner_sid FROM monitors WHERE id = $1::uuid AND owner_sid = $2",
+            "SELECT query, owner_sid FROM playbook.monitors WHERE id = $1::uuid AND owner_sid = $2",
             monitor_id, owner_sid,
         )
         if not monitor:
@@ -1485,7 +1485,7 @@ async def db_list_monitor_runs(monitor_id: str, owner_sid: str) -> list[dict[str
         rows = await conn.fetch(
             """
             SELECT id, title, query, created_at
-            FROM sessions
+            FROM playbook.sessions
             WHERE owner_sid = $1 AND query = $2
             ORDER BY created_at DESC
             LIMIT 50
@@ -1506,7 +1506,7 @@ async def db_list_monitor_runs(monitor_id: str, owner_sid: str) -> list[dict[str
 async def db_get_due_monitors() -> list[dict[str, Any]]:
     async with _acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM monitors WHERE next_run_at <= NOW() AND is_active = TRUE ORDER BY next_run_at ASC"
+            "SELECT * FROM playbook.monitors WHERE next_run_at <= NOW() AND is_active = TRUE ORDER BY next_run_at ASC"
         )
     return [_monitor_row_to_dict(r) for r in rows]
 
@@ -1515,7 +1515,7 @@ async def db_update_monitor_run(monitor_id: str, frequency: str) -> None:
     interval = "1 day" if frequency == "daily" else "7 days"
     async with _acquire() as conn:
         await conn.execute(
-            f"UPDATE monitors SET last_run_at = NOW(), next_run_at = NOW() + INTERVAL '{interval}' "
+            f"UPDATE playbook.monitors SET last_run_at = NOW(), next_run_at = NOW() + INTERVAL '{interval}' "
             "WHERE id = $1::uuid",
             monitor_id,
         )
@@ -1539,7 +1539,7 @@ async def db_create_campaign(owner_sid: str, name: str, description: str | None,
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO campaigns (owner_sid, name, description, schedule, team_id)
+            INSERT INTO playbook.campaigns (owner_sid, name, description, schedule, team_id)
             VALUES ($1, $2, $3, $4, $5::uuid)
             RETURNING *
             """,
@@ -1550,12 +1550,12 @@ async def db_create_campaign(owner_sid: str, name: str, description: str | None,
 
 _CAMPAIGN_COUNTS_SQL = """
     SELECT c.*,
-           (SELECT COUNT(*) FROM entities WHERE campaign_id = c.id)::int      AS entity_count,
-           (SELECT COUNT(*) FROM attributes WHERE campaign_id = c.id)::int    AS attribute_count,
-           (SELECT COUNT(*) FROM validation_results vr
-            JOIN entities e ON e.id = vr.entity_id
+           (SELECT COUNT(*) FROM playbook.entities WHERE campaign_id = c.id)::int      AS entity_count,
+           (SELECT COUNT(*) FROM playbook.attributes WHERE campaign_id = c.id)::int    AS attribute_count,
+           (SELECT COUNT(*) FROM playbook.validation_results vr
+            JOIN playbook.entities e ON e.id = vr.entity_id
             WHERE e.campaign_id = c.id)::int                                  AS result_count,
-           (SELECT MAX(completed_at) FROM validation_jobs
+           (SELECT MAX(completed_at) FROM playbook.validation_jobs
             WHERE campaign_id = c.id AND status = 'done')                     AS last_completed_at
 """
 
@@ -1565,8 +1565,8 @@ async def db_list_campaigns(owner_sid: str, team_id: str | None = None) -> list[
             rows = await conn.fetch(
                 f"""
                 {_CAMPAIGN_COUNTS_SQL}
-                FROM campaigns c
-                JOIN team_members tm ON tm.team_id = c.team_id
+                FROM playbook.campaigns c
+                JOIN playbook.team_members tm ON tm.team_id = c.team_id
                 WHERE c.team_id = $1::uuid AND tm.sid = $2
                 ORDER BY c.updated_at DESC
                 """,
@@ -1576,7 +1576,7 @@ async def db_list_campaigns(owner_sid: str, team_id: str | None = None) -> list[
             rows = await conn.fetch(
                 f"""
                 {_CAMPAIGN_COUNTS_SQL}
-                FROM campaigns c
+                FROM playbook.campaigns c
                 WHERE c.owner_sid = $1 AND c.team_id IS NULL
                 ORDER BY c.updated_at DESC
                 """,
@@ -1588,7 +1588,7 @@ async def db_list_campaigns(owner_sid: str, team_id: str | None = None) -> list[
 async def db_is_team_member(team_id: str, sid: str) -> bool:
     async with _acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT 1 FROM team_members WHERE team_id = $1::uuid AND sid = $2",
+            "SELECT 1 FROM playbook.team_members WHERE team_id = $1::uuid AND sid = $2",
             team_id, sid,
         )
     return row is not None
@@ -1596,7 +1596,7 @@ async def db_is_team_member(team_id: str, sid: str) -> bool:
 
 async def db_get_campaign(campaign_id: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM campaigns WHERE id = $1::uuid", campaign_id)
+        row = await conn.fetchrow("SELECT * FROM playbook.campaigns WHERE id = $1::uuid", campaign_id)
     return _campaign_row_to_dict(row) if row else None
 
 
@@ -1608,7 +1608,7 @@ async def db_update_campaign(campaign_id: str, patch: dict[str, Any]) -> dict[st
     set_parts = [f"{k} = ${i+1}" for i, k in enumerate(fields)]
     values = list(fields.values()) + [campaign_id]
     sql = (
-        f"UPDATE campaigns SET {', '.join(set_parts)}, updated_at = NOW() "
+        f"UPDATE playbook.campaigns SET {', '.join(set_parts)}, updated_at = NOW() "
         f"WHERE id = ${len(values)}::uuid RETURNING *"
     )
     async with _acquire() as conn:
@@ -1621,12 +1621,12 @@ async def db_delete_campaign(campaign_id: str, owner_sid: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
             """
-            DELETE FROM campaigns
+            DELETE FROM playbook.campaigns
             WHERE id = $1::uuid
               AND (
                 owner_sid = $2
                 OR team_id IN (
-                    SELECT team_id FROM team_members WHERE sid = $2
+                    SELECT team_id FROM playbook.team_members WHERE sid = $2
                 )
               )
             """,
@@ -1654,7 +1654,7 @@ async def db_create_entity(campaign_id: str, label: str, description: str | None
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO entities (campaign_id, label, description, gwm_id, metadata)
+            INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
             VALUES ($1::uuid, $2, $3, $4, $5::jsonb)
             RETURNING *
             """,
@@ -1668,7 +1668,7 @@ async def db_bulk_create_entities(campaign_id: str, entities: list[dict[str, Any
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
-            INSERT INTO entities (campaign_id, label, description, gwm_id, metadata)
+            INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
             SELECT $1::uuid,
                    e->>'label',
                    NULLIF(e->>'description', ''),
@@ -1696,7 +1696,7 @@ async def db_list_entities(
     async with _acquire() as conn:
         if limit == 0:
             rows = await conn.fetch(
-                """SELECT *, COUNT(*) OVER() AS _total FROM entities
+                """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entities
                    WHERE campaign_id = $1::uuid
                      AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                    ORDER BY created_at ASC""",
@@ -1704,7 +1704,7 @@ async def db_list_entities(
             )
         else:
             rows = await conn.fetch(
-                """SELECT *, COUNT(*) OVER() AS _total FROM entities
+                """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entities
                    WHERE campaign_id = $1::uuid
                      AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                    ORDER BY created_at ASC
@@ -1720,14 +1720,14 @@ async def db_list_entities(
 
 async def db_get_entity(entity_id: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM entities WHERE id = $1::uuid", entity_id)
+        row = await conn.fetchrow("SELECT * FROM playbook.entities WHERE id = $1::uuid", entity_id)
     return _entity_row_to_dict(row) if row else None
 
 
 async def db_delete_entity(entity_id: str, campaign_id: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
-            "DELETE FROM entities WHERE id = $1::uuid AND campaign_id = $2::uuid",
+            "DELETE FROM playbook.entities WHERE id = $1::uuid AND campaign_id = $2::uuid",
             entity_id, campaign_id,
         )
     return result.endswith("1")
@@ -1749,7 +1749,7 @@ async def db_update_entity(entity_id: str, campaign_id: str, **kwargs: Any) -> d
             values.append(v)
     values += [entity_id, campaign_id]
     sql = (
-        f"UPDATE entities SET {', '.join(set_parts)} "
+        f"UPDATE playbook.entities SET {', '.join(set_parts)} "
         f"WHERE id = ${len(values)-1}::uuid AND campaign_id = ${len(values)}::uuid RETURNING *"
     )
     async with _acquire() as conn:
@@ -1760,10 +1760,10 @@ async def db_update_entity(entity_id: str, campaign_id: str, **kwargs: Any) -> d
 async def db_clone_campaign(source_id: str, owner_sid: str) -> dict[str, Any]:
     async with _acquire() as conn:
         async with conn.transaction():
-            source = await conn.fetchrow("SELECT * FROM campaigns WHERE id = $1::uuid", source_id)
+            source = await conn.fetchrow("SELECT * FROM playbook.campaigns WHERE id = $1::uuid", source_id)
             new_row = await conn.fetchrow(
                 """
-                INSERT INTO campaigns (owner_sid, name, description, schedule)
+                INSERT INTO playbook.campaigns (owner_sid, name, description, schedule)
                 VALUES ($1, $2, $3, $4)
                 RETURNING *
                 """,
@@ -1775,17 +1775,17 @@ async def db_clone_campaign(source_id: str, owner_sid: str) -> dict[str, Any]:
             new_id = new_row["id"]
             await conn.execute(
                 """
-                INSERT INTO entities (id, campaign_id, label, description, gwm_id, metadata, created_at)
+                INSERT INTO playbook.entities (id, campaign_id, label, description, gwm_id, metadata, created_at)
                 SELECT gen_random_uuid(), $1::uuid, label, description, gwm_id, metadata, NOW()
-                FROM entities WHERE campaign_id = $2::uuid
+                FROM playbook.entities WHERE campaign_id = $2::uuid
                 """,
                 new_id, source_id,
             )
             await conn.execute(
                 """
-                INSERT INTO attributes (id, campaign_id, label, description, weight, created_at)
+                INSERT INTO playbook.attributes (id, campaign_id, label, description, weight, created_at)
                 SELECT gen_random_uuid(), $1::uuid, label, description, weight, NOW()
-                FROM attributes WHERE campaign_id = $2::uuid
+                FROM playbook.attributes WHERE campaign_id = $2::uuid
                 """,
                 new_id, source_id,
             )
@@ -1797,7 +1797,7 @@ async def db_cancel_job(job_id: str) -> bool:
         async with conn.transaction():
             row = await conn.fetchrow(
                 """
-                UPDATE validation_jobs SET status='failed', error='Cancelled by user', completed_at=NOW()
+                UPDATE playbook.validation_jobs SET status='failed', error='Cancelled by user', completed_at=NOW()
                 WHERE id = $1::uuid AND status IN ('queued', 'running') RETURNING id
                 """,
                 job_id,
@@ -1805,7 +1805,7 @@ async def db_cancel_job(job_id: str) -> bool:
             if row:
                 await conn.execute(
                     """
-                    UPDATE job_queue SET status='dead', completed_at=NOW()
+                    UPDATE playbook.job_queue SET status='dead', completed_at=NOW()
                     WHERE validation_job_id = $1::uuid AND status NOT IN ('done', 'dead')
                     """,
                     job_id,
@@ -1830,7 +1830,7 @@ async def db_create_attribute(campaign_id: str, label: str, description: str | N
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO attributes (campaign_id, label, description, weight)
+            INSERT INTO playbook.attributes (campaign_id, label, description, weight)
             VALUES ($1::uuid, $2, $3, $4)
             RETURNING *
             """,
@@ -1844,7 +1844,7 @@ async def db_bulk_create_attributes(campaign_id: str, attributes: list[dict[str,
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
-            INSERT INTO attributes (campaign_id, label, description, weight)
+            INSERT INTO playbook.attributes (campaign_id, label, description, weight)
             SELECT $1::uuid,
                    a->>'label',
                    NULLIF(a->>'description', ''),
@@ -1871,7 +1871,7 @@ async def db_list_attributes(
     async with _acquire() as conn:
         if limit == 0:
             rows = await conn.fetch(
-                """SELECT *, COUNT(*) OVER() AS _total FROM attributes
+                """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attributes
                    WHERE campaign_id = $1::uuid
                      AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                    ORDER BY created_at ASC""",
@@ -1879,7 +1879,7 @@ async def db_list_attributes(
             )
         else:
             rows = await conn.fetch(
-                """SELECT *, COUNT(*) OVER() AS _total FROM attributes
+                """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attributes
                    WHERE campaign_id = $1::uuid
                      AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                    ORDER BY created_at ASC
@@ -1895,7 +1895,7 @@ async def db_list_attributes(
 
 async def db_get_attribute(attribute_id: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM attributes WHERE id = $1::uuid", attribute_id)
+        row = await conn.fetchrow("SELECT * FROM playbook.attributes WHERE id = $1::uuid", attribute_id)
     return _attribute_row_to_dict(row) if row else None
 
 
@@ -1907,7 +1907,7 @@ async def db_update_attribute(attribute_id: str, campaign_id: str, patch: dict[s
     set_parts = [f"{k} = ${i+1}" for i, k in enumerate(fields)]
     values = list(fields.values()) + [attribute_id, campaign_id]
     sql = (
-        f"UPDATE attributes SET {', '.join(set_parts)} "
+        f"UPDATE playbook.attributes SET {', '.join(set_parts)} "
         f"WHERE id = ${len(values)-1}::uuid AND campaign_id = ${len(values)}::uuid RETURNING *"
     )
     async with _acquire() as conn:
@@ -1918,7 +1918,7 @@ async def db_update_attribute(attribute_id: str, campaign_id: str, patch: dict[s
 async def db_delete_attribute(attribute_id: str, campaign_id: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
-            "DELETE FROM attributes WHERE id = $1::uuid AND campaign_id = $2::uuid",
+            "DELETE FROM playbook.attributes WHERE id = $1::uuid AND campaign_id = $2::uuid",
             attribute_id, campaign_id,
         )
     return result.endswith("1")
@@ -1948,7 +1948,7 @@ async def db_create_validation_job(campaign_id: str, triggered_by: str,
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO validation_jobs
+            INSERT INTO playbook.validation_jobs
                 (campaign_id, triggered_by, triggered_sid, entity_filter, attribute_filter)
             VALUES ($1::uuid, $2, $3, $4::uuid[], $5::uuid[])
             RETURNING *
@@ -1976,7 +1976,7 @@ async def db_create_and_enqueue_validation_job(
         async with conn.transaction():
             row = await conn.fetchrow(
                 """
-                INSERT INTO validation_jobs
+                INSERT INTO playbook.validation_jobs
                     (campaign_id, triggered_by, triggered_sid, entity_filter, attribute_filter)
                 VALUES ($1::uuid, $2, $3, $4::uuid[], $5::uuid[])
                 RETURNING *
@@ -1987,7 +1987,7 @@ async def db_create_and_enqueue_validation_job(
             job_id = str(row["id"])
             await conn.execute(
                 """
-                INSERT INTO job_queue (job_type, payload, validation_job_id)
+                INSERT INTO playbook.job_queue (job_type, payload, validation_job_id)
                 VALUES ('validation_campaign', $1::jsonb, $2::uuid)
                 """,
                 _json.dumps({"validation_job_id": job_id}),
@@ -2000,7 +2000,7 @@ async def db_create_and_enqueue_validation_job(
 async def db_list_validation_jobs(campaign_id: str) -> list[dict[str, Any]]:
     async with _acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM validation_jobs WHERE campaign_id = $1::uuid ORDER BY created_at DESC",
+            "SELECT * FROM playbook.validation_jobs WHERE campaign_id = $1::uuid ORDER BY created_at DESC",
             campaign_id,
         )
     return [_job_vrow_to_dict(r) for r in rows]
@@ -2008,7 +2008,7 @@ async def db_list_validation_jobs(campaign_id: str) -> list[dict[str, Any]]:
 
 async def db_get_validation_job(job_id: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM validation_jobs WHERE id = $1::uuid", job_id)
+        row = await conn.fetchrow("SELECT * FROM playbook.validation_jobs WHERE id = $1::uuid", job_id)
     return _job_vrow_to_dict(row) if row else None
 
 
@@ -2019,7 +2019,7 @@ async def db_update_validation_job(job_id: str, **kwargs: Any) -> dict[str, Any]
         return await db_get_validation_job(job_id)
     set_parts = [f"{k} = ${i+1}" for i, k in enumerate(fields)]
     values = list(fields.values()) + [job_id]
-    sql = f"UPDATE validation_jobs SET {', '.join(set_parts)} WHERE id = ${len(values)}::uuid RETURNING *"
+    sql = f"UPDATE playbook.validation_jobs SET {', '.join(set_parts)} WHERE id = ${len(values)}::uuid RETURNING *"
     async with _acquire() as conn:
         row = await conn.fetchrow(sql, *values)
     return _job_vrow_to_dict(row) if row else None
@@ -2028,7 +2028,7 @@ async def db_update_validation_job(job_id: str, **kwargs: Any) -> dict[str, Any]
 async def db_get_job_details(job_id: str) -> tuple[list[dict], list[dict]]:
     """Return (entities, attributes) for a job, respecting entity/attribute filters."""
     async with _acquire() as conn:
-        job = await conn.fetchrow("SELECT * FROM validation_jobs WHERE id = $1::uuid", job_id)
+        job = await conn.fetchrow("SELECT * FROM playbook.validation_jobs WHERE id = $1::uuid", job_id)
         if not job:
             return [], []
         campaign_id = job["campaign_id"]
@@ -2037,23 +2037,23 @@ async def db_get_job_details(job_id: str) -> tuple[list[dict], list[dict]]:
 
         if entity_filter:
             entity_rows = await conn.fetch(
-                "SELECT * FROM entities WHERE id = ANY($1::uuid[]) AND campaign_id = $2::uuid",
+                "SELECT * FROM playbook.entities WHERE id = ANY($1::uuid[]) AND campaign_id = $2::uuid",
                 entity_filter, campaign_id,
             )
         else:
             entity_rows = await conn.fetch(
-                "SELECT * FROM entities WHERE campaign_id = $1::uuid",
+                "SELECT * FROM playbook.entities WHERE campaign_id = $1::uuid",
                 campaign_id,
             )
 
         if attribute_filter:
             attr_rows = await conn.fetch(
-                "SELECT * FROM attributes WHERE id = ANY($1::uuid[]) AND campaign_id = $2::uuid",
+                "SELECT * FROM playbook.attributes WHERE id = ANY($1::uuid[]) AND campaign_id = $2::uuid",
                 attribute_filter, campaign_id,
             )
         else:
             attr_rows = await conn.fetch(
-                "SELECT * FROM attributes WHERE campaign_id = $1::uuid",
+                "SELECT * FROM playbook.attributes WHERE campaign_id = $1::uuid",
                 campaign_id,
             )
 
@@ -2072,9 +2072,9 @@ async def db_increment_job_progress(job_id: str) -> None:
     async with _acquire() as conn:
         await conn.execute(
             """
-            UPDATE validation_jobs
+            UPDATE playbook.validation_jobs
             SET completed_pairs = (
-                SELECT COUNT(*) FROM validation_results WHERE job_id = $1::uuid
+                SELECT COUNT(*) FROM playbook.validation_results WHERE job_id = $1::uuid
             )
             WHERE id = $1::uuid
             """,
@@ -2100,7 +2100,7 @@ async def db_insert_result(job_id: str, entity_id: str, attribute_id: str,
     async with _acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO validation_results
+            INSERT INTO playbook.validation_results
                 (job_id, entity_id, attribute_id, present, confidence, evidence, report_md)
             VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7)
             ON CONFLICT (job_id, entity_id, attribute_id) DO UPDATE SET
@@ -2118,7 +2118,7 @@ async def db_insert_result(job_id: str, entity_id: str, attribute_id: str,
         if update_knowledge:
             await conn.execute(
                 """
-                INSERT INTO entity_attribute_knowledge
+                INSERT INTO playbook.entity_attribute_knowledge
                     (gwm_id, attribute_label, present, confidence, evidence,
                      source_job_id, source_campaign_id, source_campaign_name, entity_label)
                 SELECT
@@ -2131,10 +2131,10 @@ async def db_insert_result(job_id: str, entity_id: str, attribute_id: str,
                     j.campaign_id,
                     c.name,
                     e.label
-                FROM entities e
-                JOIN attributes a ON a.id = $3::uuid
-                JOIN validation_jobs j ON j.id = $1::uuid
-                JOIN campaigns c ON c.id = j.campaign_id
+                FROM playbook.entities e
+                JOIN playbook.attributes a ON a.id = $3::uuid
+                JOIN playbook.validation_jobs j ON j.id = $1::uuid
+                JOIN playbook.campaigns c ON c.id = j.campaign_id
                 WHERE e.id = $2::uuid AND e.gwm_id IS NOT NULL
                 ON CONFLICT (gwm_id, attribute_label) DO UPDATE SET
                     present = EXCLUDED.present,
@@ -2175,9 +2175,9 @@ async def db_list_results(job_id: str, entity_id: str | None = None,
     values.extend([limit, offset])
     sql = (
         f"SELECT r.*, e.label AS entity_label, a.label AS attribute_label "
-        f"FROM validation_results r "
-        f"JOIN entities e ON r.entity_id = e.id "
-        f"JOIN attributes a ON r.attribute_id = a.id "
+        f"FROM playbook.validation_results r "
+        f"JOIN playbook.entities e ON r.entity_id = e.id "
+        f"JOIN playbook.attributes a ON r.attribute_id = a.id "
         f"WHERE {' AND '.join(conditions)} "
         f"ORDER BY r.created_at DESC LIMIT ${idx} OFFSET ${idx+1}"
     )
@@ -2203,8 +2203,8 @@ async def db_get_scores(campaign_id: str) -> list[dict[str, Any]]:
         rows = await conn.fetch(
             """
             SELECT es.*, e.label AS entity_label, e.gwm_id
-            FROM entity_scores es
-            JOIN entities e ON es.entity_id = e.id
+            FROM playbook.entity_scores es
+            JOIN playbook.entities e ON es.entity_id = e.id
             WHERE es.campaign_id = $1::uuid
             ORDER BY es.total_score DESC
             """,
@@ -2217,7 +2217,7 @@ async def db_recompute_scores(job_id: str) -> None:
     async with _acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO entity_scores
+            INSERT INTO playbook.entity_scores
                 (entity_id, campaign_id, total_score, attributes_present, attributes_checked, last_updated)
             SELECT
                 r.entity_id,
@@ -2226,9 +2226,9 @@ async def db_recompute_scores(job_id: str) -> None:
                 COUNT(CASE WHEN r.present THEN 1 END),
                 COUNT(*),
                 NOW()
-            FROM validation_results r
-            JOIN validation_jobs j ON r.job_id = j.id
-            JOIN attributes a ON r.attribute_id = a.id
+            FROM playbook.validation_results r
+            JOIN playbook.validation_jobs j ON r.job_id = j.id
+            JOIN playbook.attributes a ON r.attribute_id = a.id
             WHERE r.job_id = $1::uuid
             GROUP BY r.entity_id, j.campaign_id
             ON CONFLICT (entity_id, campaign_id) DO UPDATE SET
@@ -2241,13 +2241,45 @@ async def db_recompute_scores(job_id: str) -> None:
         )
 
 
+async def db_get_entity_cross_campaign(gwm_id: str) -> list[dict[str, Any]]:
+    """Get validation results for an entity (by gwm_id) across all campaigns."""
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                r.present, r.confidence, r.evidence, r.created_at,
+                a.label AS attribute_label,
+                c.name AS campaign_name, c.id AS campaign_id,
+                es.total_score
+            FROM playbook.validation_results r
+            JOIN playbook.entities e ON r.entity_id = e.id
+            JOIN playbook.attributes a ON r.attribute_id = a.id
+            JOIN playbook.campaigns c ON e.campaign_id = c.id
+            LEFT JOIN playbook.entity_scores es ON es.entity_id = e.id AND es.campaign_id = c.id
+            WHERE e.gwm_id = $1
+            ORDER BY c.name, a.label
+            """,
+            gwm_id,
+        )
+    result = []
+    for row in rows:
+        d = dict(row)
+        for f in ("campaign_id",):
+            if d.get(f):
+                d[f] = str(d[f])
+        if d.get("created_at"):
+            d["created_at"] = d["created_at"].isoformat()
+        result.append(d)
+    return result
+
+
 # ── Scout: Campaign scheduling ─────────────────────────────────────────────────
 
 async def db_get_due_campaigns() -> list[dict[str, Any]]:
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT * FROM campaigns
+            SELECT * FROM playbook.campaigns
             WHERE is_active = TRUE
               AND schedule IS NOT NULL
               AND next_run_at <= NOW()
@@ -2260,7 +2292,7 @@ async def db_get_due_campaigns() -> list[dict[str, Any]]:
 async def db_update_campaign_next_run(campaign_id: str, next_run_at: Any) -> None:
     async with _acquire() as conn:
         await conn.execute(
-            "UPDATE campaigns SET last_run_at = NOW(), next_run_at = $1 WHERE id = $2::uuid",
+            "UPDATE playbook.campaigns SET last_run_at = NOW(), next_run_at = $1 WHERE id = $2::uuid",
             next_run_at, campaign_id,
         )
 
@@ -2285,7 +2317,7 @@ async def db_lookup_knowledge(gwm_id: str, attribute_label: str, max_age_hours: 
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT * FROM entity_attribute_knowledge
+            SELECT * FROM playbook.entity_attribute_knowledge
             WHERE gwm_id = $1 AND attribute_label = $2
               AND last_updated > NOW() - ($3 || ' hours')::interval
             """,
@@ -2300,9 +2332,9 @@ async def db_get_knowledge_for_campaign(campaign_id: str) -> list[dict[str, Any]
         rows = await conn.fetch(
             """
             SELECT k.*
-            FROM entity_attribute_knowledge k
+            FROM playbook.entity_attribute_knowledge k
             WHERE k.gwm_id IN (
-                SELECT gwm_id FROM entities
+                SELECT gwm_id FROM playbook.entities
                 WHERE campaign_id = $1::uuid AND gwm_id IS NOT NULL
             )
             ORDER BY k.last_updated DESC
@@ -2323,16 +2355,16 @@ async def db_import_entities(target_campaign_id: str, source_campaign_id: str) -
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
-            INSERT INTO entities (campaign_id, label, description, gwm_id, metadata)
+            INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
             SELECT $2::uuid, label, description, gwm_id, metadata
-            FROM entities
+            FROM playbook.entities
             WHERE campaign_id = $1::uuid
               AND (
                 (gwm_id IS NOT NULL AND gwm_id NOT IN (
-                    SELECT gwm_id FROM entities WHERE campaign_id = $2::uuid AND gwm_id IS NOT NULL))
+                    SELECT gwm_id FROM playbook.entities WHERE campaign_id = $2::uuid AND gwm_id IS NOT NULL))
                 OR
                 (gwm_id IS NULL AND label NOT IN (
-                    SELECT label FROM entities WHERE campaign_id = $2::uuid))
+                    SELECT label FROM playbook.entities WHERE campaign_id = $2::uuid))
               )
             RETURNING *
             """,
@@ -2348,11 +2380,11 @@ async def db_import_attributes(target_campaign_id: str, source_campaign_id: str)
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
-            INSERT INTO attributes (campaign_id, label, description, weight)
+            INSERT INTO playbook.attributes (campaign_id, label, description, weight)
             SELECT $2::uuid, label, description, weight
-            FROM attributes
+            FROM playbook.attributes
             WHERE campaign_id = $1::uuid
-              AND label NOT IN (SELECT label FROM attributes WHERE campaign_id = $2::uuid)
+              AND label NOT IN (SELECT label FROM playbook.attributes WHERE campaign_id = $2::uuid)
             RETURNING *
             """,
             source_campaign_id, target_campaign_id,
@@ -2375,12 +2407,12 @@ async def db_get_campaign_stats(owner_sid: str, team_id: str | None = None) -> d
                     COUNT(DISTINCT vj.id) FILTER (
                         WHERE vj.created_at > NOW() - INTERVAL '7 days')::int    AS jobs_last_7_days,
                     COUNT(DISTINCT k.gwm_id || ':' || k.attribute_label)::int    AS knowledge_entries
-                FROM campaigns c
-                JOIN team_members tm ON tm.team_id = c.team_id AND tm.sid = $1
-                LEFT JOIN entities e ON e.campaign_id = c.id
-                LEFT JOIN validation_results vr ON vr.entity_id = e.id
-                LEFT JOIN validation_jobs vj ON vj.campaign_id = c.id
-                LEFT JOIN entity_attribute_knowledge k
+                FROM playbook.campaigns c
+                JOIN playbook.team_members tm ON tm.team_id = c.team_id AND tm.sid = $1
+                LEFT JOIN playbook.entities e ON e.campaign_id = c.id
+                LEFT JOIN playbook.validation_results vr ON vr.entity_id = e.id
+                LEFT JOIN playbook.validation_jobs vj ON vj.campaign_id = c.id
+                LEFT JOIN playbook.entity_attribute_knowledge k
                     ON k.gwm_id = e.gwm_id AND e.gwm_id IS NOT NULL
                 WHERE c.team_id = $2::uuid
                 """,
@@ -2396,11 +2428,11 @@ async def db_get_campaign_stats(owner_sid: str, team_id: str | None = None) -> d
                     COUNT(DISTINCT vj.id) FILTER (
                         WHERE vj.created_at > NOW() - INTERVAL '7 days')::int    AS jobs_last_7_days,
                     COUNT(DISTINCT k.gwm_id || ':' || k.attribute_label)::int    AS knowledge_entries
-                FROM campaigns c
-                LEFT JOIN entities e ON e.campaign_id = c.id
-                LEFT JOIN validation_results vr ON vr.entity_id = e.id
-                LEFT JOIN validation_jobs vj ON vj.campaign_id = c.id
-                LEFT JOIN entity_attribute_knowledge k
+                FROM playbook.campaigns c
+                LEFT JOIN playbook.entities e ON e.campaign_id = c.id
+                LEFT JOIN playbook.validation_results vr ON vr.entity_id = e.id
+                LEFT JOIN playbook.validation_jobs vj ON vj.campaign_id = c.id
+                LEFT JOIN playbook.entity_attribute_knowledge k
                     ON k.gwm_id = e.gwm_id AND e.gwm_id IS NOT NULL
                 WHERE c.owner_sid = $1 AND c.team_id IS NULL
                 """,
@@ -2415,12 +2447,12 @@ async def db_list_attribute_templates(owner_sid: str, team_id: str | None = None
     async with _acquire() as conn:
         if team_id:
             rows = await conn.fetch(
-                "SELECT * FROM attribute_templates WHERE team_id = $1::uuid ORDER BY created_at DESC",
+                "SELECT * FROM playbook.attribute_templates WHERE team_id = $1::uuid ORDER BY created_at DESC",
                 team_id,
             )
         else:
             rows = await conn.fetch(
-                "SELECT * FROM attribute_templates WHERE owner_sid = $1 AND team_id IS NULL ORDER BY created_at DESC",
+                "SELECT * FROM playbook.attribute_templates WHERE owner_sid = $1 AND team_id IS NULL ORDER BY created_at DESC",
                 owner_sid,
             )
     return [_template_row_to_dict(r) for r in rows]
@@ -2432,7 +2464,7 @@ async def db_create_attribute_template(
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO attribute_templates (owner_sid, team_id, name, attributes)
+            INSERT INTO playbook.attribute_templates (owner_sid, team_id, name, attributes)
             VALUES ($1, $2::uuid, $3, $4::jsonb)
             RETURNING *
             """,
@@ -2444,7 +2476,7 @@ async def db_create_attribute_template(
 async def db_delete_attribute_template(template_id: str, owner_sid: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
-            "DELETE FROM attribute_templates WHERE id = $1::uuid AND owner_sid = $2",
+            "DELETE FROM playbook.attribute_templates WHERE id = $1::uuid AND owner_sid = $2",
             template_id, owner_sid,
         )
     return int(result.split()[-1]) > 0
@@ -2472,7 +2504,7 @@ async def db_find_or_create_entity(name: str, entity_type: str, aliases: list[st
     normalized = name.lower().strip()
     async with _acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT id FROM kg_entities WHERE LOWER(name) = $1 OR $1 = ANY(aliases)",
+            "SELECT id FROM playbook.kg_entities WHERE LOWER(name) = $1 OR $1 = ANY(aliases)",
             normalized,
         )
         if row:
@@ -2480,13 +2512,13 @@ async def db_find_or_create_entity(name: str, entity_type: str, aliases: list[st
             # Merge any new aliases
             if aliases:
                 await conn.execute(
-                    "UPDATE kg_entities SET aliases = (SELECT array_agg(DISTINCT a) FROM unnest(aliases || $1::text[]) AS a), updated_at = NOW() WHERE id = $2::uuid",
+                    "UPDATE playbook.kg_entities SET aliases = (SELECT array_agg(DISTINCT a) FROM unnest(aliases || $1::text[]) AS a), updated_at = NOW() WHERE id = $2::uuid",
                     aliases, entity_id,
                 )
             return entity_id
         row = await conn.fetchrow(
             """
-            INSERT INTO kg_entities (name, entity_type, aliases)
+            INSERT INTO playbook.kg_entities (name, entity_type, aliases)
             VALUES ($1, $2, $3)
             RETURNING id
             """,
@@ -2513,7 +2545,7 @@ async def db_upsert_relationship(
     async with _acquire() as conn:
         existing = await conn.fetchrow(
             """
-            SELECT id, predicate FROM kg_relationships
+            SELECT id, predicate FROM playbook.kg_relationships
             WHERE subject_id = $1::uuid AND object_id = $2::uuid
               AND predicate_family = $3 AND is_active = TRUE
             """,
@@ -2523,7 +2555,7 @@ async def db_upsert_relationship(
         if existing is None:
             await conn.execute(
                 """
-                INSERT INTO kg_relationships
+                INSERT INTO playbook.kg_relationships
                     (subject_id, predicate, predicate_family, object_id, confidence, evidence, source_session_id)
                 VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::uuid)
                 """,
@@ -2541,12 +2573,12 @@ async def db_upsert_relationship(
 
         # Conflict: supersede old, insert new, log conflict
         await conn.execute(
-            "UPDATE kg_relationships SET is_active = FALSE WHERE id = $1::uuid",
+            "UPDATE playbook.kg_relationships SET is_active = FALSE WHERE id = $1::uuid",
             old_id,
         )
         new_row = await conn.fetchrow(
             """
-            INSERT INTO kg_relationships
+            INSERT INTO playbook.kg_relationships
                 (subject_id, predicate, predicate_family, object_id, confidence, evidence, source_session_id)
             VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::uuid)
             RETURNING id
@@ -2558,14 +2590,14 @@ async def db_upsert_relationship(
         new_id = str(new_row["id"])
 
         # Fetch names for conflict log
-        subject_row = await conn.fetchrow("SELECT name FROM kg_entities WHERE id = $1::uuid", subject_id)
-        object_row = await conn.fetchrow("SELECT name FROM kg_entities WHERE id = $1::uuid", object_id)
+        subject_row = await conn.fetchrow("SELECT name FROM playbook.kg_entities WHERE id = $1::uuid", subject_id)
+        object_row = await conn.fetchrow("SELECT name FROM playbook.kg_entities WHERE id = $1::uuid", object_id)
         subject_name = subject_row["name"] if subject_row else subject_id
         object_name = object_row["name"] if object_row else object_id
 
         await conn.execute(
             """
-            INSERT INTO kg_relationship_conflicts
+            INSERT INTO playbook.kg_relationship_conflicts
                 (old_relationship_id, new_relationship_id, old_predicate, new_predicate, subject_name, object_name)
             VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)
             """,
@@ -2580,9 +2612,9 @@ async def db_get_job_combined_report(job_id: str) -> str:
         rows = await conn.fetch(
             """
             SELECT e.label AS entity_label, a.label AS attribute_label, r.report_md
-            FROM validation_results r
-            JOIN entities e ON r.entity_id = e.id
-            JOIN attributes a ON r.attribute_id = a.id
+            FROM playbook.validation_results r
+            JOIN playbook.entities e ON r.entity_id = e.id
+            JOIN playbook.attributes a ON r.attribute_id = a.id
             WHERE r.job_id = $1::uuid AND r.report_md IS NOT NULL AND r.report_md != ''
             """,
             job_id,
@@ -2636,15 +2668,15 @@ async def db_list_kg_entities(
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     async with _acquire() as conn:
         count_row = await conn.fetchrow(
-            f"SELECT COUNT(*)::int AS total FROM kg_entities e{where}", *args
+            f"SELECT COUNT(*)::int AS total FROM playbook.kg_entities e{where}", *args
         )
         total = count_row["total"] if count_row else 0
         rows = await conn.fetch(
             f"""
             SELECT e.*,
-                   (SELECT COUNT(*) FROM kg_relationships r
+                   (SELECT COUNT(*) FROM playbook.kg_relationships r
                     WHERE r.subject_id = e.id OR r.object_id = e.id)::int AS relationship_count
-            FROM kg_entities e{where}
+            FROM playbook.kg_entities e{where}
             ORDER BY e.updated_at DESC
             LIMIT {limit} OFFSET {offset}
             """,
@@ -2656,7 +2688,7 @@ async def db_list_kg_entities(
 async def db_get_kg_entity(entity_id: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT * FROM kg_entities WHERE id = $1::uuid", entity_id
+            "SELECT * FROM playbook.kg_entities WHERE id = $1::uuid", entity_id
         )
     return _kg_entity_to_dict(row) if row else None
 
@@ -2677,9 +2709,9 @@ async def db_get_entity_relationships(
             SELECT r.*,
                    s.name AS subject_name, s.entity_type AS subject_type,
                    o.name AS object_name, o.entity_type AS object_type
-            FROM kg_relationships r
-            JOIN kg_entities s ON s.id = r.subject_id
-            JOIN kg_entities o ON o.id = r.object_id
+            FROM playbook.kg_relationships r
+            JOIN playbook.kg_entities s ON s.id = r.subject_id
+            JOIN playbook.kg_entities o ON o.id = r.object_id
             WHERE {conditions[0]} AND r.is_active = TRUE
             ORDER BY r.created_at DESC
             """,
@@ -2693,9 +2725,9 @@ async def db_search_kg(query: str) -> list[dict[str, Any]]:
         rows = await conn.fetch(
             """
             SELECT e.*,
-                   (SELECT COUNT(*) FROM kg_relationships r
+                   (SELECT COUNT(*) FROM playbook.kg_relationships r
                     WHERE r.subject_id = e.id OR r.object_id = e.id)::int AS relationship_count
-            FROM kg_entities e
+            FROM playbook.kg_entities e
             WHERE LOWER(e.name) LIKE $1 OR $2 = ANY(SELECT LOWER(a) FROM unnest(e.aliases) a)
             ORDER BY e.updated_at DESC LIMIT 50
             """,
@@ -2709,10 +2741,10 @@ async def db_get_kg_stats() -> dict[str, Any]:
         row = await conn.fetchrow(
             """
             SELECT
-                (SELECT COUNT(*)::int FROM kg_entities) AS total_entities,
-                (SELECT COUNT(*)::int FROM kg_relationships WHERE is_active = TRUE) AS total_relationships,
-                (SELECT COUNT(*)::int FROM kg_relationship_conflicts) AS total_conflicts,
-                (SELECT COUNT(DISTINCT entity_type)::int FROM kg_entities) AS entity_types
+                (SELECT COUNT(*)::int FROM playbook.kg_entities) AS total_entities,
+                (SELECT COUNT(*)::int FROM playbook.kg_relationships WHERE is_active = TRUE) AS total_relationships,
+                (SELECT COUNT(*)::int FROM playbook.kg_relationship_conflicts) AS total_conflicts,
+                (SELECT COUNT(DISTINCT entity_type)::int FROM playbook.kg_entities) AS entity_types
             """
         )
     return dict(row) if row else {"total_entities": 0, "total_relationships": 0, "total_conflicts": 0, "entity_types": 0}
@@ -2723,7 +2755,7 @@ async def db_list_kg_conflicts(limit: int = 50, offset: int = 0) -> list[dict[st
         rows = await conn.fetch(
             """
             SELECT c.*, c.subject_name, c.object_name
-            FROM kg_relationship_conflicts c
+            FROM playbook.kg_relationship_conflicts c
             ORDER BY c.detected_at DESC
             LIMIT $1 OFFSET $2
             """,
@@ -2750,9 +2782,9 @@ async def db_list_dead_jobs(campaign_id: str) -> list[dict[str, Any]]:
             """
             SELECT jq.id, jq.job_type, jq.payload, jq.attempts, jq.last_error,
                    jq.created_at, jq.completed_at
-            FROM job_queue jq
+            FROM playbook.job_queue jq
             WHERE jq.validation_job_id IN (
-                SELECT id FROM validation_jobs WHERE campaign_id = $1::uuid
+                SELECT id FROM playbook.validation_jobs WHERE campaign_id = $1::uuid
             ) AND jq.status = 'dead'
             ORDER BY jq.completed_at DESC
             LIMIT 200
@@ -2768,8 +2800,8 @@ async def db_get_queue_job_owner(job_id: str) -> dict[str, Any] | None:
         row = await conn.fetchrow(
             """
             SELECT vj.campaign_id
-            FROM job_queue jq
-            JOIN validation_jobs vj ON vj.id = jq.validation_job_id
+            FROM playbook.job_queue jq
+            JOIN playbook.validation_jobs vj ON vj.id = jq.validation_job_id
             WHERE jq.id = $1::uuid
             """,
             job_id,
@@ -2782,7 +2814,7 @@ async def db_retry_dead_job(job_id: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
             """
-            UPDATE job_queue
+            UPDATE playbook.job_queue
             SET status = 'pending', attempts = 0, last_error = NULL,
                 run_at = NOW(), worker_id = NULL, heartbeat_at = NULL, completed_at = NULL
             WHERE id = $1::uuid AND status = 'dead'
@@ -2817,10 +2849,10 @@ async def db_get_score_trends(campaign_id: str, entity_id: str | None = None) ->
                         THEN ROUND(SUM(CASE WHEN r.present THEN a.weight ELSE 0 END)::numeric
                              / NULLIF(SUM(a.weight), 0)::numeric, 4)
                         ELSE 0 END AS score
-            FROM validation_jobs vj
-            JOIN validation_results r ON r.job_id = vj.id
-            JOIN entities e ON e.id = r.entity_id
-            JOIN attributes a ON a.id = r.attribute_id
+            FROM playbook.validation_jobs vj
+            JOIN playbook.validation_results r ON r.job_id = vj.id
+            JOIN playbook.entities e ON e.id = r.entity_id
+            JOIN playbook.attributes a ON a.id = r.attribute_id
             WHERE vj.campaign_id = $1::uuid AND vj.status = 'done'{entity_filter}
             GROUP BY vj.id, vj.completed_at, e.id, e.label
             ORDER BY vj.completed_at ASC, e.label ASC
@@ -2860,13 +2892,13 @@ async def db_compare_jobs(job_a: str, job_b: str) -> list[dict[str, Any]]:
                        WHEN a.present != b.present THEN 'changed'
                        ELSE 'unchanged'
                    END AS diff_status
-            FROM validation_results a
-            FULL OUTER JOIN validation_results b
+            FROM playbook.validation_results a
+            FULL OUTER JOIN playbook.validation_results b
                 ON a.entity_id = b.entity_id AND a.attribute_id = b.attribute_id AND b.job_id = $2::uuid
-            LEFT JOIN entities ea ON ea.id = a.entity_id
-            LEFT JOIN entities eb ON eb.id = b.entity_id
-            LEFT JOIN attributes aa ON aa.id = a.attribute_id
-            LEFT JOIN attributes ab ON ab.id = b.attribute_id
+            LEFT JOIN playbook.entities ea ON ea.id = a.entity_id
+            LEFT JOIN playbook.entities eb ON eb.id = b.entity_id
+            LEFT JOIN playbook.attributes aa ON aa.id = a.attribute_id
+            LEFT JOIN playbook.attributes ab ON ab.id = b.attribute_id
             WHERE (a.job_id = $1::uuid OR a.job_id IS NULL)
               AND (b.job_id = $2::uuid OR b.job_id IS NULL)
             ORDER BY entity_label, attribute_label
@@ -2905,11 +2937,11 @@ async def db_export_campaign_results(campaign_id: str) -> list[dict[str, Any]]:
                    es.attributes_present,
                    es.attributes_checked,
                    r.created_at
-            FROM validation_results r
-            JOIN entities e ON e.id = r.entity_id
-            JOIN attributes a ON a.id = r.attribute_id
-            JOIN validation_jobs vj ON vj.id = r.job_id
-            LEFT JOIN entity_scores es ON es.entity_id = r.entity_id AND es.campaign_id = $1::uuid
+            FROM playbook.validation_results r
+            JOIN playbook.entities e ON e.id = r.entity_id
+            JOIN playbook.attributes a ON a.id = r.attribute_id
+            JOIN playbook.validation_jobs vj ON vj.id = r.job_id
+            LEFT JOIN playbook.entity_scores es ON es.entity_id = r.entity_id AND es.campaign_id = $1::uuid
             WHERE vj.campaign_id = $1::uuid
             ORDER BY r.entity_id, r.attribute_id, r.created_at DESC
             """,
@@ -2938,7 +2970,7 @@ async def db_lookup_knowledge_batch(
         rows = await conn.fetch(
             """
             SELECT k.*
-            FROM entity_attribute_knowledge k
+            FROM playbook.entity_attribute_knowledge k
             JOIN unnest($1::text[], $2::text[]) AS inp(gwm_id, attr)
               ON k.gwm_id = inp.gwm_id AND k.attribute_label = inp.attr
             WHERE k.last_updated > NOW() - ($3 || ' hours')::interval
@@ -2961,7 +2993,7 @@ async def db_insert_results_batch(job_id: str, hits: list[dict[str, Any]]) -> No
         async with conn.transaction():
             await conn.execute(
                 """
-                INSERT INTO validation_results
+                INSERT INTO playbook.validation_results
                     (job_id, entity_id, attribute_id, present, confidence, evidence, report_md)
                 SELECT $1::uuid, unnest($2::uuid[]), unnest($3::uuid[]),
                        unnest($4::bool[]), unnest($5::float[]), unnest($6::text[]), ''
@@ -2974,9 +3006,9 @@ async def db_insert_results_batch(job_id: str, hits: list[dict[str, Any]]) -> No
             )
             await conn.execute(
                 """
-                UPDATE validation_jobs
+                UPDATE playbook.validation_jobs
                 SET completed_pairs = (
-                    SELECT COUNT(*) FROM validation_results WHERE job_id = $1::uuid
+                    SELECT COUNT(*) FROM playbook.validation_results WHERE job_id = $1::uuid
                 )
                 WHERE id = $1::uuid
                 """,
@@ -3010,16 +3042,16 @@ async def db_list_entity_library(
         if team_id:
             if limit == 0:
                 rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM entity_library
-                       WHERE (owner_sid=$1 OR team_id=$2::uuid)
+                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entity_library
+                       WHERE team_id=$2::uuid
                          AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
                        ORDER BY created_at ASC""",
                     owner_sid, team_id, search,
                 )
             else:
                 rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM entity_library
-                       WHERE (owner_sid=$1 OR team_id=$2::uuid)
+                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entity_library
+                       WHERE team_id=$2::uuid
                          AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
                        ORDER BY created_at ASC
                        LIMIT $4 OFFSET $5""",
@@ -3028,7 +3060,7 @@ async def db_list_entity_library(
         else:
             if limit == 0:
                 rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM entity_library
+                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entity_library
                        WHERE owner_sid=$1 AND team_id IS NULL
                          AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                        ORDER BY created_at ASC""",
@@ -3036,7 +3068,7 @@ async def db_list_entity_library(
                 )
             else:
                 rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM entity_library
+                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entity_library
                        WHERE owner_sid=$1 AND team_id IS NULL
                          AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                        ORDER BY created_at ASC
@@ -3056,7 +3088,7 @@ async def db_create_entity_library(owner_sid: str, team_id: str | None, label: s
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO entity_library (owner_sid, team_id, label, description, gwm_id, metadata)
+            INSERT INTO playbook.entity_library (owner_sid, team_id, label, description, gwm_id, metadata)
             VALUES ($1, $2::uuid, $3, $4, $5, $6::jsonb)
             RETURNING *
             """,
@@ -3072,7 +3104,7 @@ async def db_bulk_create_entity_library(owner_sid: str, team_id: str | None,
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
-            INSERT INTO entity_library (owner_sid, team_id, label, description, gwm_id, metadata)
+            INSERT INTO playbook.entity_library (owner_sid, team_id, label, description, gwm_id, metadata)
             SELECT $1,
                    $2::uuid,
                    e->>'label',
@@ -3104,7 +3136,7 @@ async def db_update_entity_library(item_id: str, owner_sid: str, **fields: Any) 
         else:
             set_clauses.append(f"{k} = ${i}")
             values.append(v)
-    sql = f"UPDATE entity_library SET {', '.join(set_clauses)} WHERE id=$1::uuid AND owner_sid=$2 RETURNING *"
+    sql = f"UPDATE playbook.entity_library SET {', '.join(set_clauses)} WHERE id=$1::uuid AND owner_sid=$2 RETURNING *"
     async with _acquire() as conn:
         row = await conn.fetchrow(sql, item_id, owner_sid, *values)
     return _lib_row_to_dict(row) if row else None
@@ -3113,7 +3145,7 @@ async def db_update_entity_library(item_id: str, owner_sid: str, **fields: Any) 
 async def db_delete_entity_library(item_id: str, owner_sid: str) -> None:
     async with _acquire() as conn:
         await conn.execute(
-            "DELETE FROM entity_library WHERE id=$1::uuid AND owner_sid=$2",
+            "DELETE FROM playbook.entity_library WHERE id=$1::uuid AND owner_sid=$2",
             item_id, owner_sid,
         )
 
@@ -3130,16 +3162,16 @@ async def db_list_attribute_library(
         if team_id:
             if limit == 0:
                 rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM attribute_library
-                       WHERE (owner_sid=$1 OR team_id=$2::uuid)
+                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attribute_library
+                       WHERE team_id=$2::uuid
                          AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
                        ORDER BY created_at ASC""",
                     owner_sid, team_id, search,
                 )
             else:
                 rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM attribute_library
-                       WHERE (owner_sid=$1 OR team_id=$2::uuid)
+                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attribute_library
+                       WHERE team_id=$2::uuid
                          AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
                        ORDER BY created_at ASC
                        LIMIT $4 OFFSET $5""",
@@ -3148,7 +3180,7 @@ async def db_list_attribute_library(
         else:
             if limit == 0:
                 rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM attribute_library
+                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attribute_library
                        WHERE owner_sid=$1 AND team_id IS NULL
                          AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                        ORDER BY created_at ASC""",
@@ -3156,7 +3188,7 @@ async def db_list_attribute_library(
                 )
             else:
                 rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM attribute_library
+                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attribute_library
                        WHERE owner_sid=$1 AND team_id IS NULL
                          AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                        ORDER BY created_at ASC
@@ -3175,7 +3207,7 @@ async def db_create_attribute_library(owner_sid: str, team_id: str | None, label
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO attribute_library (owner_sid, team_id, label, description, weight)
+            INSERT INTO playbook.attribute_library (owner_sid, team_id, label, description, weight)
             VALUES ($1, $2::uuid, $3, $4, $5)
             RETURNING *
             """,
@@ -3191,7 +3223,7 @@ async def db_bulk_create_attribute_library(owner_sid: str, team_id: str | None,
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
-            INSERT INTO attribute_library (owner_sid, team_id, label, description, weight)
+            INSERT INTO playbook.attribute_library (owner_sid, team_id, label, description, weight)
             SELECT $1,
                    $2::uuid,
                    e->>'label',
@@ -3214,7 +3246,7 @@ async def db_update_attribute_library(item_id: str, owner_sid: str, **fields: An
     if not updates:
         return None
     set_clauses = [f"{k} = ${i}" for i, k in enumerate(updates.keys(), start=3)]
-    sql = f"UPDATE attribute_library SET {', '.join(set_clauses)} WHERE id=$1::uuid AND owner_sid=$2 RETURNING *"
+    sql = f"UPDATE playbook.attribute_library SET {', '.join(set_clauses)} WHERE id=$1::uuid AND owner_sid=$2 RETURNING *"
     async with _acquire() as conn:
         row = await conn.fetchrow(sql, item_id, owner_sid, *updates.values())
     return _lib_row_to_dict(row) if row else None
@@ -3223,7 +3255,7 @@ async def db_update_attribute_library(item_id: str, owner_sid: str, **fields: An
 async def db_delete_attribute_library(item_id: str, owner_sid: str) -> None:
     async with _acquire() as conn:
         await conn.execute(
-            "DELETE FROM attribute_library WHERE id=$1::uuid AND owner_sid=$2",
+            "DELETE FROM playbook.attribute_library WHERE id=$1::uuid AND owner_sid=$2",
             item_id, owner_sid,
         )
 
@@ -3235,9 +3267,9 @@ async def db_import_entities_from_library(campaign_id: str, lib_ids: list[str]) 
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
-            INSERT INTO entities (campaign_id, label, description, gwm_id, metadata)
+            INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
             SELECT $1::uuid, label, description, gwm_id, metadata
-            FROM entity_library
+            FROM playbook.entity_library
             WHERE id = ANY($2::uuid[])
             ON CONFLICT (campaign_id, label) DO NOTHING
             RETURNING *
@@ -3254,9 +3286,9 @@ async def db_import_attributes_from_library(campaign_id: str, lib_ids: list[str]
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
-            INSERT INTO attributes (campaign_id, label, description, weight)
+            INSERT INTO playbook.attributes (campaign_id, label, description, weight)
             SELECT $1::uuid, label, description, weight
-            FROM attribute_library
+            FROM playbook.attribute_library
             WHERE id = ANY($2::uuid[])
             ON CONFLICT (campaign_id, label) DO NOTHING
             RETURNING *

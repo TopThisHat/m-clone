@@ -79,6 +79,17 @@ export interface JobDiff {
 	diff_status: 'added' | 'removed' | 'changed' | 'unchanged';
 }
 
+export interface CrossCampaignResult {
+	campaign_id: string;
+	campaign_name: string;
+	attribute_label: string;
+	present: boolean;
+	confidence: number | null;
+	evidence: string | null;
+	total_score: number | null;
+	created_at: string;
+}
+
 export interface DeadJob {
 	id: string;
 	job_type: string;
@@ -138,4 +149,7 @@ export const jobsApi = {
 
 	compareJobs: (campaignId: string, jobIdA: string, jobIdB: string): Promise<JobDiff[]> =>
 		apiFetch(`/api/campaigns/${campaignId}/diff?job_id_a=${jobIdA}&job_id_b=${jobIdB}`),
+
+	getEntityCrossCampaign: (gwmId: string): Promise<CrossCampaignResult[]> =>
+		apiFetch(`/api/entities/cross-campaign/${gwmId}`),
 };

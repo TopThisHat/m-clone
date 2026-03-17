@@ -15,6 +15,7 @@ from app.db import (
     db_create_and_enqueue_validation_job,
     db_export_campaign_results,
     db_get_campaign,
+    db_get_entity_cross_campaign,
     db_get_knowledge_for_campaign,
     db_get_queue_job_owner,
     db_get_score_trends,
@@ -22,6 +23,8 @@ from app.db import (
     db_get_validation_job,
     db_is_team_member,
     db_list_dead_jobs,
+    db_list_entities,
+    db_list_attributes,
     db_list_results,
     db_list_validation_jobs,
     db_retry_dead_job,
@@ -59,12 +62,21 @@ async def _get_owned_campaign(campaign_id: str, user_sid: str):
 async def create_job(campaign_id: str, body: JobCreate, user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
+        entity_ids = body.entity_ids
+        attribute_ids = body.attribute_ids
+        # Auto-populate from campaign if not provided
+        if not entity_ids:
+            ent_page = await db_list_entities(campaign_id, limit=0)
+            entity_ids = [e["id"] for e in ent_page["items"]]
+        if not attribute_ids:
+            attr_page = await db_list_attributes(campaign_id, limit=0)
+            attribute_ids = [a["id"] for a in attr_page["items"]]
         job = await db_create_and_enqueue_validation_job(
             campaign_id=campaign_id,
             triggered_by="user",
             triggered_sid=user["sub"],
-            entity_filter=body.entity_ids,
-            attribute_filter=body.attribute_ids,
+            entity_filter=entity_ids,
+            attribute_filter=attribute_ids,
         )
     except DatabaseNotConfigured:
         raise _no_db()
@@ -193,7 +205,7 @@ async def export_campaign_results(
     writer = csv.writer(buf)
     writer.writerow([
         "Entity", "GWM ID", "Attribute", "Present", "Confidence",
-        "Evidence", "Score %", "Attrs Present", "Attrs Checked", "Date",
+        "Evidence", "Score", "Attrs Present", "Attrs Checked", "Date",
     ])
     for r in rows:
         writer.writerow([
@@ -201,9 +213,9 @@ async def export_campaign_results(
             r.get("gwm_id", ""),
             r.get("attribute_label", ""),
             r.get("present", ""),
-            f"{r['confidence'] * 100:.0f}%" if r.get("confidence") is not None else "",
+            f"{r['confidence']:.2f}" if r.get("confidence") is not None else "",
             r.get("evidence", ""),
-            f"{r['total_score'] * 100:.1f}" if r.get("total_score") is not None else "",
+            f"{r['total_score']:.2f}" if r.get("total_score") is not None else "",
             r.get("attributes_present", ""),
             r.get("attributes_checked", ""),
             str(r["created_at"]) if r.get("created_at") else "",
@@ -246,5 +258,13 @@ async def get_knowledge(campaign_id: str, user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         return await db_get_knowledge_for_campaign(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/api/entities/cross-campaign/{gwm_id}")
+async def get_entity_cross_campaign(gwm_id: str, user=Depends(get_current_user)):
+    try:
+        return await db_get_entity_cross_campaign(gwm_id)
     except DatabaseNotConfigured:
         raise _no_db()

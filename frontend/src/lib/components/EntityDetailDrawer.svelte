@@ -1,6 +1,7 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { marked } from 'marked';
-	import type { Score, Result } from '$lib/api/jobs';
+	import { jobsApi, type Score, type Result, type CrossCampaignResult } from '$lib/api/jobs';
 	import type { Attribute } from '$lib/api/attributes';
 
 	interface Props {
@@ -16,6 +17,20 @@
 
 	let expandedResult = $state<string | null>(null);
 	let revalidating = $state(false);
+	let crossResults = $state<CrossCampaignResult[]>([]);
+	let showCross = $state(false);
+
+	onMount(async () => {
+		if (score.gwm_id) {
+			try {
+				crossResults = await jobsApi.getEntityCrossCampaign(score.gwm_id);
+			} catch { /* ignore */ }
+		}
+	});
+
+	let otherCampaignResults = $derived(
+		crossResults.filter((r) => r.campaign_id !== campaignId)
+	);
 
 	const entityResults = $derived(results.filter((r) => r.entity_id === score.entity_id));
 	const attrByLabel = $derived(new Map(attributes.map((a) => [a.label, a])));
@@ -23,7 +38,8 @@
 	const present = $derived(entityResults.filter((r) => r.present));
 	const absent = $derived(entityResults.filter((r) => !r.present));
 	const coveragePct = $derived(attributes.length ? Math.round((entityResults.length / attributes.length) * 100) : 0);
-	const scorePct = $derived(Math.round(score.total_score * 100));
+	const scoreRaw = $derived(score.total_score.toFixed(2));
+	const scoreBarPct = $derived(Math.round(score.total_score * 100));
 
 	function renderMd(md: string | null) {
 		return md ? (marked.parse(md) as string) : '';
@@ -82,7 +98,7 @@
 		<div class="px-5 py-4 border-b border-navy-800">
 			<div class="grid grid-cols-3 gap-3 mb-3">
 				<div class="text-center">
-					<p class="text-2xl font-mono font-bold text-gold">{scorePct}<span class="text-sm text-gold/60">%</span></p>
+					<p class="text-2xl font-mono font-bold text-gold">{scoreRaw}</p>
 					<p class="text-[10px] text-slate-500 mt-0.5">Score</p>
 				</div>
 				<div class="text-center">
@@ -96,7 +112,7 @@
 			</div>
 			<!-- Score bar -->
 			<div class="h-1.5 bg-navy-700 rounded-full">
-				<div class="h-1.5 rounded-full bg-gold transition-all" style="width:{scorePct}%"></div>
+				<div class="h-1.5 rounded-full bg-gold transition-all" style="width:{scoreBarPct}%"></div>
 			</div>
 		</div>
 
@@ -200,6 +216,30 @@
 							</div>
 						{/each}
 					{/if}
+				{/if}
+			{/if}
+
+			<!-- Cross-campaign results -->
+			{#if otherCampaignResults.length > 0}
+				<button
+					onclick={() => (showCross = !showCross)}
+					class="w-full text-left text-[10px] text-slate-600 uppercase tracking-widest mt-4 hover:text-gold transition-colors"
+				>
+					Across campaigns ({otherCampaignResults.length} results) {showCross ? '▾' : '▸'}
+				</button>
+				{#if showCross}
+					<div class="space-y-1 mt-2">
+						{#each otherCampaignResults as cr}
+							<div class="flex items-center gap-2 px-2 py-1.5 bg-navy-800/50 rounded text-xs">
+								<span class="{cr.present ? 'text-green-400' : 'text-red-400'}">{cr.present ? '✓' : '✗'}</span>
+								<span class="text-slate-300 flex-1 min-w-0 truncate">{cr.attribute_label}</span>
+								<span class="text-slate-500 flex-shrink-0">{cr.campaign_name}</span>
+								{#if cr.total_score != null}
+									<span class="text-gold font-mono flex-shrink-0">{cr.total_score.toFixed(2)}</span>
+								{/if}
+							</div>
+						{/each}
+					</div>
 				{/if}
 			{/if}
 		</div>
