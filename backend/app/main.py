@@ -39,52 +39,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print("DEBUG: Including auth_router")
 app.include_router(auth_router)
-print("DEBUG: Including research.router")
 app.include_router(research.router)
-print("DEBUG: Including documents.router")
 app.include_router(documents.router)
-print("DEBUG: Including sessions.router")
 app.include_router(sessions.router)
-print("DEBUG: Including router_public")
 app.include_router(router_public)
-print("DEBUG: Including usage.router")
 app.include_router(usage.router)
-print("DEBUG: Including teams_router")
 app.include_router(teams_router)
-print("DEBUG: Including comments_router")
 app.include_router(comments_router)
-print("DEBUG: Including notifications_router")
 app.include_router(notifications_router)
-print("DEBUG: Including monitors_router")
 app.include_router(monitors_router)
-print("DEBUG: Including campaigns_router")
 app.include_router(campaigns_router)
-print("DEBUG: Including entities_router")
 app.include_router(entities_router)
-print("DEBUG: Including attributes_router")
 app.include_router(attributes_router)
-print("DEBUG: Including jobs_router")
 app.include_router(jobs_router)
-print("DEBUG: Including templates_router")
 app.include_router(templates_router)
-print("DEBUG: Including library_router")
 app.include_router(library_router)
-print("DEBUG: Including kg_router")
 app.include_router(kg_router)
-print("DEBUG: All routers included")
 
 
 @app.on_event("startup")
 async def startup():
-    print("DEBUG: startup event called")
-    # Skip init_schema for now - schema should already exist
-    # if settings.database_url or settings.aws_secret_name:
-    #     await init_schema()
-    print("DEBUG: about to call scheduler.start()")
+    if settings.database_url or settings.aws_secret_name:
+        await init_schema()
     scheduler.start()
-    print("DEBUG: scheduler.start() completed")
 
 
 @app.on_event("shutdown")
