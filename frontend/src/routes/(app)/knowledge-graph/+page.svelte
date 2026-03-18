@@ -97,8 +97,11 @@
 		const colors: Record<string, string> = {
 			PERSON: 'bg-blue-900 text-blue-300',
 			ORGANIZATION: 'bg-purple-900 text-purple-300',
+			COMPANY: 'bg-purple-900 text-purple-300',
+			SPORTS_TEAM: 'bg-orange-900 text-orange-300',
 			LOCATION: 'bg-green-900 text-green-300',
 			EVENT: 'bg-gold/10 text-gold',
+			PRODUCT: 'bg-yellow-900 text-yellow-300',
 			CONCEPT: 'bg-slate-700 text-slate-300',
 		};
 		return colors[type.toUpperCase()] ?? 'bg-navy-700 text-slate-400';
@@ -117,10 +120,16 @@
 			<h1 class="font-serif text-xl text-slate-100">Knowledge Graph</h1>
 			<p class="text-sm text-slate-500 mt-1">Entities and relationships extracted from research sessions.</p>
 		</div>
-		<a href="/knowledge-graph/conflicts"
-			class="text-xs bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg hover:bg-navy-600 transition-colors">
-			View Conflicts
-		</a>
+		<div class="flex items-center gap-2">
+			<a href="/knowledge-graph/explore"
+				class="text-xs bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg hover:bg-gold-light transition-colors">
+				Explore Graph
+			</a>
+			<a href="/knowledge-graph/conflicts"
+				class="text-xs bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg hover:bg-navy-600 transition-colors">
+				View Conflicts
+			</a>
+		</div>
 	</div>
 
 	<!-- Stats -->

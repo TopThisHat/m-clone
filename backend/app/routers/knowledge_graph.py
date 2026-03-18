@@ -5,8 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
+    db_get_deal_partners,
     db_get_entity_relationships,
     db_get_kg_entity,
+    db_get_kg_graph,
     db_get_kg_stats,
     db_list_kg_conflicts,
     db_list_kg_entities,
@@ -72,6 +74,29 @@ async def search_entities(q: str = Query(), user=Depends(get_current_user)):
 async def get_stats(user=Depends(get_current_user)):
     try:
         return await db_get_kg_stats()
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/graph")
+async def get_graph(
+    entity_types: str | None = Query(default=None, description="Comma-separated entity types"),
+    predicate_families: str | None = Query(default=None, description="Comma-separated predicate families"),
+    limit: int = Query(default=500, le=2000),
+    user=Depends(get_current_user),
+):
+    try:
+        et = [t.strip() for t in entity_types.split(",")] if entity_types else None
+        pf = [f.strip() for f in predicate_families.split(",")] if predicate_families else None
+        return await db_get_kg_graph(entity_types=et, predicate_families=pf, limit=limit)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/deal-partners")
+async def get_deal_partners(user=Depends(get_current_user)):
+    try:
+        return await db_get_deal_partners()
     except DatabaseNotConfigured:
         raise _no_db()
 

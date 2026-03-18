@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class ExtractedEntity(BaseModel):
     name: str
-    type: str  # person | company | location | product | other
+    type: str  # person | company | sports_team | location | product | other
     aliases: list[str] = []
 
 
@@ -53,7 +53,7 @@ async def extract_entities_and_relationships(report_md: str) -> ExtractionResult
 Return ONLY valid JSON matching this schema:
 {{
   "entities": [
-    {{"name": "string", "type": "person|company|location|product|other", "aliases": ["alt name", ...]}}
+    {{"name": "string", "type": "person|company|sports_team|location|product|other", "aliases": ["alt name", ...]}}
   ],
   "relationships": [
     {{
@@ -68,7 +68,8 @@ Return ONLY valid JSON matching this schema:
 }}
 
 Only include entities and relationships that are clearly stated in the report.
-Use canonical, full names for entities. Predicate families must be one of:
+Use canonical, full names for entities. Use "sports_team" type for sports franchises/clubs
+(not "company"). Predicate families must be one of:
 ownership, employment, transaction, location, partnership.
 
 Research report:

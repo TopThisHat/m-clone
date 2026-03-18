@@ -51,6 +51,45 @@ export interface KGEntityPage {
 	total: number;
 }
 
+export interface KGGraphNode {
+	id: string;
+	name: string;
+	entity_type: string;
+	aliases: string[];
+}
+
+export interface KGGraphEdge {
+	id: string;
+	source: string;
+	target: string;
+	predicate: string;
+	predicate_family: string;
+	confidence: number;
+}
+
+export interface KGGraph {
+	nodes: KGGraphNode[];
+	edges: KGGraphEdge[];
+}
+
+export interface DealPartnerPerson {
+	id: string;
+	name: string;
+}
+
+export interface SharedDeal {
+	entity_id: string;
+	entity_name: string;
+	person1_predicate: string;
+	person2_predicate: string;
+}
+
+export interface DealPartnerGroup {
+	person1: DealPartnerPerson;
+	person2: DealPartnerPerson;
+	shared_deals: SharedDeal[];
+}
+
 export const kgApi = {
 	listEntities: (params: {
 		search?: string;
@@ -80,4 +119,19 @@ export const kgApi = {
 
 	getConflicts: (limit = 50, offset = 0): Promise<KGConflict[]> =>
 		apiFetch(`/api/kg/conflicts?limit=${limit}&offset=${offset}`),
+
+	getGraph: (params: {
+		entity_types?: string[];
+		predicate_families?: string[];
+		limit?: number;
+	} = {}): Promise<KGGraph> => {
+		const q = new URLSearchParams();
+		if (params.entity_types?.length) q.set('entity_types', params.entity_types.join(','));
+		if (params.predicate_families?.length) q.set('predicate_families', params.predicate_families.join(','));
+		if (params.limit !== undefined) q.set('limit', String(params.limit));
+		return apiFetch(`/api/kg/graph?${q}`);
+	},
+
+	getDealPartners: (): Promise<DealPartnerGroup[]> =>
+		apiFetch('/api/kg/deal-partners'),
 };

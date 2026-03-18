@@ -2773,6 +2773,106 @@ async def db_list_kg_conflicts(limit: int = 50, offset: int = 0) -> list[dict[st
     return result
 
 
+# ── KG Graph / Deal-Partners ──────────────────────────────────────────────────
+
+async def db_get_kg_graph(
+    entity_types: list[str] | None = None,
+    predicate_families: list[str] | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    """Return nodes + edges for the D3 force-directed graph explorer."""
+    conditions = ["r.is_active = TRUE"]
+    args: list[Any] = []
+    idx = 0
+    if entity_types:
+        idx += 1
+        conditions.append(f"(s.entity_type = ANY(${idx}::text[]) OR o.entity_type = ANY(${idx}::text[]))")
+        args.append(entity_types)
+    if predicate_families:
+        idx += 1
+        conditions.append(f"r.predicate_family = ANY(${idx}::text[])")
+        args.append(predicate_families)
+    where = " AND ".join(conditions)
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            SELECT r.id, r.subject_id, r.object_id, r.predicate, r.predicate_family, r.confidence,
+                   s.name AS subject_name, s.entity_type AS subject_type, s.aliases AS subject_aliases,
+                   o.name AS object_name, o.entity_type AS object_type, o.aliases AS object_aliases
+            FROM playbook.kg_relationships r
+            JOIN playbook.kg_entities s ON s.id = r.subject_id
+            JOIN playbook.kg_entities o ON o.id = r.object_id
+            WHERE {where}
+            ORDER BY r.created_at DESC
+            LIMIT {limit}
+            """,
+            *args,
+        )
+    # Build unique node set from edges
+    node_map: dict[str, dict[str, Any]] = {}
+    edges: list[dict[str, Any]] = []
+    for r in rows:
+        sid = str(r["subject_id"])
+        oid = str(r["object_id"])
+        if sid not in node_map:
+            node_map[sid] = {"id": sid, "name": r["subject_name"], "entity_type": r["subject_type"],
+                             "aliases": list(r["subject_aliases"] or [])}
+        if oid not in node_map:
+            node_map[oid] = {"id": oid, "name": r["object_name"], "entity_type": r["object_type"],
+                             "aliases": list(r["object_aliases"] or [])}
+        edges.append({
+            "id": str(r["id"]),
+            "source": sid,
+            "target": oid,
+            "predicate": r["predicate"],
+            "predicate_family": r["predicate_family"],
+            "confidence": float(r["confidence"]),
+        })
+    return {"nodes": list(node_map.values()), "edges": edges}
+
+
+async def db_get_deal_partners() -> list[dict[str, Any]]:
+    """Find pairs of persons connected to the same entity via transaction relationships."""
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            WITH person_deals AS (
+                SELECT r.subject_id AS person_id, pe.name AS person_name,
+                       r.object_id AS deal_entity_id, de.name AS deal_entity_name,
+                       r.predicate
+                FROM playbook.kg_relationships r
+                JOIN playbook.kg_entities pe ON pe.id = r.subject_id AND pe.entity_type = 'person'
+                JOIN playbook.kg_entities de ON de.id = r.object_id
+                WHERE r.predicate_family = 'transaction' AND r.is_active = TRUE
+            )
+            SELECT a.person_id AS person1_id, a.person_name AS person1_name,
+                   b.person_id AS person2_id, b.person_name AS person2_name,
+                   a.deal_entity_id, a.deal_entity_name,
+                   a.predicate AS person1_predicate, b.predicate AS person2_predicate
+            FROM person_deals a
+            JOIN person_deals b ON a.deal_entity_id = b.deal_entity_id AND a.person_id < b.person_id
+            ORDER BY a.person1_name, b.person2_name
+            """
+        )
+    # Group by person pair
+    groups: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        key = f"{r['person1_id']}:{r['person2_id']}"
+        if key not in groups:
+            groups[key] = {
+                "person1": {"id": str(r["person1_id"]), "name": r["person1_name"]},
+                "person2": {"id": str(r["person2_id"]), "name": r["person2_name"]},
+                "shared_deals": [],
+            }
+        groups[key]["shared_deals"].append({
+            "entity_id": str(r["deal_entity_id"]),
+            "entity_name": r["deal_entity_name"],
+            "person1_predicate": r["person1_predicate"],
+            "person2_predicate": r["person2_predicate"],
+        })
+    return list(groups.values())
+
+
 # ── Dead-letter management ─────────────────────────────────────────────────────
 
 async def db_list_dead_jobs(campaign_id: str) -> list[dict[str, Any]]:
@@ -3043,19 +3143,19 @@ async def db_list_entity_library(
             if limit == 0:
                 rows = await conn.fetch(
                     """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entity_library
-                       WHERE team_id=$2::uuid
-                         AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
+                       WHERE team_id=$1::uuid
+                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                        ORDER BY created_at ASC""",
-                    owner_sid, team_id, search,
+                    team_id, search,
                 )
             else:
                 rows = await conn.fetch(
                     """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entity_library
-                       WHERE team_id=$2::uuid
-                         AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
+                       WHERE team_id=$1::uuid
+                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                        ORDER BY created_at ASC
-                       LIMIT $4 OFFSET $5""",
-                    owner_sid, team_id, search, limit, offset,
+                       LIMIT $3 OFFSET $4""",
+                    team_id, search, limit, offset,
                 )
         else:
             if limit == 0:
@@ -3163,19 +3263,19 @@ async def db_list_attribute_library(
             if limit == 0:
                 rows = await conn.fetch(
                     """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attribute_library
-                       WHERE team_id=$2::uuid
-                         AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
+                       WHERE team_id=$1::uuid
+                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                        ORDER BY created_at ASC""",
-                    owner_sid, team_id, search,
+                    team_id, search,
                 )
             else:
                 rows = await conn.fetch(
                     """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attribute_library
-                       WHERE team_id=$2::uuid
-                         AND ($3::text IS NULL OR label ILIKE '%' || $3 || '%')
+                       WHERE team_id=$1::uuid
+                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                        ORDER BY created_at ASC
-                       LIMIT $4 OFFSET $5""",
-                    owner_sid, team_id, search, limit, offset,
+                       LIMIT $3 OFFSET $4""",
+                    team_id, search, limit, offset,
                 )
         else:
             if limit == 0:
