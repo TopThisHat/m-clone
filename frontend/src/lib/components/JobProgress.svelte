@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { jobsApi, type Job } from '$lib/api/jobs';
 
-	let { jobId, onDone }: { jobId: string; onDone?: (job: Job) => void } = $props();
+	let { jobId, onDone, onProgress }: { jobId: string; onDone?: (job: Job) => void; onProgress?: (job: Job) => void } = $props();
 
 	let job = $state<Job | null>(null);
 	let interval: ReturnType<typeof setInterval> | null = null;
@@ -16,6 +16,8 @@
 					interval = null;
 				}
 				onDone?.(job);
+			} else if (job && job.status === 'running') {
+				onProgress?.(job);
 			}
 		} catch {
 			// ignore polling errors

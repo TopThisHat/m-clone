@@ -17,6 +17,7 @@ from app.db import (
     db_get_campaign,
     db_get_entity_cross_campaign,
     db_get_knowledge_for_campaign,
+    db_get_live_scores,
     db_get_queue_job_owner,
     db_get_score_trends,
     db_get_scores,
@@ -142,6 +143,22 @@ async def get_scores(campaign_id: str, user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         return await db_get_scores(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/api/jobs/{job_id}/live-scores", response_model=list[ScoreOut])
+async def get_live_scores(job_id: str, user=Depends(get_current_user)):
+    """Compute scores on-the-fly from results already produced by an in-progress job."""
+    try:
+        job = await db_get_validation_job(job_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await _get_owned_campaign(job["campaign_id"], user["sub"])
+    try:
+        return await db_get_live_scores(job_id)
     except DatabaseNotConfigured:
         raise _no_db()
 

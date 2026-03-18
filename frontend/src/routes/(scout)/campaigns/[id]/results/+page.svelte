@@ -34,6 +34,10 @@
 	let revalidateJob = $state<Job | null>(null);
 	let revalidating = $state(false);
 
+	// Active job tracking (detected on mount or via re-validate)
+	let activeJob = $state<Job | null>(null);
+	let lastResultCount = $state(0);
+
 	// Entity detail drawer
 	let drawerScore = $state<Score | null>(null);
 
@@ -93,6 +97,8 @@
 		try {
 			const job = await jobsApi.create(campaignId, { entity_ids: entityIds });
 			revalidateJob = job;
+			activeJob = job;
+			lastResultCount = 0;
 			selectedEntityIds = new Set();
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to start job');
@@ -103,6 +109,38 @@
 
 	function exportCSV() {
 		window.location.href = `/api/campaigns/${campaignId}/export?format=csv`;
+	}
+
+	async function loadResultsForJobs(jobs: Job[]) {
+		const allResults: Result[] = [];
+		for (const job of jobs.slice(0, 5)) {
+			const r = await jobsApi.getResults(job.id, { limit: 500 });
+			allResults.push(...r);
+		}
+		const seen = new Map<string, Result>();
+		for (const r of allResults) seen.set(`${r.entity_id}:${r.attribute_id}`, r);
+		return [...seen.values()];
+	}
+
+	async function refreshIncrementalResults() {
+		if (!activeJob) return;
+		try {
+			const [liveScores, liveResults] = await Promise.all([
+				jobsApi.getLiveScores(activeJob.id),
+				jobsApi.getResults(activeJob.id, { limit: 500 }),
+			]);
+			// Merge live scores with existing finalized scores
+			const scoreMap = new Map(scores.map((s) => [s.entity_id, s]));
+			for (const ls of liveScores) scoreMap.set(ls.entity_id, ls);
+			scores = [...scoreMap.values()];
+			// Merge live results with existing results
+			const seen = new Map(results.map((r) => [`${r.entity_id}:${r.attribute_id}`, r]));
+			for (const r of liveResults) seen.set(`${r.entity_id}:${r.attribute_id}`, r);
+			results = [...seen.values()];
+			lastResultCount = liveResults.length;
+		} catch {
+			// ignore incremental refresh errors
+		}
 	}
 
 	onMount(async () => {
@@ -118,15 +156,24 @@
 			attributes = attributesResult.items;
 			knowledge = knowledgeResult;
 			const jobs = await jobsApi.list(campaignId);
+
+			// Check for running/queued job
+			const runningJob = jobs.find((j) => j.status === 'running' || j.status === 'queued');
+			if (runningJob) {
+				activeJob = runningJob;
+				// Load whatever results exist so far
+				if (runningJob.status === 'running' && runningJob.completed_pairs > 0) {
+					await refreshIncrementalResults();
+				}
+			}
+
+			// Also load results from done jobs
 			const doneJobs = jobs.filter((j) => j.status === 'done');
 			if (doneJobs.length > 0) {
-				const allResults: Result[] = [];
-				for (const job of doneJobs.slice(0, 5)) {
-					const r = await jobsApi.getResults(job.id, { limit: 500 });
-					allResults.push(...r);
-				}
-				const seen = new Map<string, Result>();
-				for (const r of allResults) seen.set(`${r.entity_id}:${r.attribute_id}`, r);
+				const doneResults = await loadResultsForJobs(doneJobs);
+				// Merge (live results take precedence since they may be newer)
+				const seen = new Map(doneResults.map((r) => [`${r.entity_id}:${r.attribute_id}`, r]));
+				for (const r of results) seen.set(`${r.entity_id}:${r.attribute_id}`, r);
 				results = [...seen.values()];
 			}
 		} catch (err: unknown) {
@@ -136,23 +183,23 @@
 		}
 	});
 
-	async function onRevalidateJobDone() {
-		// Refresh scores/results after re-validation completes
-		[scores, knowledge] = await Promise.all([
+	async function onJobProgress(_job: Job) {
+		await refreshIncrementalResults();
+	}
+
+	async function onActiveJobDone() {
+		activeJob = null;
+		revalidateJob = null;
+		// Final refresh with finalized scores
+		const [finalScores, finalKnowledge] = await Promise.all([
 			jobsApi.getScores(campaignId),
 			jobsApi.getKnowledge(campaignId),
 		]);
+		scores = finalScores;
+		knowledge = finalKnowledge;
 		const jobs = await jobsApi.list(campaignId);
 		const doneJobs = jobs.filter((j) => j.status === 'done');
-		const allResults: Result[] = [];
-		for (const job of doneJobs.slice(0, 5)) {
-			const r = await jobsApi.getResults(job.id, { limit: 500 });
-			allResults.push(...r);
-		}
-		const seen = new Map<string, Result>();
-		for (const r of allResults) seen.set(`${r.entity_id}:${r.attribute_id}`, r);
-		results = [...seen.values()];
-		revalidateJob = null;
+		results = await loadResultsForJobs(doneJobs);
 	}
 </script>
 
@@ -182,10 +229,17 @@
 		</div>
 	</div>
 
-	<!-- Re-validate job progress -->
-	{#if revalidateJob}
-		<div class="mb-4">
-			<JobProgress jobId={revalidateJob.id} onDone={onRevalidateJobDone} />
+	<!-- Active job progress (running on mount or re-validation) -->
+	{#if activeJob}
+		<div class="mb-4 bg-navy-800 border border-navy-700 rounded-xl p-3">
+			<div class="flex items-center gap-2 mb-2">
+				<span class="relative flex h-2.5 w-2.5">
+					<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-gold opacity-75"></span>
+					<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-gold"></span>
+				</span>
+				<span class="text-xs text-slate-400">Results updating live as pairs complete</span>
+			</div>
+			<JobProgress jobId={activeJob.id} onDone={onActiveJobDone} onProgress={onJobProgress} />
 		</div>
 	{/if}
 

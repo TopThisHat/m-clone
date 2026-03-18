@@ -130,6 +130,9 @@ export const jobsApi = {
 	getScores: (campaignId: string): Promise<Score[]> =>
 		apiFetch(`/api/campaigns/${campaignId}/scores`),
 
+	getLiveScores: (jobId: string): Promise<Score[]> =>
+		apiFetch(`/api/jobs/${jobId}/live-scores`),
+
 	getKnowledge: (campaignId: string): Promise<Knowledge[]> =>
 		apiFetch(`/api/campaigns/${campaignId}/knowledge`),
 

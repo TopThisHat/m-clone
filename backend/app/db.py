@@ -2241,6 +2241,33 @@ async def db_recompute_scores(job_id: str) -> None:
         )
 
 
+async def db_get_live_scores(job_id: str) -> list[dict[str, Any]]:
+    """Compute scores on-the-fly from validation_results for an in-progress job."""
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                r.entity_id,
+                j.campaign_id,
+                e.label AS entity_label,
+                e.gwm_id,
+                SUM(CASE WHEN r.present THEN a.weight ELSE 0 END) AS total_score,
+                COUNT(CASE WHEN r.present THEN 1 END)::int AS attributes_present,
+                COUNT(*)::int AS attributes_checked,
+                MAX(r.created_at) AS last_updated
+            FROM playbook.validation_results r
+            JOIN playbook.validation_jobs j ON r.job_id = j.id
+            JOIN playbook.attributes a ON r.attribute_id = a.id
+            JOIN playbook.entities e ON r.entity_id = e.id
+            WHERE r.job_id = $1::uuid
+            GROUP BY r.entity_id, j.campaign_id, e.label, e.gwm_id
+            ORDER BY SUM(CASE WHEN r.present THEN a.weight ELSE 0 END) DESC
+            """,
+            job_id,
+        )
+    return [_score_row_to_dict(r) for r in rows]
+
+
 async def db_get_entity_cross_campaign(gwm_id: str) -> list[dict[str, Any]]:
     """Get validation results for an entity (by gwm_id) across all campaigns."""
     async with _acquire() as conn:
