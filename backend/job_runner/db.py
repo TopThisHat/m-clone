@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import asyncpg
 
 from job_runner.config import settings
@@ -26,5 +28,8 @@ async def get_pool() -> asyncpg.Pool:
 async def close_pool() -> None:
     global _pool
     if _pool is not None:
-        await _pool.close()
+        try:
+            await asyncio.wait_for(_pool.close(), timeout=5.0)
+        except asyncio.TimeoutError:
+            _pool.terminate()
         _pool = None

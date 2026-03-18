@@ -54,6 +54,8 @@
 			entities = resp.items;
 			totalCount = resp.total;
 		} catch (err: unknown) {
+			entities = [];
+			totalCount = 0;
 			error = err instanceof Error ? err.message : 'Failed to load library';
 		} finally {
 			loading = false;

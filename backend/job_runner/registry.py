@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
@@ -11,7 +12,8 @@ class BaseWorkflow(ABC):
     def __init__(self, job: dict[str, Any]) -> None:
         self.job = job
         self.job_id: str = str(job["id"])
-        self.payload: dict = job.get("payload") or {}
+        raw = job.get("payload") or {}
+        self.payload: dict = json.loads(raw) if isinstance(raw, str) else raw
 
     @abstractmethod
     async def run(self) -> None: ...

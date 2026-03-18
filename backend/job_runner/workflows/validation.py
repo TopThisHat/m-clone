@@ -3,6 +3,7 @@ Validation workflows: campaign fan-out + per-pair research/scoring.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -27,7 +28,8 @@ class ValidationCampaignWorkflow(BaseWorkflow):
         Mark the validation_job as failed so it is not stuck in 'queued' forever.
         """
         from app.db import db_update_validation_job
-        payload = job.get("payload") or {}
+        raw = job.get("payload") or {}
+        payload = json.loads(raw) if isinstance(raw, str) else raw
         validation_job_id = payload.get("validation_job_id")
         if not validation_job_id:
             return
@@ -357,7 +359,8 @@ class ValidationPairWorkflow(BaseWorkflow):
         root_id = str(job["root_job_id"]) if job.get("root_job_id") else None
         if not root_id:
             return
-        payload = job.get("payload") or {}
+        raw = job.get("payload") or {}
+        payload = json.loads(raw) if isinstance(raw, str) else raw
         validation_job_id = payload.get("validation_job_id")
         if not validation_job_id:
             return

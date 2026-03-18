@@ -109,12 +109,12 @@ class WorkerPool:
             finally:
                 if conn is not None:
                     try:
-                        await conn.remove_listener(settings.listen_channel, self._on_notify)
+                        await asyncio.shield(conn.remove_listener(settings.listen_channel, self._on_notify))
                     except Exception:
                         pass
                     try:
                         pool = await get_pool()
-                        await pool.release(conn)
+                        await asyncio.shield(pool.release(conn))
                     except Exception:
                         pass
                 self._listen_conn = None

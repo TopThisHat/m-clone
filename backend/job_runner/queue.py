@@ -246,14 +246,13 @@ async def enqueue_many(
             (job_type, payload, parent_job_id, root_job_id,
              max_attempts, priority, run_at, validation_job_id)
         SELECT
-            unnest($1::text[]),
-            unnest($2::jsonb[]),
-            unnest($3::uuid[]),
-            unnest($4::uuid[]),
-            unnest($5::int[]),
-            unnest($6::int[]),
-            COALESCE(unnest($7::timestamptz[]), NOW()),
-            unnest($8::uuid[])
+            t.job_type, t.payload, t.parent_job_id, t.root_job_id,
+            t.max_attempts, t.priority, COALESCE(t.run_at, NOW()), t.validation_job_id
+        FROM unnest(
+            $1::text[], $2::jsonb[], $3::uuid[], $4::uuid[],
+            $5::int[], $6::int[], $7::timestamptz[], $8::uuid[]
+        ) AS t(job_type, payload, parent_job_id, root_job_id,
+               max_attempts, priority, run_at, validation_job_id)
         RETURNING id
         """,
         job_types, payloads, parent_ids, root_ids,

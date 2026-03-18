@@ -368,11 +368,3 @@
 	{/if}
 </div>
 
-<style>
-	.btn-gold {
-		@apply bg-gold text-navy font-semibold px-4 py-2 rounded-lg hover:bg-gold-light transition-colors text-sm;
-	}
-	.btn-secondary {
-		@apply bg-navy-700 text-slate-300 px-4 py-2 rounded-lg hover:bg-navy-600 transition-colors text-sm border border-navy-600;
-	}
-</style>
