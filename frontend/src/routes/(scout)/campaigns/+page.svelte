@@ -12,6 +12,40 @@
 	let cloning = $state<Set<string>>(new Set());
 	let runningIds = $state<Set<string>>(new Set());
 
+	// Inline edit state
+	let editingId = $state<string | null>(null);
+	let editName = $state('');
+	let editDesc = $state('');
+	let savingEdit = $state(false);
+
+	function startEdit(c: Campaign, e: Event) {
+		e.preventDefault();
+		e.stopPropagation();
+		editingId = c.id;
+		editName = c.name;
+		editDesc = c.description ?? '';
+	}
+
+	function cancelEdit() {
+		editingId = null;
+	}
+
+	async function saveEdit(id: string) {
+		savingEdit = true;
+		try {
+			const updated = await campaignsApi.update(id, {
+				name: editName,
+				description: editDesc || undefined,
+			});
+			campaigns = campaigns.map((c) => (c.id === id ? updated : c));
+			editingId = null;
+		} catch (err: unknown) {
+			alert(err instanceof Error ? err.message : 'Failed to save');
+		} finally {
+			savingEdit = false;
+		}
+	}
+
 	async function loadCampaigns(teamId: string | null) {
 		loading = true;
 		error = '';
@@ -189,6 +223,37 @@
 				{@const fresh = resultFreshness(c)}
 				{@const job = latestJobs[c.id]}
 				<div class="bg-navy-800 border border-navy-700 rounded-xl p-5 hover:border-navy-600 transition-all flex flex-col gap-3">
+					{#if editingId === c.id}
+						<!-- Inline edit mode -->
+						<div class="space-y-2">
+							<input
+								bind:value={editName}
+								placeholder="Campaign name"
+								class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
+							/>
+							<textarea
+								bind:value={editDesc}
+								placeholder="Description (optional)"
+								rows="2"
+								class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold resize-none"
+							></textarea>
+							<div class="flex gap-2">
+								<button
+									onclick={() => saveEdit(c.id)}
+									disabled={savingEdit || !editName.trim()}
+									class="bg-gold text-navy font-semibold px-3 py-1 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50"
+								>
+									{savingEdit ? 'Saving…' : 'Save'}
+								</button>
+								<button
+									onclick={cancelEdit}
+									class="text-xs text-slate-400 hover:text-slate-300 px-3 py-1 border border-navy-600 rounded-lg"
+								>
+									Cancel
+								</button>
+							</div>
+						</div>
+					{:else}
 					<!-- Top row: name + status pill -->
 					<div class="flex items-start justify-between gap-2">
 						<a href="/campaigns/{c.id}" class="font-medium text-slate-200 hover:text-gold transition-colors leading-snug flex-1">
@@ -256,6 +321,7 @@
 						</div>
 					{/if}
 
+					{/if}
 					<!-- Footer actions -->
 					<div class="flex items-center gap-1 pt-1 border-t border-navy-700 mt-auto">
 						<a href="/campaigns/{c.id}/results" class="text-xs text-slate-500 hover:text-gold transition-colors px-2 py-1 rounded hover:bg-navy-700">
@@ -265,6 +331,14 @@
 							Jobs
 						</a>
 						<div class="flex-1"></div>
+						<button
+							onclick={(e) => startEdit(c, e)}
+							aria-label="Edit campaign {c.name}"
+							title="Edit campaign"
+							class="text-xs text-slate-600 hover:text-gold p-1.5 rounded hover:bg-navy-700 transition-colors"
+						>
+							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+						</button>
 						<button
 							onclick={(e) => cloneCampaign(c.id, e)}
 							disabled={cloning.has(c.id)}

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import sys
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -58,8 +59,15 @@ async def main() -> None:
         return handler
 
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, _make_signal_handler(worker))
+    if sys.platform != "win32":
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, _make_signal_handler(worker))
+    else:
+        # Windows does not support add_signal_handler; use signal.signal instead
+        def _win_handler(signum, frame):  # type: ignore[no-untyped-def]
+            _make_signal_handler(worker)()
+        signal.signal(signal.SIGTERM, _win_handler)
+        signal.signal(signal.SIGINT, _win_handler)
 
     try:
         await worker.run()

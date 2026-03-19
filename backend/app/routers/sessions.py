@@ -364,13 +364,15 @@ async def get_public_session(session_id: str, user=Depends(get_optional_user)):
             return row
 
         # Case 2: team-shared — requires auth + team membership
-        if user:
-            row = await db_get_session(session_id)
-            if row and row.get("visibility") == "team":
-                session_team_ids = set(await db_get_session_teams(session_id))
-                user_team_ids = {t["id"] for t in await db_list_user_teams(user["sub"])}
-                if session_team_ids & user_team_ids:
-                    return row
+        row = await db_get_session(session_id)
+        if row and row.get("visibility") == "team":
+            if not user:
+                raise HTTPException(status_code=401, detail="Authentication required to view this team-shared report")
+            session_team_ids = set(await db_get_session_teams(session_id))
+            user_team_ids = {t["id"] for t in await db_list_user_teams(user["sub"])}
+            if session_team_ids & user_team_ids:
+                return row
+            raise HTTPException(status_code=403, detail="You do not have access to this team-shared report")
     except DatabaseNotConfigured:
         raise _no_db()
 

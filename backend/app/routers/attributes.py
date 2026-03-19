@@ -101,10 +101,25 @@ async def update_attribute(campaign_id: str, attribute_id: str, body: AttributeU
 @router.post("/{campaign_id}/attributes/bulk", response_model=BulkAttributeResult, status_code=201)
 async def bulk_create_attributes(campaign_id: str, body: list[AttributeCreate], user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
+    if not body:
+        return {"inserted": [], "skipped": 0}
+    # Deduplicate within the request itself (keep first occurrence)
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for a in body:
+        key = a.label.strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(a.model_dump())
+    skipped_in_request = len(body) - len(deduped)
     try:
-        return await db_bulk_create_attributes(campaign_id, [a.model_dump() for a in body])
+        result = await db_bulk_create_attributes(campaign_id, deduped)
+        result["skipped"] = result.get("skipped", 0) + skipped_in_request
+        return result
     except DatabaseNotConfigured:
         raise _no_db()
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Bulk insert failed: {exc}")
 
 
 @router.post("/{campaign_id}/attributes/import", response_model=list[AttributeOut], status_code=201)

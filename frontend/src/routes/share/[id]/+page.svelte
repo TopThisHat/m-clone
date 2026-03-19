@@ -22,6 +22,7 @@
 		type SessionDiff,
 	} from '$lib/api/sessions';
 	import { currentUser } from '$lib/stores/authStore';
+	import { theme } from '$lib/stores/themeStore';
 	import { sessionComments } from '$lib/stores/reportStore';
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { tableExport } from '$lib/actions/tableExport';
@@ -230,23 +231,34 @@
 		URL.revokeObjectURL(url);
 	}
 
+	let pdfGenerating = $state(false);
+	let pdfError = $state('');
+
 	async function downloadPdf() {
 		const el = document.getElementById('share-report-content');
-		if (!el) return;
+		if (!el || pdfGenerating) return;
+		pdfGenerating = true;
+		pdfError = '';
 		try {
+			// Add PDF-safe class to neutralize CSS functions html2canvas can't handle
+			el.classList.add('pdf-rendering');
 			const html2pdf = (await import('html2pdf.js')).default;
-			html2pdf()
+			await html2pdf()
 				.set({
 					margin: 12,
 					filename: `${session.title.slice(0, 60).replace(/[^a-z0-9]/gi, '-')}.pdf`,
-					image: { type: 'jpeg', quality: 0.98 },
-					html2canvas: { scale: 2 },
-					jsPDF: { unit: 'mm', format: 'a4' }
+					image: { type: 'jpeg', quality: 0.92 },
+					html2canvas: { scale: 1.5, useCORS: true, logging: false },
+					jsPDF: { unit: 'mm', format: 'a4' },
+					pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
 				})
 				.from(el)
 				.save();
-		} catch {
-			// ignore
+		} catch (e) {
+			pdfError = 'PDF generation failed. Try downloading as Markdown or DOCX instead.';
+		} finally {
+			el?.classList.remove('pdf-rendering');
+			pdfGenerating = false;
 		}
 	}
 
@@ -277,15 +289,15 @@
 	{/if}
 </svelte:head>
 
-<div class="min-h-screen bg-navy-950">
+<div class="min-h-screen bg-navy-950" class:light={$theme === 'light'}>
 	<!-- Sticky top bar -->
-	<div class="sticky top-0 z-20 bg-navy-950/95 backdrop-blur border-b border-navy-800">
+	<div class="sticky top-0 z-20 bg-navy-950/95 backdrop-blur border-b border-navy-700">
 		<div class="max-w-6xl mx-auto px-4 sm:px-6 flex items-center gap-3 h-12">
-			<div class="w-6 h-6 bg-gold rounded-sm flex items-center justify-center flex-shrink-0">
-				<span class="text-navy font-serif font-bold text-xs">P</span>
-			</div>
-			<span class="text-xs text-gold font-medium tracking-wide hidden sm:inline">Playbook Research</span>
-			<span class="text-navy-600 hidden sm:inline">·</span>
+			<a href="/" class="flex items-center gap-2 flex-shrink-0">
+				<div class="w-6 h-6 bg-gold rounded-sm flex items-center justify-center">
+					<span class="text-navy font-serif font-bold text-xs">P</span>
+				</div>
+			</a>
 			<span class="text-xs text-slate-500 truncate flex-1">{session.title}</span>
 
 			<!-- Presence avatars (Feature 11) -->
@@ -405,13 +417,22 @@
 				<div class="flex gap-2 mb-5 flex-wrap">
 					<button
 						onclick={downloadPdf}
-						class="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs text-slate-400 hover:text-gold border border-navy-700 hover:border-gold/30 bg-navy-900 transition-colors"
+						disabled={pdfGenerating}
+						class="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs text-slate-400 hover:text-gold border border-navy-700 hover:border-gold/30 bg-navy-900 transition-colors disabled:opacity-50"
 					>
-						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h4a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-						</svg>
-						Download PDF
+						{#if pdfGenerating}
+							<span class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
+							Generating PDF…
+						{:else}
+							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h4a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+							</svg>
+							Download PDF
+						{/if}
 					</button>
+					{#if pdfError}
+						<span class="text-xs text-red-400">{pdfError}</span>
+					{/if}
 					<button
 						onclick={downloadMarkdown}
 						class="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs text-slate-400 hover:text-gold border border-navy-700 hover:border-gold/30 bg-navy-900 transition-colors"

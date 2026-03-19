@@ -159,7 +159,8 @@
 							class="flex flex-col items-center gap-1 px-3 py-3 rounded-lg border text-center transition-all
 								{mode === val
 									? 'border-gold/60 bg-gold/5 text-gold'
-									: 'border-navy-600 hover:border-navy-500 text-slate-400 hover:text-slate-300'}"
+									: 'border-navy-600 hover:border-navy-500 text-slate-400 hover:text-slate-300'}
+								{saving ? 'opacity-60' : ''}"
 						>
 							{#if val === 'private'}
 								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -179,6 +180,13 @@
 						</button>
 					{/each}
 				</div>
+
+				{#if saving}
+					<div class="flex items-center gap-2 text-xs text-slate-400">
+						<span class="w-3 h-3 border-2 border-gold border-t-transparent rounded-full animate-spin"></span>
+						{mode === 'public' ? 'Generating public link…' : 'Updating sharing…'}
+					</div>
+				{/if}
 
 				<!-- Team selector (visible when mode is team) -->
 				{#if mode === 'team' || (mode !== 'public' && teams.length > 0)}

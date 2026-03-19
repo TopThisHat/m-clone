@@ -182,6 +182,16 @@
 		libraryEntitySelectedIds = next;
 	}
 
+	let allLibEntitiesSelected = $derived(libraryEntities.length > 0 && libraryEntities.every((e) => libraryEntitySelectedIds.has(e.id)));
+
+	function toggleAllLibraryEntities() {
+		if (allLibEntitiesSelected) {
+			libraryEntitySelectedIds = new Set();
+		} else {
+			libraryEntitySelectedIds = new Set(libraryEntities.map((e) => e.id));
+		}
+	}
+
 	async function importFromEntityLibrary() {
 		if (!campaign || libraryEntitySelectedIds.size === 0) return;
 		importingEntityLib = true;
@@ -225,6 +235,16 @@
 		const next = new Set(libraryAttrSelectedIds);
 		if (next.has(id)) next.delete(id); else next.add(id);
 		libraryAttrSelectedIds = next;
+	}
+
+	let allLibAttrsSelected = $derived(libraryAttrs.length > 0 && libraryAttrs.every((a) => libraryAttrSelectedIds.has(a.id)));
+
+	function toggleAllLibraryAttrs() {
+		if (allLibAttrsSelected) {
+			libraryAttrSelectedIds = new Set();
+		} else {
+			libraryAttrSelectedIds = new Set(libraryAttrs.map((a) => a.id));
+		}
 	}
 
 	async function importFromAttrLibrary() {
@@ -407,7 +427,14 @@
 								{libEntitySearch ? 'No matches.' : 'No entities in your library yet.'} <a href="/entities" class="text-gold hover:underline">Add some →</a>
 							</p>
 						{:else}
-							<p class="text-xs text-slate-400 mb-2">Showing {libraryEntities.length} of {libEntityTotal} — select entities to import:</p>
+							<div class="flex items-center justify-between mb-2">
+								<p class="text-xs text-slate-400">Showing {libraryEntities.length} of {libEntityTotal} — select entities to import:</p>
+								<label class="flex items-center gap-1.5 cursor-pointer">
+									<input type="checkbox" checked={allLibEntitiesSelected}
+										onchange={toggleAllLibraryEntities} class="accent-gold" />
+									<span class="text-xs text-slate-400">Select all</span>
+								</label>
+							</div>
 							<div class="max-h-48 overflow-y-auto space-y-1 mb-3">
 								{#each libraryEntities as lib (lib.id)}
 									<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-navy-700 cursor-pointer">
@@ -564,7 +591,14 @@
 								{libAttrSearch ? 'No matches.' : 'No attributes in your library yet.'} <a href="/attributes" class="text-gold hover:underline">Add some →</a>
 							</p>
 						{:else}
-							<p class="text-xs text-slate-400 mb-2">Showing {libraryAttrs.length} of {libAttrTotal} — select attributes to import:</p>
+							<div class="flex items-center justify-between mb-2">
+								<p class="text-xs text-slate-400">Showing {libraryAttrs.length} of {libAttrTotal} — select attributes to import:</p>
+								<label class="flex items-center gap-1.5 cursor-pointer">
+									<input type="checkbox" checked={allLibAttrsSelected}
+										onchange={toggleAllLibraryAttrs} class="accent-gold" />
+									<span class="text-xs text-slate-400">Select all</span>
+								</label>
+							</div>
 							<div class="max-h-48 overflow-y-auto space-y-1 mb-3">
 								{#each libraryAttrs as lib (lib.id)}
 									<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-navy-700 cursor-pointer">

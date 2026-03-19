@@ -15,6 +15,15 @@
 		/>
 
 		%sveltekit.head%
+		<!-- Prevent theme flash: read localStorage before first paint -->
+		<script>
+			(function() {
+				try {
+					var t = localStorage.getItem('theme');
+					if (t === 'light') document.documentElement.classList.add('theme-light');
+				} catch(e) {}
+			})();
+		</script>
 	</head>
 	<body data-sveltekit-preload-data="hover" class="bg-navy text-slate-200 font-sans antialiased">
 		<div style="display: contents">%sveltekit.body%</div>

@@ -271,6 +271,13 @@
    Contrast ratios verified against WCAG 2.1 AA (4.5:1 normal text, 3:1 large).
    ══════════════════════════════════════════════════════════════════════════════ */
 
+/* html.theme-light is set by inline script BEFORE paint to prevent flash.
+   .light is set by Svelte after hydration. Both selectors must match. */
+html.theme-light body {
+	background-color: #f8fafc;
+	color: #1e293b;
+}
+
 .light {
 	background-color: #f8fafc; /* slate-50 */
 	color: #1e293b;            /* slate-800 */
@@ -502,3 +509,28 @@
 .light header h1 { color: #8a6200; }
 .light header p,
 .light footer span { color: #64748b; }
+
+/* ── PDF-safe overrides ─────────────────────────────
+   html2canvas cannot parse color-mix(), oklch(), or other modern CSS color
+   functions. When .pdf-rendering is applied, replace all such values with
+   plain hex equivalents so the canvas render succeeds.
+   ──────────────────────────────────────────────────── */
+.pdf-rendering,
+.pdf-rendering *,
+.pdf-rendering *::before,
+.pdf-rendering *::after {
+	transition: none !important;
+	animation: none !important;
+}
+
+.pdf-rendering .gold-divider {
+	border-top-color: rgba(201, 168, 76, 0.2) !important;
+}
+
+.pdf-rendering .input-field:focus {
+	box-shadow: none !important;
+}
+
+.pdf-rendering .input-base:focus {
+	box-shadow: none !important;
+}
