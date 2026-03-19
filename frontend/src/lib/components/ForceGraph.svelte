@@ -20,6 +20,7 @@
 		highlightedEdgeIds = null,
 		focusNodeId = null,
 		selectedNodeId = null,
+		theme = 'dark',
 		onNodeClick = () => {},
 	}: {
 		nodes: KGGraphNode[];
@@ -28,8 +29,32 @@
 		highlightedEdgeIds?: Set<string> | null;
 		focusNodeId?: string | null;
 		selectedNodeId?: string | null;
+		theme?: 'light' | 'dark';
 		onNodeClick?: (nodeId: string) => void;
 	} = $props();
+
+	// Theme-dependent colors
+	const themeColors = $derived(theme === 'light' ? {
+		bg: '#f8fafc',
+		edgeStroke: '#94a3b8',
+		edgeDim: '#e2e8f0',
+		arrowFill: '#94a3b8',
+		pillFill: '#ffffff',
+		pillStroke: '#e2e8f0',
+		edgeText: '#64748b',
+		nodeText: '#1e293b',
+		typeBadgeOpacity: 0.85,
+	} : {
+		bg: '#0d1117',
+		edgeStroke: '#334155',
+		edgeDim: '#1c2128',
+		arrowFill: '#475569',
+		pillFill: '#161b22',
+		pillStroke: '#30363d',
+		edgeText: '#8b949e',
+		nodeText: '#fff',
+		typeBadgeOpacity: 0.7,
+	});
 
 	let containerEl: HTMLDivElement;
 	let simulation: d3.Simulation<SimNode, SimEdge> | null = null;
@@ -135,7 +160,7 @@
 			.append('svg')
 			.attr('width', width)
 			.attr('height', height)
-			.style('background', '#0d1117');
+			.style('background', themeColors.bg);
 
 		// Defs: arrow marker + glow filter
 		const defs = svgEl.append('defs');
@@ -150,7 +175,7 @@
 			.attr('orient', 'auto')
 			.append('path')
 			.attr('d', 'M2,2 L10,6 L2,10 Z')
-			.attr('fill', '#475569');
+			.attr('fill', themeColors.arrowFill);
 
 		defs.append('marker')
 			.attr('id', 'neo-arrow-hl')
@@ -188,7 +213,7 @@
 			.data(simEdges, (d) => d.id)
 			.join('path')
 			.attr('fill', 'none')
-			.attr('stroke', '#334155')
+			.attr('stroke', themeColors.edgeStroke)
 			.attr('stroke-width', 2)
 			.attr('marker-end', 'url(#neo-arrow)');
 
@@ -205,15 +230,15 @@
 			.append('rect')
 			.attr('rx', 4)
 			.attr('ry', 4)
-			.attr('fill', '#161b22')
-			.attr('stroke', '#30363d')
+			.attr('fill', themeColors.pillFill)
+			.attr('stroke', themeColors.pillStroke)
 			.attr('stroke-width', 0.5);
 
 		const edgeTexts = edgeLabelGs
 			.append('text')
 			.attr('text-anchor', 'middle')
 			.attr('dominant-baseline', 'central')
-			.attr('fill', '#8b949e')
+			.attr('fill', themeColors.edgeText)
 			.attr('font-size', '9px')
 			.attr('font-family', 'system-ui, sans-serif')
 			.attr('letter-spacing', '0.3px')
@@ -259,7 +284,7 @@
 					.attr('text-anchor', 'middle')
 					.attr('dominant-baseline', 'central')
 					.attr('y', yOffset + i * 13)
-					.attr('fill', '#fff')
+					.attr('fill', themeColors.nodeText)
 					.attr('font-size', `${FONT_SIZE}px`)
 					.attr('font-weight', '600')
 					.attr('font-family', 'system-ui, sans-serif')
@@ -277,7 +302,7 @@
 			.attr('fill', (d) => getColors(d.entity_type).fill)
 			.attr('font-size', '8px')
 			.attr('font-family', 'system-ui, sans-serif')
-			.attr('opacity', 0.7)
+			.attr('opacity', themeColors.typeBadgeOpacity)
 			.attr('pointer-events', 'none')
 			.text((d) => d.entity_type.replace(/_/g, ' '));
 
@@ -304,8 +329,8 @@
 				d3.select(this).select('.hover-ring').attr('stroke', 'transparent');
 				d3.select(this).select('.node-circle').attr('stroke-width', 2.5);
 				// Reset edges (will be re-applied by highlighting)
-				linkPaths.attr('stroke', '#334155').attr('stroke-width', 2);
-				edgeTexts.attr('fill', '#8b949e').attr('font-weight', 'normal');
+				linkPaths.attr('stroke', themeColors.edgeStroke).attr('stroke-width', 2);
+				edgeTexts.attr('fill', themeColors.edgeText).attr('font-weight', 'normal');
 				applyHighlighting();
 			});
 
@@ -399,8 +424,8 @@
 		linkPaths
 			.attr('stroke', (d: SimEdge) => {
 				if (highlightedEdgeIds?.has(d.id)) return '#f97316';
-				if (hasHighlight) return '#1c2128';
-				return '#334155';
+				if (hasHighlight) return themeColors.edgeDim;
+				return themeColors.edgeStroke;
 			})
 			.attr('stroke-width', (d: SimEdge) => {
 				if (highlightedEdgeIds?.has(d.id)) return 3;
@@ -450,6 +475,7 @@
 	}
 
 	$effect(() => {
+		theme;
 		if (nodes && edges) buildGraph();
 	});
 

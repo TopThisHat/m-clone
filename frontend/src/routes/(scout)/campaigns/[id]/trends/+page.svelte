@@ -1,10 +1,25 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { jobsApi, type TrendPoint } from '$lib/api/jobs';
 	import { entitiesApi, type Entity } from '$lib/api/entities';
+	import { theme } from '$lib/stores/themeStore';
 
-	let campaignId = $derived($page.params.id as string);
+	let campaignId = $derived(page.params.id as string);
+
+	let chartColors = $derived($theme === 'light' ? {
+		gridColor: '#e2e8f0',
+		tickColor: '#64748b',
+		legendColor: '#334155',
+		avgLineColor: '#64748b',
+		avgBgColor: '#64748b20',
+	} : {
+		gridColor: '#1e293b',
+		tickColor: '#64748b',
+		legendColor: '#cbd5e1',
+		avgLineColor: '#94a3b8',
+		avgBgColor: '#94a3b820',
+	});
 	let trends = $state<TrendPoint[]>([]);
 	let entities = $state<Entity[]>([]);
 	let loading = $state(true);
@@ -80,8 +95,8 @@
 		datasets.push({
 			label: 'Campaign Average',
 			data: avgData,
-			borderColor: '#94a3b8',
-			backgroundColor: '#94a3b820',
+			borderColor: chartColors.avgLineColor,
+			backgroundColor: chartColors.avgBgColor,
 			tension: 0.3,
 			pointRadius: 3,
 			spanGaps: true,
@@ -97,23 +112,24 @@
 					y: {
 						min: 0,
 						max: 100,
-						title: { display: true, text: 'Score %', color: '#94a3b8' },
-						ticks: { color: '#64748b' },
-						grid: { color: '#1e293b' },
+						title: { display: true, text: 'Score %', color: chartColors.tickColor },
+						ticks: { color: chartColors.tickColor },
+						grid: { color: chartColors.gridColor },
 					},
 					x: {
-						ticks: { color: '#64748b' },
-						grid: { color: '#1e293b' },
+						ticks: { color: chartColors.tickColor },
+						grid: { color: chartColors.gridColor },
 					},
 				},
 				plugins: {
-					legend: { labels: { color: '#cbd5e1', boxWidth: 12 } },
+					legend: { labels: { color: chartColors.legendColor, boxWidth: 12 } },
 				},
 			},
 		});
 	}
 
 	$effect(() => {
+		$theme;
 		const filtered = selectedEntityId
 			? trends.filter((t) => t.entity_id === selectedEntityId)
 			: trends;

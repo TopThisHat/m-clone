@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import ForceGraph from '$lib/components/ForceGraph.svelte';
+	import { theme } from '$lib/stores/themeStore';
 	import {
 		kgApi,
 		type KGGraphNode,
@@ -275,6 +276,7 @@
 					{highlightedEdgeIds}
 					focusNodeId={focusNodeId}
 					selectedNodeId={selectedNodeId}
+					theme={$theme}
 					onNodeClick={handleNodeClick}
 				/>
 			{/if}

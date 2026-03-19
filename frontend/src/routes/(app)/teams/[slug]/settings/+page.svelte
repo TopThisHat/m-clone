@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import {
 		getTeam,
@@ -13,7 +13,7 @@
 	} from '$lib/api/teams';
 	import { currentUser } from '$lib/stores/authStore';
 
-	let slug = $derived($page.params.slug as string);
+	let slug = $derived(page.params.slug as string);
 	let team = $state<TeamDetail | null>(null);
 	let loading = $state(true);
 	let error = $state('');

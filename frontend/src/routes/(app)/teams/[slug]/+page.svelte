@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { getTeam, getTeamActivity, getTeamSessions, type TeamDetail } from '$lib/api/teams';
 
 	interface ActivityItem {
@@ -20,7 +20,7 @@
 		updated_at: string;
 	}
 
-	let slug = $derived($page.params.slug as string);
+	let slug = $derived(page.params.slug as string);
 	let team = $state<TeamDetail | null>(null);
 	let activity = $state<ActivityItem[]>([]);
 	let sessions = $state<SharedSession[]>([]);

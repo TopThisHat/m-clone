@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { LayoutData } from './$types';
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -20,7 +20,7 @@
 		{ label: 'Attributes', href: '/attributes' },
 	];
 
-	let currentPath = $derived($page.url.pathname);
+	let currentPath = $derived(page.url.pathname);
 
 	function isActive(href: string) {
 		if (href === '/campaigns') return currentPath.startsWith('/campaigns');

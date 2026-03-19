@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
 	import { jobsApi, type Job } from '$lib/api/jobs';
 	import { entitiesApi } from '$lib/api/entities';
@@ -9,7 +9,7 @@
 	import JobProgress from '$lib/components/JobProgress.svelte';
 	import SchedulePicker from '$lib/components/SchedulePicker.svelte';
 
-	let campaignId = $derived($page.params.id as string);
+	let campaignId = $derived(page.params.id as string);
 	let campaign = $state<Campaign | null>(null);
 	let entityCount = $state(0);
 	let attributeCount = $state(0);

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { jobsApi, type Score, type Result, type Knowledge } from '$lib/api/jobs';
 	import { entitiesApi, type Entity } from '$lib/api/entities';
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
@@ -11,7 +11,7 @@
 	import JobProgress from '$lib/components/JobProgress.svelte';
 	import type { Job } from '$lib/api/jobs';
 
-	let campaignId = $derived($page.params.id as string);
+	let campaignId = $derived(page.params.id as string);
 	let scores = $state<Score[]>([]);
 	let results = $state<Result[]>([]);
 	let entities = $state<Entity[]>([]);
@@ -388,15 +388,15 @@
 
 <!-- Evidence modal (matrix) -->
 {#if modalResult}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 	<div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-		onclick={() => (modalResult = null)}>
+		role="presentation"
+		onmousedown={() => (modalResult = null)}>
 		<div class="bg-navy-800 border border-navy-600 rounded-xl w-full max-w-lg shadow-2xl p-6 max-h-[80vh] overflow-y-auto"
 		role="dialog"
 		aria-modal="true"
 		aria-labelledby="evidence-modal-title"
 		tabindex="-1"
-		onclick={(e) => e.stopPropagation()}>
+		onmousedown={(e) => e.stopPropagation()}>
 			<div class="flex items-start justify-between mb-4">
 				<div>
 					<p id="evidence-modal-title" class="font-medium text-slate-200">{modalResult.entity_label}</p>

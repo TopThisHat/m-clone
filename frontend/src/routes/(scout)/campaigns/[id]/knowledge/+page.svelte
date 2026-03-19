@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { jobsApi, type Knowledge } from '$lib/api/jobs';
 
-	let campaignId = $derived($page.params.id as string);
+	let campaignId = $derived(page.params.id as string);
 	let knowledge = $state<Knowledge[]>([]);
 	let loading = $state(true);
 	let error = $state('');

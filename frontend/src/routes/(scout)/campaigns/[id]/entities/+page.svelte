@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { entitiesApi, type Entity } from '$lib/api/entities';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
 	import { libraryEntitiesApi, type LibraryEntity } from '$lib/api/library';
 	import CSVUpload from '$lib/components/CSVUpload.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
 
-	let campaignId = $derived($page.params.id as string);
+	let campaignId = $derived(page.params.id as string);
 	let entities = $state<Entity[]>([]);
 	let loading = $state(true);
 	let error = $state('');
@@ -91,6 +91,7 @@
 		showImport = true;
 		showCSV = false;
 		showAddForm = false;
+		showLibrary = false;
 		importResult = '';
 		selectedSourceId = '';
 		try {
@@ -224,11 +225,27 @@
 		}
 	}
 
+	// Set of labels already in this campaign (for marking already-imported items)
+	let existingLabels = $derived(new Set(entities.map((e) => e.label.toLowerCase())));
+
 	let filteredLibrary = $derived(
 		librarySearch === ''
 			? libraryEntities
 			: libraryEntities.filter((e) => e.label.toLowerCase().includes(librarySearch.toLowerCase()))
 	);
+
+	// Library select all
+	let selectableLibrary = $derived(filteredLibrary.filter((e) => !existingLabels.has(e.label.toLowerCase())));
+	let allLibrarySelected = $derived(selectableLibrary.length > 0 && selectableLibrary.every((e) => librarySelected.has(e.id)));
+	let someLibrarySelected = $derived(librarySelected.size > 0 && !allLibrarySelected);
+
+	function toggleLibrarySelectAll() {
+		if (allLibrarySelected) {
+			librarySelected = new Set();
+		} else {
+			librarySelected = new Set(selectableLibrary.map((e) => e.id));
+		}
+	}
 
 	function toggleLibrarySelect(id: string) {
 		const next = new Set(librarySelected);
@@ -278,21 +295,21 @@
 			<button
 				onclick={openLibraryImport}
 				aria-expanded={showLibrary}
-				class="btn-secondary text-sm py-1.5"
+				class="{showLibrary ? 'bg-gold/10 border border-gold/40 text-gold font-medium px-3 py-1.5 rounded-lg text-sm' : 'btn-secondary text-sm py-1.5'}"
 			>
 				Import from Library
 			</button>
 			<button
 				onclick={openImport}
 				aria-expanded={showImport}
-				class="btn-secondary text-sm py-1.5"
+				class="{showImport ? 'bg-gold/10 border border-gold/40 text-gold font-medium px-3 py-1.5 rounded-lg text-sm' : 'btn-secondary text-sm py-1.5'}"
 			>
-				↗ Import from Campaign
+				&nearr; Import from Campaign
 			</button>
 			<button
 				onclick={() => { showCSV = !showCSV; showAddForm = false; showImport = false; showLibrary = false; }}
 				aria-expanded={showCSV}
-				class="btn-secondary text-sm py-1.5"
+				class="{showCSV ? 'bg-gold/10 border border-gold/40 text-gold font-medium px-3 py-1.5 rounded-lg text-sm' : 'btn-secondary text-sm py-1.5'}"
 			>
 				Upload CSV
 			</button>
@@ -361,19 +378,48 @@
 			</div>
 			<input
 				bind:value={librarySearch}
-				placeholder="Search library entities…"
+				placeholder="Search library entities..."
 				class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold mb-3"
 			/>
+			<!-- Select all header -->
+			{#if selectableLibrary.length > 0}
+				<div class="flex items-center gap-3 px-3 py-2 border-b border-navy-700">
+					<input
+						type="checkbox"
+						checked={allLibrarySelected}
+						indeterminate={someLibrarySelected}
+						onchange={toggleLibrarySelectAll}
+						class="accent-gold"
+						aria-label="Select all library entities"
+					/>
+					<span class="text-xs text-slate-400">
+						Select all ({selectableLibrary.length})
+						{#if librarySelected.size > 0}
+							<span class="text-gold ml-1">{librarySelected.size} selected</span>
+						{/if}
+					</span>
+				</div>
+			{/if}
 			<div class="max-h-64 overflow-y-auto border border-navy-700 rounded-lg mb-3">
 				{#if filteredLibrary.length === 0}
 					<p class="text-slate-500 text-sm text-center py-4">No library entities found.</p>
 				{:else}
 					{#each filteredLibrary as le (le.id)}
-						<label class="flex items-center gap-3 px-3 py-2 hover:bg-navy-700/50 cursor-pointer border-b border-navy-700 last:border-b-0">
-							<input type="checkbox" checked={librarySelected.has(le.id)} onchange={() => toggleLibrarySelect(le.id)} class="accent-gold" />
+						{@const alreadyAdded = existingLabels.has(le.label.toLowerCase())}
+						<label class="flex items-center gap-3 px-3 py-2 hover:bg-navy-700/50 border-b border-navy-700 last:border-b-0 {alreadyAdded ? 'opacity-50 cursor-default' : 'cursor-pointer'}">
+							<input
+								type="checkbox"
+								checked={librarySelected.has(le.id)}
+								onchange={() => toggleLibrarySelect(le.id)}
+								disabled={alreadyAdded}
+								class="accent-gold"
+							/>
 							<div class="min-w-0 flex-1">
 								<span class="text-sm text-slate-200">{le.label}</span>
 								{#if le.gwm_id}<span class="text-xs text-slate-500 ml-2 font-mono">{le.gwm_id}</span>{/if}
+								{#if alreadyAdded}
+									<span class="text-xs text-slate-500 ml-2 bg-navy-700 px-1.5 py-0.5 rounded">already added</span>
+								{/if}
 								{#if le.description}<p class="text-xs text-slate-500 line-clamp-1">{le.description}</p>{/if}
 							</div>
 						</label>

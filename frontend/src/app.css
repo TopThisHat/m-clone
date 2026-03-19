@@ -318,7 +318,7 @@
 .light .text-slate-300 { color: #1e293b !important; } /* slate-800, 13.5:1 */
 .light .text-slate-400  { color: #475569 !important; } /* slate-600, 7.4:1 */
 .light .text-slate-500  { color: #64748b !important; } /* slate-500, 4.6:1 */
-.light .text-slate-600  { color: #94a3b8 !important; } /* decorative only   */
+.light .text-slate-600  { color: #475569 !important; } /* slate-600, 7.4:1  */
 
 /* ── Text: gold (accessible amber) ──────────────── *
  * Default gold #c9a84c on white = 2.5:1 (FAIL).
@@ -386,6 +386,117 @@
 
 /* ── Code / mono text ────────────────────────────── */
 .light .font-mono { color: #334155 !important; }
+
+/* ── Prose in light mode ─────────────────────────── */
+.light .prose {
+	--tw-prose-body: #334155;
+	--tw-prose-headings: #8a6200;
+	--tw-prose-lead: #475569;
+	--tw-prose-links: #7a5400;
+	--tw-prose-bold: #1e293b;
+	--tw-prose-counters: #8a6200;
+	--tw-prose-bullets: #8a6200;
+	--tw-prose-hr: #e2e8f0;
+	--tw-prose-quotes: #475569;
+	--tw-prose-quote-borders: #8a6200;
+	--tw-prose-code: #7a5400;
+	--tw-prose-pre-code: #334155;
+	--tw-prose-pre-bg: #f1f5f9;
+	--tw-prose-th-borders: #cbd5e1;
+	--tw-prose-td-borders: #e2e8f0;
+}
+.light .prose code {
+	color: #7a5400;
+	background-color: #fef3c7;
+}
+.light .prose pre {
+	background-color: #f1f5f9;
+	border-color: #e2e8f0;
+}
+.light .prose strong { color: #1e293b; }
+.light .prose blockquote { border-left-color: #8a6200; color: #475569; }
+.light .prose :is(th) { color: #8a6200; }
+
+/* ── Card in light mode ─────────────────────────── */
+.light .card {
+	background-color: #ffffff;
+	border-color: #e2e8f0;
+}
+
+/* ── Gold divider in light mode ─────────────────── */
+.light .gold-divider {
+	border-top-color: rgba(138, 98, 0, 0.2);
+}
+
+/* ── Danger button in light mode ────────────────── */
+.light .btn-danger {
+	background-color: #fef2f2 !important;
+	color: #dc2626 !important;
+	border-color: #fca5a5 !important;
+}
+.light .btn-danger:hover {
+	background-color: #fee2e2 !important;
+	color: #b91c1c !important;
+}
+
+/* ── Status/feedback colors in light mode ────────── */
+.light .text-green-400 { color: #16a34a !important; }
+.light .text-red-400   { color: #dc2626 !important; }
+.light .text-red-400\/60 { color: rgba(220, 38, 38, 0.6) !important; }
+.light .bg-green-900   { background-color: #dcfce7 !important; }
+.light .bg-red-950     { background-color: #fef2f2 !important; }
+.light .bg-red-900\/20 { background-color: rgba(254, 226, 226, 0.3) !important; }
+.light .border-red-900 { border-color: #fca5a5 !important; }
+.light .border-red-800 { border-color: #fca5a5 !important; }
+.light .bg-gold\/10    { background-color: rgba(138, 98, 0, 0.08) !important; }
+.light .border-gold\/40 { border-color: rgba(138, 98, 0, 0.3) !important; }
+
+/* Status badges (jobs page) */
+.light .bg-slate-700   { background-color: #e2e8f0 !important; }
+.light .bg-slate-800   { background-color: #e2e8f0 !important; }
+
+/* Yellow (cached knowledge badge) */
+.light .text-yellow-400  { color: #a16207 !important; }
+.light .bg-yellow-950    { background-color: #fefce8 !important; }
+.light .border-yellow-700 { border-color: #ca8a04 !important; }
+
+/* Orange (deal partner headings) */
+.light .text-orange-400  { color: #c2410c !important; }
+.light .text-orange-500  { color: #c2410c !important; }
+.light .border-orange-500 { border-color: #ea580c !important; }
+.light .bg-orange-500\/10 { background-color: rgba(234,88,12,0.08) !important; }
+
+/* Missing opacity bg variants */
+.light .bg-navy-800\/50 { background-color: rgba(255,255,255,0.7) !important; }
+.light .bg-navy-700\/40 { background-color: rgba(241,245,249,0.5) !important; }
+.light .bg-navy-800\/30 { background-color: rgba(255,255,255,0.5) !important; }
+.light .bg-navy-700\/30 { background-color: rgba(241,245,249,0.4) !important; }
+.light .border-navy-700\/50 { border-color: rgba(226,232,240,0.5) !important; }
+.light .border-navy-700\/30 { border-color: rgba(226,232,240,0.3) !important; }
+
+/* ── Hover states in light mode ──────────────────── */
+.light .hover\:text-slate-300:hover { color: #1e293b !important; }
+.light .hover\:text-slate-200:hover { color: #1e293b !important; }
+.light .hover\:text-gold:hover      { color: #7a5400 !important; }
+.light .hover\:text-red-400:hover   { color: #b91c1c !important; }
+.light .hover\:text-red-300:hover   { color: #dc2626 !important; }
+.light .hover\:text-green-300:hover { color: #15803d !important; }
+.light .hover\:bg-navy-600:hover    { background-color: #e2e8f0 !important; }
+.light .hover\:bg-navy-700:hover    { background-color: #f1f5f9 !important; }
+.light .hover\:bg-red-950:hover     { background-color: #fee2e2 !important; }
+.light .hover\:border-navy-500:hover { border-color: #94a3b8 !important; }
+.light .hover\:border-gold\/30:hover { border-color: rgba(138, 98, 0, 0.3) !important; }
+
+/* ── Placeholder text in light mode ──────────────── */
+.light .placeholder-slate-500::placeholder,
+.light .placeholder-slate-600::placeholder { color: #94a3b8 !important; }
+
+/* ── Select inputs ───────────────────────────────── */
+.light select {
+	background-color: #ffffff !important;
+	border-color: #cbd5e1 !important;
+	color: #1e293b !important;
+}
 
 /* ── Header titles ───────────────────────────────── */
 .light header h1 { color: #8a6200; }

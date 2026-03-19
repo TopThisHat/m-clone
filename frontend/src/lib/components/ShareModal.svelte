@@ -119,11 +119,9 @@
 	class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
 	data-backdrop="true"
 	onmousedown={backdropClick}
-	role="dialog"
-	aria-modal="true"
-	aria-label="Share report"
+	role="presentation"
 >
-	<div class="bg-navy-900 border border-navy-600 rounded-xl shadow-2xl w-full max-w-md mx-4">
+	<div class="bg-navy-900 border border-navy-600 rounded-xl shadow-2xl w-full max-w-md mx-4" role="dialog" aria-modal="true" aria-label="Share report">
 		<!-- Header -->
 		<div class="flex items-center justify-between px-5 py-4 border-b border-navy-700">
 			<div>

@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { jobsApi, type Job, type JobDiff } from '$lib/api/jobs';
 	import { entitiesApi, type Entity } from '$lib/api/entities';
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
 	import JobProgress from '$lib/components/JobProgress.svelte';
 
-	let campaignId = $derived($page.params.id as string);
+	let campaignId = $derived(page.params.id as string);
 	let jobs = $state<Job[]>([]);
 	let entities = $state<Entity[]>([]);
 	let attributes = $state<Attribute[]>([]);
