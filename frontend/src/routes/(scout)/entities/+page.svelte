@@ -229,16 +229,16 @@
 			<h3 class="font-medium text-slate-200 mb-4">Add Entity to Library</h3>
 			<div class="grid grid-cols-3 gap-4 mb-4">
 				<div>
-					<label class="block text-xs text-slate-400 mb-1">Label *</label>
-					<input bind:value={newLabel} required placeholder="Name or entity label" class="input-field w-full" />
+					<label for="lib-ent-label" class="block text-xs text-slate-400 mb-1">Label *</label>
+					<input id="lib-ent-label" bind:value={newLabel} required placeholder="Name or entity label" class="input-field w-full" />
 				</div>
 				<div>
-					<label class="block text-xs text-slate-400 mb-1">GWM ID</label>
-					<input bind:value={newGwmId} placeholder="Optional identifier" class="input-field w-full" />
+					<label for="lib-ent-gwmid" class="block text-xs text-slate-400 mb-1">GWM ID</label>
+					<input id="lib-ent-gwmid" bind:value={newGwmId} placeholder="Optional identifier" class="input-field w-full" />
 				</div>
 				<div>
-					<label class="block text-xs text-slate-400 mb-1">Description</label>
-					<input bind:value={newDesc} placeholder="Optional description" class="input-field w-full" />
+					<label for="lib-ent-desc" class="block text-xs text-slate-400 mb-1">Description</label>
+					<input id="lib-ent-desc" bind:value={newDesc} placeholder="Optional description" class="input-field w-full" />
 				</div>
 			</div>
 			<div class="flex gap-2">

@@ -30,7 +30,7 @@
 	let renamingId = $state<string | null>(null);
 	let renameValue = $state('');
 
-	function startRename(id: string, currentTitle: string, e: MouseEvent) {
+	function startRename(id: string, currentTitle: string, e: MouseEvent | KeyboardEvent) {
 		e.stopPropagation();
 		renamingId = id;
 		renameValue = currentTitle;
@@ -174,6 +174,7 @@
 			>
 				<!-- Title or rename input -->
 				{#if renamingId === session.id}
+				<!-- svelte-ignore a11y_autofocus -->
 					<input
 						bind:value={renameValue}
 						onblur={() => submitRename(session.id)}
@@ -187,7 +188,10 @@
 						class="text-xs font-medium leading-snug truncate pr-5
 							{isActive ? 'text-gold' : 'text-slate-300 group-hover:text-slate-100'}"
 						title={session.title}
-						ondblclick={(e) => startRename(session.id, session.title, e)}
+						role="button"
+					tabindex="0"
+					ondblclick={(e) => startRename(session.id, session.title, e)}
+					onkeydown={(e) => { if (e.key === 'Enter') startRename(session.id, session.title, e); }}
 					>
 						{session.title}
 					</span>

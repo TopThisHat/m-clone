@@ -142,15 +142,17 @@
 		<section class="bg-navy-900 border border-navy-700 rounded-xl p-6 space-y-4">
 			<h2 class="text-sm font-medium text-slate-300">General</h2>
 			<div>
-				<label class="block text-xs text-slate-400 mb-1">Display Name</label>
+				<label for="edit-team-name" class="block text-xs text-slate-400 mb-1">Display Name</label>
 				<input
+					id="edit-team-name"
 					bind:value={editName}
 					class="w-full bg-navy-800 border border-navy-700 rounded px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-gold/40"
 				/>
 			</div>
 			<div>
-				<label class="block text-xs text-slate-400 mb-1">Description</label>
+				<label for="edit-team-desc" class="block text-xs text-slate-400 mb-1">Description</label>
 				<textarea
+					id="edit-team-desc"
 					bind:value={editDesc}
 					rows="2"
 					class="w-full bg-navy-800 border border-navy-700 rounded px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-gold/40 resize-none"

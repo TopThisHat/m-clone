@@ -285,7 +285,6 @@
 					<label class="block text-xs mb-1">
 						<span class="text-slate-400">{col.label}</span>
 						<span class="ml-1 {col.hint === 'required' ? 'text-amber-400' : 'text-slate-600'}">{col.hint}</span>
-					</label>
 					<select
 						class="w-full bg-navy-700 border border-navy-600 rounded-lg px-2 py-1.5 text-sm text-slate-200"
 						value={col.bind === 'labelCol' ? labelCol : col.bind === 'descCol' ? descCol : gwmIdCol}
@@ -301,6 +300,7 @@
 							<option value={h}>{h}</option>
 						{/each}
 					</select>
+					</label>
 				</div>
 			{/each}
 		</div>

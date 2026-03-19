@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { listTeams, type Team } from '$lib/api/teams';
 	import {
 		shareSession,
@@ -15,11 +16,11 @@
 		onVisibilityChange?: (v: string) => void;
 	}
 
-	let { sessionId, currentVisibility, onClose, onVisibilityChange }: Props = $props();
+	let { sessionId, currentVisibility: initialVisibility, onClose, onVisibilityChange }: Props = $props();
 
 	type Mode = 'private' | 'team' | 'public';
 
-	let mode = $state<Mode>(currentVisibility as Mode);
+	let mode = $state<Mode>(untrack(() => initialVisibility as Mode));
 	let teams = $state<Team[]>([]);
 	let sharedTeamIds = $state<string[]>([]);
 	let loading = $state(true);

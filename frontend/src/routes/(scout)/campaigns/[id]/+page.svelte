@@ -225,6 +225,7 @@
 						</div>
 					</div>
 					<div>
+						<!-- svelte-ignore a11y_label_has_associated_control -->
 						<label class="block text-xs text-slate-400 mb-2">
 							Schedule <span class="text-slate-500">(optional)</span>
 						</label>

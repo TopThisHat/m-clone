@@ -23,7 +23,7 @@
 	} from '$lib/api/sessions';
 	import { currentUser } from '$lib/stores/authStore';
 	import { sessionComments } from '$lib/stores/reportStore';
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { tableExport } from '$lib/actions/tableExport';
 	import { goto } from '$app/navigation';
 
@@ -41,7 +41,7 @@
 	let copied = $state(false);
 
 	// Live comments (Feature 1 & 3)
-	let liveComments = $state<Comment[]>((data.comments as Comment[]) ?? []);
+	let liveComments = $state<Comment[]>(untrack(() => (data.comments as Comment[]) ?? []));
 	let unseenIds = $state(new Set<string>());
 	let unseenCount = $derived(unseenIds.size);
 	let pollInterval: ReturnType<typeof setInterval> | null = null;

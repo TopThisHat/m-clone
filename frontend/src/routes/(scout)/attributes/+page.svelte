@@ -177,16 +177,16 @@
 		<h3 class="font-medium text-slate-200 mb-4">Add Attribute to Library</h3>
 		<div class="grid grid-cols-4 gap-4 mb-4">
 			<div class="col-span-2">
-				<label class="block text-xs text-slate-400 mb-1">Label *</label>
-				<input bind:value={newLabel} required placeholder="e.g. Has board experience" class="input-field w-full" />
+				<label for="lib-attr-label" class="block text-xs text-slate-400 mb-1">Label *</label>
+				<input id="lib-attr-label" bind:value={newLabel} required placeholder="e.g. Has board experience" class="input-field w-full" />
 			</div>
 			<div>
-				<label class="block text-xs text-slate-400 mb-1">Weight</label>
-				<input type="number" bind:value={newWeight} min="0" max="10" step="0.1" class="input-field w-full" />
+				<label for="lib-attr-weight" class="block text-xs text-slate-400 mb-1">Weight</label>
+				<input id="lib-attr-weight" type="number" bind:value={newWeight} min="0" max="10" step="0.1" class="input-field w-full" />
 			</div>
 			<div class="col-span-4">
-				<label class="block text-xs text-slate-400 mb-1">Description <span class="text-slate-600">(fed to LLM prompt)</span></label>
-				<input bind:value={newDesc} placeholder="Detailed description for the LLM to evaluate" class="input-field w-full" />
+				<label for="lib-attr-desc" class="block text-xs text-slate-400 mb-1">Description <span class="text-slate-600">(fed to LLM prompt)</span></label>
+				<input id="lib-attr-desc" bind:value={newDesc} placeholder="Detailed description for the LLM to evaluate" class="input-field w-full" />
 			</div>
 		</div>
 		<button type="submit" disabled={adding}
