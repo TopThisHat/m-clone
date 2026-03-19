@@ -1,1 +1,1 @@
-# DBOS worker package for Scout validation jobs
+# Worker package — consumes from Redis Streams and executes workflows

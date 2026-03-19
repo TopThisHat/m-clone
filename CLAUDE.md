@@ -26,7 +26,7 @@ docker compose up -d   # Start PostgreSQL (port 5432) and Redis (port 6379)
 ```bash
 cd backend
 uv run python -m app.main          # Start API server (uses uv for package management)
-uv run ython -m worker.run        # Start DBOS durable workflow worker (async validation jobs)
+uv run python -m worker.main       # Start workflow worker (consumes from Redis Streams)
 ```
 
 ### Frontend (SvelteKit)

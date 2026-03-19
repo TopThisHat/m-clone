@@ -1,8 +1,8 @@
 """
-Job manager entry point.
+Job runner entry point — pure dispatcher.
 
-Manages the job queue: dequeues jobs, dispatches to workers, handles
-heartbeat/reclaim/reconciliation. Workers execute the actual workflow logic.
+Dequeues jobs from PostgreSQL and publishes them to Redis Streams
+for workers to consume. Does NOT execute workflow logic.
 
 Start with:
     cd backend && python -m job_runner.main
@@ -17,19 +17,15 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 
-import app.agent  # noqa: F401 — registers research_agent tool decorators
-import job_runner.workflows  # noqa: F401 — registers all workflow handlers
-
 from job_runner.config import settings
-from job_runner.db import close_pool, init_db_pool
-from job_runner.worker import WorkerPool
+from job_runner.dispatcher import Dispatcher
 
 logger = logging.getLogger(__name__)
 
 
-async def _shutdown(worker: WorkerPool) -> None:
-    logger.info("Shutdown signal received — draining…")
-    await worker.drain()
+async def _shutdown(dispatcher: Dispatcher) -> None:
+    logger.info("Shutdown signal received — draining...")
+    await dispatcher.drain()
 
 
 async def main() -> None:
@@ -38,40 +34,44 @@ async def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
-    await init_db_pool()
+    # Warm the shared DB pool (used by app.job_queue)
+    from app.db import get_pool
+    await get_pool()
     logger.info("DB pool initialized")
 
     from job_runner.metrics import start_metrics_server
     await start_metrics_server(settings.metrics_port)
     logger.info("Metrics server listening on port %d", settings.metrics_port)
 
-    worker = WorkerPool()
+    dispatcher = Dispatcher()
 
     _shutdown_triggered = False
 
-    def _make_signal_handler(w: WorkerPool):
+    def _make_signal_handler(d: Dispatcher):
         def handler():
             nonlocal _shutdown_triggered
             if _shutdown_triggered:
                 return
             _shutdown_triggered = True
-            asyncio.create_task(_shutdown(w))
+            asyncio.create_task(_shutdown(d))
         return handler
 
     loop = asyncio.get_running_loop()
     if sys.platform != "win32":
         for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, _make_signal_handler(worker))
+            loop.add_signal_handler(sig, _make_signal_handler(dispatcher))
     else:
-        # Windows does not support add_signal_handler; use signal.signal instead
-        def _win_handler(signum, frame):  # type: ignore[no-untyped-def]
-            _make_signal_handler(worker)()
+        def _win_handler(signum, frame):
+            _make_signal_handler(dispatcher)()
         signal.signal(signal.SIGTERM, _win_handler)
         signal.signal(signal.SIGINT, _win_handler)
 
     try:
-        await worker.run()
+        await dispatcher.run()
     finally:
+        from app.streams import close_redis
+        await close_redis()
+        from app.db import close_pool
         await close_pool()
         logger.info("job-runner stopped")
 

@@ -157,7 +157,7 @@ async def run_extraction_worker() -> None:
     Long-running consumer loop. Reads from the Redis 'entity_extraction' stream
     and processes each message via the LLM extraction pipeline.
     """
-    from app.queue import create_consumer_group, consume_next, ack_message
+    from app.streams import create_extraction_group as create_consumer_group, consume_extraction_next as consume_next, ack_extraction as ack_message
 
     await create_consumer_group()
     logger.info("Entity extraction worker started")

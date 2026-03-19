@@ -3,10 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import asyncpg
-
-from job_runner.queue import update_heartbeat
-
 logger = logging.getLogger(__name__)
 
 
@@ -28,11 +24,10 @@ class HeartbeatManager:
                 pass
 
     async def _loop(self) -> None:
+        from app.job_queue import update_heartbeat
         while True:
             await asyncio.sleep(self._interval)
             try:
                 await update_heartbeat(self._job_id)
-            except asyncpg.PoolClosedError:
-                break  # Pool closed during shutdown — stop silently
             except Exception as exc:
                 logger.warning("Heartbeat failed for job %s: %s", self._job_id, exc)
