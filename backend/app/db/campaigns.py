@@ -152,7 +152,7 @@ async def db_clone_campaign(source_id: str, owner_sid: str) -> dict[str, Any]:
             await conn.execute(
                 """
                 INSERT INTO playbook.entities (id, campaign_id, label, description, gwm_id, metadata, created_at)
-                SELECT gen_random_uuid(), $1::uuid, label, description, gwm_id, metadata, NOW()
+                SELECT gen_random_uuid(), $1::uuid, TRIM(label), description, NULLIF(TRIM(gwm_id), ''), metadata, NOW()
                 FROM playbook.entities WHERE campaign_id = $2::uuid
                 """,
                 new_id, source_id,
@@ -160,7 +160,7 @@ async def db_clone_campaign(source_id: str, owner_sid: str) -> dict[str, Any]:
             await conn.execute(
                 """
                 INSERT INTO playbook.attributes (id, campaign_id, label, description, weight, created_at)
-                SELECT gen_random_uuid(), $1::uuid, label, description, weight, NOW()
+                SELECT gen_random_uuid(), $1::uuid, TRIM(label), description, weight, NOW()
                 FROM playbook.attributes WHERE campaign_id = $2::uuid
                 """,
                 new_id, source_id,
@@ -216,49 +216,47 @@ async def db_update_campaign_next_run(campaign_id: str, next_run_at: Any) -> Non
 # ── Scout: Stats ────────────────────────────────────────────────────────────────
 
 async def db_get_campaign_stats(owner_sid: str, team_id: str | None = None) -> dict[str, Any]:
-    """Return aggregate stats across all accessible campaigns."""
+    """Return aggregate stats across all accessible campaigns.
+
+    Uses separate subqueries instead of a massive multi-table JOIN to avoid
+    Cartesian product amplification that gets exponentially slower as data grows.
+    """
+    if team_id:
+        campaign_filter = """
+            SELECT c.id FROM playbook.campaigns c
+            JOIN playbook.team_members tm ON tm.team_id = c.team_id AND tm.sid = $1
+            WHERE c.team_id = $2::uuid
+        """
+        args: tuple = (owner_sid, team_id)
+    else:
+        campaign_filter = """
+            SELECT c.id FROM playbook.campaigns c
+            WHERE c.owner_sid = $1 AND c.team_id IS NULL
+        """
+        args = (owner_sid,)
+
     async with _acquire() as conn:
-        if team_id:
-            row = await conn.fetchrow(
-                """
-                SELECT
-                    COUNT(DISTINCT c.id)::int                                     AS campaigns,
-                    COUNT(DISTINCT e.id)::int                                     AS entities,
-                    COUNT(DISTINCT vr.id)::int                                    AS results,
-                    COUNT(DISTINCT vj.id) FILTER (
-                        WHERE vj.created_at > NOW() - INTERVAL '7 days')::int    AS jobs_last_7_days,
-                    COUNT(DISTINCT k.gwm_id || ':' || k.attribute_label)::int    AS knowledge_entries
-                FROM playbook.campaigns c
-                JOIN playbook.team_members tm ON tm.team_id = c.team_id AND tm.sid = $1
-                LEFT JOIN playbook.entities e ON e.campaign_id = c.id
-                LEFT JOIN playbook.validation_results vr ON vr.entity_id = e.id
-                LEFT JOIN playbook.validation_jobs vj ON vj.campaign_id = c.id
-                LEFT JOIN playbook.entity_attribute_knowledge k
-                    ON k.gwm_id = e.gwm_id AND e.gwm_id IS NOT NULL
-                WHERE c.team_id = $2::uuid
-                """,
-                owner_sid, team_id,
-            )
-        else:
-            row = await conn.fetchrow(
-                """
-                SELECT
-                    COUNT(DISTINCT c.id)::int                                     AS campaigns,
-                    COUNT(DISTINCT e.id)::int                                     AS entities,
-                    COUNT(DISTINCT vr.id)::int                                    AS results,
-                    COUNT(DISTINCT vj.id) FILTER (
-                        WHERE vj.created_at > NOW() - INTERVAL '7 days')::int    AS jobs_last_7_days,
-                    COUNT(DISTINCT k.gwm_id || ':' || k.attribute_label)::int    AS knowledge_entries
-                FROM playbook.campaigns c
-                LEFT JOIN playbook.entities e ON e.campaign_id = c.id
-                LEFT JOIN playbook.validation_results vr ON vr.entity_id = e.id
-                LEFT JOIN playbook.validation_jobs vj ON vj.campaign_id = c.id
-                LEFT JOIN playbook.entity_attribute_knowledge k
-                    ON k.gwm_id = e.gwm_id AND e.gwm_id IS NOT NULL
-                WHERE c.owner_sid = $1 AND c.team_id IS NULL
-                """,
-                owner_sid,
-            )
+        row = await conn.fetchrow(
+            f"""
+            WITH cids AS ({campaign_filter})
+            SELECT
+                (SELECT COUNT(*) FROM cids)::int AS campaigns,
+                (SELECT COUNT(*) FROM playbook.entities
+                 WHERE campaign_id IN (SELECT id FROM cids))::int AS entities,
+                (SELECT COUNT(*) FROM playbook.validation_results vr
+                 JOIN playbook.entities e ON e.id = vr.entity_id
+                 WHERE e.campaign_id IN (SELECT id FROM cids))::int AS results,
+                (SELECT COUNT(*) FROM playbook.validation_jobs
+                 WHERE campaign_id IN (SELECT id FROM cids)
+                   AND created_at > NOW() - INTERVAL '7 days')::int AS jobs_last_7_days,
+                (SELECT COUNT(DISTINCT k.gwm_id || ':' || k.attribute_label)
+                 FROM playbook.entity_attribute_knowledge k
+                 JOIN playbook.entities e ON e.gwm_id = k.gwm_id
+                 WHERE e.campaign_id IN (SELECT id FROM cids)
+                   AND e.gwm_id IS NOT NULL)::int AS knowledge_entries
+            """,
+            *args,
+        )
     return dict(row) if row else {"campaigns": 0, "entities": 0, "results": 0, "jobs_last_7_days": 0, "knowledge_entries": 0}
 
 
@@ -267,23 +265,21 @@ async def db_get_campaign_stats(owner_sid: str, team_id: str | None = None) -> d
 async def db_import_entities(target_campaign_id: str, source_campaign_id: str) -> list[dict[str, Any]]:
     """
     Copy entities from source campaign to target campaign, skipping duplicates.
-    Entities with gwm_id: skip if gwm_id already exists in target.
-    Entities without gwm_id: skip if label already exists in target.
+    Pre-filters gwm_id conflicts, then uses ON CONFLICT for label uniqueness.
     """
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
             INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
-            SELECT $2::uuid, label, description, gwm_id, metadata
-            FROM playbook.entities
-            WHERE campaign_id = $1::uuid
-              AND (
-                (gwm_id IS NOT NULL AND gwm_id NOT IN (
-                    SELECT gwm_id FROM playbook.entities WHERE campaign_id = $2::uuid AND gwm_id IS NOT NULL))
-                OR
-                (gwm_id IS NULL AND label NOT IN (
-                    SELECT label FROM playbook.entities WHERE campaign_id = $2::uuid))
-              )
+            SELECT $2::uuid, TRIM(label), description, NULLIF(TRIM(gwm_id), ''), metadata
+            FROM playbook.entities src
+            WHERE src.campaign_id = $1::uuid
+              AND (src.gwm_id IS NULL OR NOT EXISTS (
+                  SELECT 1 FROM playbook.entities tgt
+                  WHERE tgt.campaign_id = $2::uuid
+                    AND LOWER(TRIM(tgt.gwm_id)) = LOWER(TRIM(src.gwm_id))
+              ))
+            ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
             RETURNING *
             """,
             source_campaign_id, target_campaign_id,
@@ -299,10 +295,10 @@ async def db_import_attributes(target_campaign_id: str, source_campaign_id: str)
         rows = await conn.fetch(
             """
             INSERT INTO playbook.attributes (campaign_id, label, description, weight)
-            SELECT $2::uuid, label, description, weight
+            SELECT $2::uuid, TRIM(label), description, weight
             FROM playbook.attributes
             WHERE campaign_id = $1::uuid
-              AND label NOT IN (SELECT label FROM playbook.attributes WHERE campaign_id = $2::uuid)
+            ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
             RETURNING *
             """,
             source_campaign_id, target_campaign_id,

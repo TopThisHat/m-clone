@@ -24,7 +24,7 @@ async def db_create_attribute(campaign_id: str, label: str, description: str | N
         row = await conn.fetchrow(
             """
             INSERT INTO playbook.attributes (campaign_id, label, description, weight)
-            VALUES ($1::uuid, $2, $3, $4)
+            VALUES ($1::uuid, TRIM($2), $3, $4)
             RETURNING *
             """,
             campaign_id, label, description, weight,
@@ -39,18 +39,18 @@ async def db_bulk_create_attributes(campaign_id: str, attributes: list[dict[str,
             """
             INSERT INTO playbook.attributes (campaign_id, label, description, weight)
             SELECT $1::uuid,
-                   a->>'label',
-                   NULLIF(a->>'description', ''),
+                   TRIM(a->>'label'),
+                   NULLIF(TRIM(a->>'description'), ''),
                    COALESCE((a->>'weight')::float, 1.0)
             FROM jsonb_array_elements($2::jsonb) AS a
-            WHERE (a->>'label') IS NOT NULL AND (a->>'label') != ''
-            ON CONFLICT (campaign_id, label) DO NOTHING
+            WHERE TRIM(COALESCE(a->>'label', '')) != ''
+            ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
             RETURNING *
             """,
             campaign_id, json.dumps(attributes),
         )
     inserted = [_attribute_row_to_dict(r) for r in rows]
-    skipped = len([a for a in attributes if a.get("label")]) - len(inserted)
+    skipped = len([a for a in attributes if (a.get("label") or "").strip()]) - len(inserted)
     return {"inserted": inserted, "skipped": max(0, skipped)}
 
 
@@ -61,28 +61,25 @@ async def db_list_attributes(
     offset: int = 0,
     search: str | None = None,
 ) -> dict[str, Any]:
+    _where = """WHERE campaign_id = $1::uuid
+                  AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')"""
     async with _acquire() as conn:
         if limit == 0:
             rows = await conn.fetch(
-                """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attributes
-                   WHERE campaign_id = $1::uuid
-                     AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                   ORDER BY created_at ASC""",
+                f"SELECT * FROM playbook.attributes {_where} ORDER BY created_at ASC",
                 campaign_id, search,
             )
+            total = len(rows)
         else:
+            total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM playbook.attributes {_where}",
+                campaign_id, search,
+            )
             rows = await conn.fetch(
-                """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attributes
-                   WHERE campaign_id = $1::uuid
-                     AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                   ORDER BY created_at ASC
-                   LIMIT $3 OFFSET $4""",
+                f"SELECT * FROM playbook.attributes {_where} ORDER BY created_at ASC LIMIT $3 OFFSET $4",
                 campaign_id, search, limit, offset,
             )
-    total = int(rows[0]["_total"]) if rows else 0
     items = [_attribute_row_to_dict(r) for r in rows]
-    for item in items:
-        item.pop("_total", None)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 

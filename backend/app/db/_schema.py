@@ -357,19 +357,58 @@ async def init_schema() -> None:
             await conn.execute("""
                 ALTER TABLE playbook.campaigns ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL
             """)
-            # Uniqueness constraints within a campaign
+            # ── Migrate unique indexes to case-insensitive + trimmed ─────────
+            # Drop old case-sensitive indexes so they can be recreated with
+            # LOWER(TRIM(...)) expressions.  Deduplicate any existing rows first
+            # so the new unique index creation doesn't fail.
+            await conn.execute("""
+                DELETE FROM playbook.attributes WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY campaign_id, LOWER(TRIM(label))
+                            ORDER BY created_at ASC
+                        ) AS rn FROM playbook.attributes
+                    ) sub WHERE rn > 1
+                )
+            """)
+            await conn.execute("""
+                DELETE FROM playbook.entities WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY campaign_id, LOWER(TRIM(label))
+                            ORDER BY created_at ASC
+                        ) AS rn FROM playbook.entities
+                    ) sub WHERE rn > 1
+                )
+            """)
+            await conn.execute("""
+                DELETE FROM playbook.entities WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY campaign_id, LOWER(TRIM(gwm_id))
+                            ORDER BY created_at ASC
+                        ) AS rn FROM playbook.entities
+                        WHERE gwm_id IS NOT NULL
+                    ) sub WHERE rn > 1
+                )
+            """)
+            await conn.execute("DROP INDEX IF EXISTS playbook.entities_campaign_label_unique")
+            await conn.execute("DROP INDEX IF EXISTS playbook.entities_campaign_gwm_id_unique")
+            await conn.execute("DROP INDEX IF EXISTS playbook.attributes_campaign_label_unique")
+
+            # Uniqueness constraints within a campaign (case-insensitive, trimmed)
             await conn.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS entities_campaign_label_unique
-                    ON entities (campaign_id, label)
+                    ON entities (campaign_id, LOWER(TRIM(label)))
             """)
             await conn.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS entities_campaign_gwm_id_unique
-                    ON entities (campaign_id, gwm_id)
+                    ON entities (campaign_id, LOWER(TRIM(gwm_id)))
                     WHERE gwm_id IS NOT NULL
             """)
             await conn.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS attributes_campaign_label_unique
-                    ON attributes (campaign_id, label)
+                    ON attributes (campaign_id, LOWER(TRIM(label)))
             """)
             # ── Collaboration features ──────────────────────────────────────────
             await conn.execute("""
@@ -436,6 +475,113 @@ async def init_schema() -> None:
                     weight      FLOAT NOT NULL DEFAULT 1.0,
                     created_at  TIMESTAMPTZ DEFAULT NOW()
                 )
+            """)
+
+            # ── Library uniqueness constraints (case-insensitive, trimmed) ────
+            # Deduplicate library tables before adding indexes
+            await conn.execute("""
+                DELETE FROM playbook.entity_library WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY owner_sid, LOWER(TRIM(label))
+                            ORDER BY created_at ASC
+                        ) AS rn FROM playbook.entity_library WHERE team_id IS NULL
+                    ) sub WHERE rn > 1
+                )
+            """)
+            await conn.execute("""
+                DELETE FROM playbook.entity_library WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY team_id, LOWER(TRIM(label))
+                            ORDER BY created_at ASC
+                        ) AS rn FROM playbook.entity_library WHERE team_id IS NOT NULL
+                    ) sub WHERE rn > 1
+                )
+            """)
+            await conn.execute("""
+                DELETE FROM playbook.attribute_library WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY owner_sid, LOWER(TRIM(label))
+                            ORDER BY created_at ASC
+                        ) AS rn FROM playbook.attribute_library WHERE team_id IS NULL
+                    ) sub WHERE rn > 1
+                )
+            """)
+            await conn.execute("""
+                DELETE FROM playbook.attribute_library WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY team_id, LOWER(TRIM(label))
+                            ORDER BY created_at ASC
+                        ) AS rn FROM playbook.attribute_library WHERE team_id IS NOT NULL
+                    ) sub WHERE rn > 1
+                )
+            """)
+            await conn.execute("DROP INDEX IF EXISTS playbook.entity_library_owner_label_unique")
+            await conn.execute("DROP INDEX IF EXISTS playbook.entity_library_team_label_unique")
+            await conn.execute("DROP INDEX IF EXISTS playbook.attribute_library_owner_label_unique")
+            await conn.execute("DROP INDEX IF EXISTS playbook.attribute_library_team_label_unique")
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS entity_library_owner_label_unique
+                    ON entity_library (owner_sid, LOWER(TRIM(label)))
+                    WHERE team_id IS NULL
+            """)
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS entity_library_team_label_unique
+                    ON entity_library (team_id, LOWER(TRIM(label)))
+                    WHERE team_id IS NOT NULL
+            """)
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS attribute_library_owner_label_unique
+                    ON attribute_library (owner_sid, LOWER(TRIM(label)))
+                    WHERE team_id IS NULL
+            """)
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS attribute_library_team_label_unique
+                    ON attribute_library (team_id, LOWER(TRIM(label)))
+                    WHERE team_id IS NOT NULL
+            """)
+
+            # ── Missing FK indexes (prevents slow CASCADE + JOIN scans) ───────
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS validation_results_job_id_idx
+                    ON validation_results(job_id)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS validation_results_attribute_id_idx
+                    ON validation_results(attribute_id)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS attribute_library_owner_idx
+                    ON attribute_library(owner_sid)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS attribute_library_team_idx
+                    ON attribute_library(team_id) WHERE team_id IS NOT NULL
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS entity_library_owner_idx
+                    ON entity_library(owner_sid)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS entity_library_team_idx
+                    ON entity_library(team_id) WHERE team_id IS NOT NULL
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS comments_parent_idx
+                    ON comments(parent_id) WHERE parent_id IS NOT NULL
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS job_queue_root_job_idx
+                    ON job_queue(root_job_id) WHERE root_job_id IS NOT NULL
+            """)
+
+            # ── Covering index for DISTINCT ON in export queries ──────────────
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS results_entity_attr_created_idx
+                    ON validation_results(entity_id, attribute_id, created_at DESC)
             """)
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")

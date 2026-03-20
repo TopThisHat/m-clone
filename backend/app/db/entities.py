@@ -26,7 +26,7 @@ async def db_create_entity(campaign_id: str, label: str, description: str | None
         row = await conn.fetchrow(
             """
             INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
-            VALUES ($1::uuid, $2, $3, $4, $5::jsonb)
+            VALUES ($1::uuid, TRIM($2), $3, NULLIF(TRIM($4), ''), $5::jsonb)
             RETURNING *
             """,
             campaign_id, label, description, gwm_id, json.dumps(metadata or {}),
@@ -35,25 +35,38 @@ async def db_create_entity(campaign_id: str, label: str, description: str | None
 
 
 async def db_bulk_create_entities(campaign_id: str, entities: list[dict[str, Any]]) -> dict[str, Any]:
-    """Insert entities, skipping duplicates. Returns {inserted: list, skipped: int}."""
+    """Insert entities, skipping duplicates on both label and gwm_id.
+
+    Uses a CTE to pre-filter gwm_id conflicts (since ON CONFLICT can only
+    target one unique index) and ON CONFLICT for the label unique index.
+    """
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
+            WITH incoming AS (
+                SELECT TRIM(e->>'label') AS label,
+                       NULLIF(TRIM(e->>'description'), '') AS description,
+                       NULLIF(TRIM(e->>'gwm_id'), '') AS gwm_id,
+                       COALESCE((e->'metadata')::jsonb, '{}'::jsonb) AS metadata
+                FROM jsonb_array_elements($2::jsonb) AS e
+                WHERE TRIM(COALESCE(e->>'label', '')) != ''
+            )
             INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
-            SELECT $1::uuid,
-                   e->>'label',
-                   NULLIF(e->>'description', ''),
-                   NULLIF(e->>'gwm_id', ''),
-                   COALESCE((e->'metadata')::jsonb, '{}'::jsonb)
-            FROM jsonb_array_elements($2::jsonb) AS e
-            WHERE (e->>'label') IS NOT NULL AND (e->>'label') != ''
-            ON CONFLICT (campaign_id, label) DO NOTHING
+            SELECT $1::uuid, i.label, i.description, i.gwm_id, i.metadata
+            FROM incoming i
+            WHERE i.gwm_id IS NULL
+               OR NOT EXISTS (
+                   SELECT 1 FROM playbook.entities
+                   WHERE campaign_id = $1::uuid
+                     AND LOWER(TRIM(gwm_id)) = LOWER(i.gwm_id)
+               )
+            ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
             RETURNING *
             """,
             campaign_id, json.dumps(entities),
         )
     inserted = [_entity_row_to_dict(r) for r in rows]
-    skipped = len([e for e in entities if e.get("label")]) - len(inserted)
+    skipped = len([e for e in entities if (e.get("label") or "").strip()]) - len(inserted)
     return {"inserted": inserted, "skipped": max(0, skipped)}
 
 
@@ -64,28 +77,25 @@ async def db_list_entities(
     offset: int = 0,
     search: str | None = None,
 ) -> dict[str, Any]:
+    _where = """WHERE campaign_id = $1::uuid
+                  AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')"""
     async with _acquire() as conn:
         if limit == 0:
             rows = await conn.fetch(
-                """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entities
-                   WHERE campaign_id = $1::uuid
-                     AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                   ORDER BY created_at ASC""",
+                f"SELECT * FROM playbook.entities {_where} ORDER BY created_at ASC",
                 campaign_id, search,
             )
+            total = len(rows)
         else:
+            total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM playbook.entities {_where}",
+                campaign_id, search,
+            )
             rows = await conn.fetch(
-                """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entities
-                   WHERE campaign_id = $1::uuid
-                     AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                   ORDER BY created_at ASC
-                   LIMIT $3 OFFSET $4""",
+                f"SELECT * FROM playbook.entities {_where} ORDER BY created_at ASC LIMIT $3 OFFSET $4",
                 campaign_id, search, limit, offset,
             )
-    total = int(rows[0]["_total"]) if rows else 0
     items = [_entity_row_to_dict(r) for r in rows]
-    for item in items:
-        item.pop("_total", None)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 

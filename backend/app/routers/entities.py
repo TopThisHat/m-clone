@@ -80,10 +80,32 @@ async def create_entity(campaign_id: str, body: EntityCreate, user=Depends(get_c
 @router.post("/{campaign_id}/entities/bulk", response_model=BulkEntityResult, status_code=201)
 async def bulk_create_entities(campaign_id: str, body: list[EntityCreate], user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
+    if not body:
+        return {"inserted": [], "skipped": 0}
+    # Deduplicate within the request by both label and gwm_id
+    seen_labels: set[str] = set()
+    seen_gwm_ids: set[str] = set()
+    deduped: list[dict] = []
+    for e in body:
+        label_key = e.label.strip().lower()
+        if not label_key or label_key in seen_labels:
+            continue
+        gwm_id = (e.gwm_id or "").strip().lower() if e.gwm_id else None
+        if gwm_id and gwm_id in seen_gwm_ids:
+            continue
+        seen_labels.add(label_key)
+        if gwm_id:
+            seen_gwm_ids.add(gwm_id)
+        deduped.append(e.model_dump())
+    skipped_in_request = len(body) - len(deduped)
     try:
-        return await db_bulk_create_entities(campaign_id, [e.model_dump() for e in body])
+        result = await db_bulk_create_entities(campaign_id, deduped)
+        result["skipped"] = result.get("skipped", 0) + skipped_in_request
+        return result
     except DatabaseNotConfigured:
         raise _no_db()
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Bulk insert failed: {exc}")
 
 
 @router.post("/{campaign_id}/entities/import", response_model=list[EntityOut], status_code=201)

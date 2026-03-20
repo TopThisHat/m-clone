@@ -50,47 +50,30 @@ async def db_list_entity_library(
     offset: int = 0,
     search: str | None = None,
 ) -> dict[str, Any]:
+    if team_id:
+        _where = "WHERE team_id=$1::uuid AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')"
+        args: list[Any] = [team_id, search]
+    else:
+        _where = "WHERE owner_sid=$1 AND team_id IS NULL AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')"
+        args = [owner_sid, search]
+
     async with _acquire() as conn:
-        if team_id:
-            if limit == 0:
-                rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entity_library
-                       WHERE team_id=$1::uuid
-                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                       ORDER BY created_at ASC""",
-                    team_id, search,
-                )
-            else:
-                rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entity_library
-                       WHERE team_id=$1::uuid
-                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                       ORDER BY created_at ASC
-                       LIMIT $3 OFFSET $4""",
-                    team_id, search, limit, offset,
-                )
+        if limit == 0:
+            rows = await conn.fetch(
+                f"SELECT * FROM playbook.entity_library {_where} ORDER BY created_at ASC",
+                *args,
+            )
+            total = len(rows)
         else:
-            if limit == 0:
-                rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entity_library
-                       WHERE owner_sid=$1 AND team_id IS NULL
-                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                       ORDER BY created_at ASC""",
-                    owner_sid, search,
-                )
-            else:
-                rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.entity_library
-                       WHERE owner_sid=$1 AND team_id IS NULL
-                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                       ORDER BY created_at ASC
-                       LIMIT $3 OFFSET $4""",
-                    owner_sid, search, limit, offset,
-                )
-    total = int(rows[0]["_total"]) if rows else 0
+            total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM playbook.entity_library {_where}",
+                *args,
+            )
+            rows = await conn.fetch(
+                f"SELECT * FROM playbook.entity_library {_where} ORDER BY created_at ASC LIMIT $3 OFFSET $4",
+                *args, limit, offset,
+            )
     items = [_lib_row_to_dict(r) for r in rows]
-    for item in items:
-        item.pop("_total", None)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
@@ -101,7 +84,7 @@ async def db_create_entity_library(owner_sid: str, team_id: str | None, label: s
         row = await conn.fetchrow(
             """
             INSERT INTO playbook.entity_library (owner_sid, team_id, label, description, gwm_id, metadata)
-            VALUES ($1, $2::uuid, $3, $4, $5, $6::jsonb)
+            VALUES ($1, $2::uuid, TRIM($3), $4, NULLIF(TRIM($5), ''), $6::jsonb)
             RETURNING *
             """,
             owner_sid, team_id, label, description, gwm_id, json.dumps(metadata or {}),
@@ -113,24 +96,30 @@ async def db_bulk_create_entity_library(owner_sid: str, team_id: str | None,
                                         items: list[dict[str, Any]]) -> dict[str, Any]:
     if not items:
         return {"inserted": [], "skipped": 0}
+    # Choose ON CONFLICT target based on whether this is a team or personal library
+    if team_id:
+        conflict = "ON CONFLICT (team_id, (LOWER(TRIM(label)))) WHERE team_id IS NOT NULL DO NOTHING"
+    else:
+        conflict = "ON CONFLICT (owner_sid, (LOWER(TRIM(label)))) WHERE team_id IS NULL DO NOTHING"
     async with _acquire() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             INSERT INTO playbook.entity_library (owner_sid, team_id, label, description, gwm_id, metadata)
             SELECT $1,
                    $2::uuid,
-                   e->>'label',
-                   NULLIF(e->>'description', ''),
-                   NULLIF(e->>'gwm_id', ''),
-                   COALESCE((e->'metadata')::jsonb, '{}'::jsonb)
+                   TRIM(e->>'label'),
+                   NULLIF(TRIM(e->>'description'), ''),
+                   NULLIF(TRIM(e->>'gwm_id'), ''),
+                   COALESCE((e->'metadata')::jsonb, '{{}}'::jsonb)
             FROM jsonb_array_elements($3::jsonb) AS e
-            WHERE (e->>'label') IS NOT NULL AND (e->>'label') != ''
+            WHERE TRIM(COALESCE(e->>'label', '')) != ''
+            {conflict}
             RETURNING *
             """,
             owner_sid, team_id, json.dumps(items),
         )
     inserted = [_lib_row_to_dict(r) for r in rows]
-    skipped = len([i for i in items if i.get("label")]) - len(inserted)
+    skipped = len([i for i in items if (i.get("label") or "").strip()]) - len(inserted)
     return {"inserted": inserted, "skipped": max(0, skipped)}
 
 
@@ -170,47 +159,30 @@ async def db_list_attribute_library(
     offset: int = 0,
     search: str | None = None,
 ) -> dict[str, Any]:
+    if team_id:
+        _where = "WHERE team_id=$1::uuid AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')"
+        args: list[Any] = [team_id, search]
+    else:
+        _where = "WHERE owner_sid=$1 AND team_id IS NULL AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')"
+        args = [owner_sid, search]
+
     async with _acquire() as conn:
-        if team_id:
-            if limit == 0:
-                rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attribute_library
-                       WHERE team_id=$1::uuid
-                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                       ORDER BY created_at ASC""",
-                    team_id, search,
-                )
-            else:
-                rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attribute_library
-                       WHERE team_id=$1::uuid
-                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                       ORDER BY created_at ASC
-                       LIMIT $3 OFFSET $4""",
-                    team_id, search, limit, offset,
-                )
+        if limit == 0:
+            rows = await conn.fetch(
+                f"SELECT * FROM playbook.attribute_library {_where} ORDER BY created_at ASC",
+                *args,
+            )
+            total = len(rows)
         else:
-            if limit == 0:
-                rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attribute_library
-                       WHERE owner_sid=$1 AND team_id IS NULL
-                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                       ORDER BY created_at ASC""",
-                    owner_sid, search,
-                )
-            else:
-                rows = await conn.fetch(
-                    """SELECT *, COUNT(*) OVER() AS _total FROM playbook.attribute_library
-                       WHERE owner_sid=$1 AND team_id IS NULL
-                         AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
-                       ORDER BY created_at ASC
-                       LIMIT $3 OFFSET $4""",
-                    owner_sid, search, limit, offset,
-                )
-    total = int(rows[0]["_total"]) if rows else 0
+            total = await conn.fetchval(
+                f"SELECT COUNT(*) FROM playbook.attribute_library {_where}",
+                *args,
+            )
+            rows = await conn.fetch(
+                f"SELECT * FROM playbook.attribute_library {_where} ORDER BY created_at ASC LIMIT $3 OFFSET $4",
+                *args, limit, offset,
+            )
     items = [_lib_row_to_dict(r) for r in rows]
-    for item in items:
-        item.pop("_total", None)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
@@ -220,7 +192,7 @@ async def db_create_attribute_library(owner_sid: str, team_id: str | None, label
         row = await conn.fetchrow(
             """
             INSERT INTO playbook.attribute_library (owner_sid, team_id, label, description, weight)
-            VALUES ($1, $2::uuid, $3, $4, $5)
+            VALUES ($1, $2::uuid, TRIM($3), $4, $5)
             RETURNING *
             """,
             owner_sid, team_id, label, description, weight,
@@ -232,23 +204,28 @@ async def db_bulk_create_attribute_library(owner_sid: str, team_id: str | None,
                                            items: list[dict[str, Any]]) -> dict[str, Any]:
     if not items:
         return {"inserted": [], "skipped": 0}
+    if team_id:
+        conflict = "ON CONFLICT (team_id, (LOWER(TRIM(label)))) WHERE team_id IS NOT NULL DO NOTHING"
+    else:
+        conflict = "ON CONFLICT (owner_sid, (LOWER(TRIM(label)))) WHERE team_id IS NULL DO NOTHING"
     async with _acquire() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             INSERT INTO playbook.attribute_library (owner_sid, team_id, label, description, weight)
             SELECT $1,
                    $2::uuid,
-                   e->>'label',
-                   NULLIF(e->>'description', ''),
+                   TRIM(e->>'label'),
+                   NULLIF(TRIM(e->>'description'), ''),
                    COALESCE((e->>'weight')::float, 1.0)
             FROM jsonb_array_elements($3::jsonb) AS e
-            WHERE (e->>'label') IS NOT NULL AND (e->>'label') != ''
+            WHERE TRIM(COALESCE(e->>'label', '')) != ''
+            {conflict}
             RETURNING *
             """,
             owner_sid, team_id, json.dumps(items),
         )
     inserted = [_lib_row_to_dict(r) for r in rows]
-    skipped = len([i for i in items if i.get("label")]) - len(inserted)
+    skipped = len([i for i in items if (i.get("label") or "").strip()]) - len(inserted)
     return {"inserted": inserted, "skipped": max(0, skipped)}
 
 
@@ -280,10 +257,15 @@ async def db_import_entities_from_library(campaign_id: str, lib_ids: list[str]) 
         rows = await conn.fetch(
             """
             INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
-            SELECT $1::uuid, label, description, gwm_id, metadata
+            SELECT $1::uuid, TRIM(label), description, NULLIF(TRIM(gwm_id), ''), metadata
             FROM playbook.entity_library
             WHERE id = ANY($2::uuid[])
-            ON CONFLICT (campaign_id, label) DO NOTHING
+              AND (gwm_id IS NULL OR NOT EXISTS (
+                  SELECT 1 FROM playbook.entities
+                  WHERE campaign_id = $1::uuid
+                    AND LOWER(TRIM(gwm_id)) = LOWER(TRIM(entity_library.gwm_id))
+              ))
+            ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
             RETURNING *
             """,
             campaign_id, lib_ids,
@@ -299,10 +281,10 @@ async def db_import_attributes_from_library(campaign_id: str, lib_ids: list[str]
         rows = await conn.fetch(
             """
             INSERT INTO playbook.attributes (campaign_id, label, description, weight)
-            SELECT $1::uuid, label, description, weight
+            SELECT $1::uuid, TRIM(label), description, weight
             FROM playbook.attribute_library
             WHERE id = ANY($2::uuid[])
-            ON CONFLICT (campaign_id, label) DO NOTHING
+            ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
             RETURNING *
             """,
             campaign_id, lib_ids,
