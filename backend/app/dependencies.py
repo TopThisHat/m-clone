@@ -21,6 +21,8 @@ class AgentDeps:
     # Enhanced feature fields
     chart_payloads: list[dict] = field(default_factory=list)
     source_claims: dict[str, list[str]] = field(default_factory=dict)
+    # Track items_found across evaluations to detect stalled progress
+    progress_history: list[int] = field(default_factory=list)
     memory_context: str = ""
     user_rules: list[str] = field(default_factory=list)
     # Clarification fields

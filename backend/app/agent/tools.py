@@ -183,6 +183,10 @@ async def create_research_plan(
                 "type": "integer",
                 "description": "Self-assessed confidence level 0-100 that research is complete.",
             },
+            "items_found": {
+                "type": "integer",
+                "description": "For comprehensive list queries: count of unique items found so far. Use 0 if not a list query.",
+            },
         },
         "required": ["findings_summary", "identified_gaps", "confidence_pct"],
     },
@@ -192,16 +196,32 @@ async def evaluate_research_completeness(
     findings_summary: str,
     identified_gaps: list[str],
     confidence_pct: int,
+    items_found: int = 0,
 ) -> str:
     deps.evaluation_count += 1
+    deps.progress_history.append(items_found)
 
     recommended_queries = identified_gaps[:3] if identified_gaps else []
 
-    if confidence_pct >= 85 or deps.evaluation_count >= 3:
+    # Comprehensive/deep queries get more evaluation rounds
+    max_evals = 5 if deps.query_complexity == "deep" else 3
+
+    # Detect stalled progress: same items_found for last 2 evaluations
+    progress_stalled = (
+        len(deps.progress_history) >= 2
+        and items_found > 0
+        and deps.progress_history[-1] == deps.progress_history[-2]
+    )
+
+    # SUFFICIENT when: confident enough, hit max evals, OR progress stalled
+    if confidence_pct >= 85 or deps.evaluation_count >= max_evals or progress_stalled:
         result = {
             "decision": "SUFFICIENT",
             "evaluation_number": deps.evaluation_count,
+            "max_evaluations": max_evals,
             "confidence_pct": confidence_pct,
+            "items_found": items_found,
+            "progress_stalled": progress_stalled,
             "gaps": identified_gaps,
             "recommended_queries": [],
         }
@@ -209,7 +229,9 @@ async def evaluate_research_completeness(
         result = {
             "decision": "CONTINUE",
             "evaluation_number": deps.evaluation_count,
+            "max_evaluations": max_evals,
             "confidence_pct": confidence_pct,
+            "items_found": items_found,
             "gaps": identified_gaps,
             "recommended_queries": recommended_queries,
         }

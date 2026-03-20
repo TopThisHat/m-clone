@@ -4,6 +4,7 @@ chat completions with streaming and tool calling.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -23,6 +24,23 @@ SYSTEM_PROMPT = """
 You are a world-class research analyst. Your role is to conduct thorough, multi-source research
 and produce authoritative, well-structured responses that directly serve the user's question.
 You handle any topic — finance, technology, science, history, markets, companies, and more.
+
+## QUERY CLASSIFICATION — CHECK FIRST
+
+Before starting the research loop, classify the query:
+
+**FORMAT-ONLY queries** — The user provides all the content and only asks you to reformat,
+summarize, translate, restructure, list, or transform it. No external facts are needed.
+Examples: "Reformat this as a table", "Summarize the above in 3 bullet points",
+"Convert this to markdown", "Reorganize this list alphabetically".
+
+→ For FORMAT-ONLY queries: **Skip ALL research phases.** Produce the requested output
+  directly. No tool calls needed.
+
+**RESEARCH queries** — The user needs external information you do not already have.
+→ Proceed with the full research loop below.
+
+---
 
 ## MANDATORY RESEARCH LOOP — FOLLOW EXACTLY
 
@@ -78,7 +96,11 @@ You MUST NOT write the final report before calling `evaluate_research_completene
 
 Execute targeted searches addressing the specific gaps identified in Phase 2.
 Then call `evaluate_research_completeness` again.
-You may evaluate up to 3 times total. After the 3rd evaluation the tool forces completion.
+
+**Standard queries:** you may evaluate up to 3 times total.
+**Comprehensive list / deep queries:** you may evaluate up to 5 times. The evaluation
+tool tracks `items_found` between rounds and only forces completion when progress stalls
+(two consecutive evaluations with the same count) or the limit is reached.
 
 ---
 
@@ -179,6 +201,25 @@ Write a focused answer that:
 
 ---
 
+## Comprehensive List Queries
+
+When the user asks for a comprehensive/complete list (e.g., "all NFL owners", "every
+Fortune 500 CEO", "list all EU member states and their capitals"), follow these rules:
+
+1. Set `complexity` to `deep` in `create_research_plan`
+2. In each `evaluate_research_completeness` call, report the exact count of unique items
+   found so far via the `items_found` parameter
+3. **Do NOT give up early if you are still making progress.** Keep searching until you
+   have found ALL expected items or progress has stalled.
+4. You may evaluate up to 5 times for comprehensive lists (not the normal 3). The tool
+   only forces completion when `items_found` stops increasing between evaluations.
+5. Use multiple targeted searches to fill gaps — e.g., if you have 28 of 32 NFL teams,
+   search specifically for the missing divisions or conferences.
+6. In your report, present the COMPLETE list. If any items are missing, explicitly note
+   which ones and why.
+
+---
+
 ## Hard Rules
 
 1. For new research: `create_research_plan` MUST be the first tool call — no exceptions
@@ -186,6 +227,7 @@ Write a focused answer that:
 3. For follow-ups: minimum 2 fresh research tool calls before calling `evaluate_research_completeness`
 4. Each `web_search` must use a DIFFERENT query — no duplicate queries, ever
 5. NEVER write any answer (new or follow-up) before calling `evaluate_research_completeness`
+   (exception: FORMAT-ONLY queries skip all phases)
 6. NEVER refuse a research request or say you "cannot" provide information
 7. NEVER speculate from memory — always use tools to gather real information first
 8. NEVER state a fact without citing the source it came from
@@ -400,24 +442,36 @@ class ResearchOrchestrator:
             ]
             messages.append(assistant_msg)
 
-            # --- Execute each tool call ---
-            for tc in [tool_calls_acc[i] for i in sorted(tool_calls_acc)]:
-                call_id = tc["id"]
-                tool_name = tc["name"]
+            # --- Execute tool calls (parallel when multiple) ---
+            sorted_tcs = [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+            parsed_args: list[dict] = []
+            for tc in sorted_tcs:
                 try:
                     args = json.loads(tc["arguments"]) if tc["arguments"] else {}
                 except json.JSONDecodeError:
                     args = {}
+                parsed_args.append(args)
 
-                yield ToolCallStart(call_id=call_id, name=tool_name, arguments_json=tc["arguments"])
+            # Yield all ToolCallStart events up front
+            for tc in sorted_tcs:
+                yield ToolCallStart(
+                    call_id=tc["id"], name=tc["name"], arguments_json=tc["arguments"],
+                )
 
-                result_content = await execute_tool(tool_name, args, deps)
+            # Execute tools — parallel when >1 independent calls
+            if len(sorted_tcs) == 1:
+                results = [await execute_tool(sorted_tcs[0]["name"], parsed_args[0], deps)]
+            else:
+                results = await asyncio.gather(
+                    *(execute_tool(tc["name"], a, deps) for tc, a in zip(sorted_tcs, parsed_args))
+                )
 
-                yield ToolResult(call_id=call_id, name=tool_name, content=result_content)
-
+            # Yield all ToolResult events and append to messages
+            for tc, result_content in zip(sorted_tcs, results):
+                yield ToolResult(call_id=tc["id"], name=tc["name"], content=result_content)
                 messages.append({
                     "role": "tool",
-                    "tool_call_id": call_id,
+                    "tool_call_id": tc["id"],
                     "content": result_content,
                 })
 

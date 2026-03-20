@@ -44,12 +44,16 @@ def _build_azure_client() -> AsyncOpenAI:
     pem_path = tmp.name
     tmp.close()
 
-    # Set proxy env vars for dev/uat/prod environments
+    # Determine proxy settings — scoped to Azure token + OpenAI client ONLY.
+    # We intentionally do NOT set os.environ["HTTPS_PROXY"] globally, because
+    # that would route tool HTTP calls (Tavily, Wikipedia, SEC EDGAR, Yahoo
+    # Finance) through the corporate proxy unnecessarily.
+    proxy_url: str | None = None
+    proxy_cert: str | None = None
     if settings.env_name in ("dev", "uat", "prod") and settings.cloud_proxy_host:
         proxy_url = f"http://{settings.cloud_proxy_host}:{settings.cloud_proxy_port}"
-        os.environ["HTTPS_PROXY"] = proxy_url
-        os.environ["REQUESTS_CA_BUNDLE"] = settings.cloud_proxy_cert
-        logger.info("Azure proxy configured: %s (cert: %s)", proxy_url, settings.cloud_proxy_cert)
+        proxy_cert = settings.cloud_proxy_cert
+        logger.info("Azure proxy configured: %s (cert: %s)", proxy_url, proxy_cert)
 
     credential = CertificateCredential(
         tenant_id=tenant_id,
@@ -57,17 +61,55 @@ def _build_azure_client() -> AsyncOpenAI:
         certificate_path=pem_path,
     )
 
-    # Custom auth that injects the Azure AD bearer token on each request
+    # Custom auth that injects the Azure AD bearer token on each request.
+    # Proxy env vars are set ONLY during the synchronous get_token() call
+    # (MSAL/requests needs them) and immediately restored afterwards.
     class _AzureBearerAuth(httpx.Auth):
-        def __init__(self, cred: CertificateCredential) -> None:
+        def __init__(
+            self,
+            cred: CertificateCredential,
+            _proxy_url: str | None,
+            _proxy_cert: str | None,
+        ) -> None:
             self._cred = cred
+            self._proxy_url = _proxy_url
+            self._proxy_cert = _proxy_cert
 
         def auth_flow(self, request: httpx.Request):
-            token = self._cred.get_token("https://cognitiveservices.azure.com/.default")
+            old_proxy = os.environ.get("HTTPS_PROXY")
+            old_cert = os.environ.get("REQUESTS_CA_BUNDLE")
+            try:
+                if self._proxy_url:
+                    os.environ["HTTPS_PROXY"] = self._proxy_url
+                if self._proxy_cert:
+                    os.environ["REQUESTS_CA_BUNDLE"] = self._proxy_cert
+                token = self._cred.get_token(
+                    "https://cognitiveservices.azure.com/.default"
+                )
+            finally:
+                # Restore original env — keep proxy out of tool HTTP calls
+                if old_proxy is not None:
+                    os.environ["HTTPS_PROXY"] = old_proxy
+                else:
+                    os.environ.pop("HTTPS_PROXY", None)
+                if old_cert is not None:
+                    os.environ["REQUESTS_CA_BUNDLE"] = old_cert
+                else:
+                    os.environ.pop("REQUESTS_CA_BUNDLE", None)
             request.headers["Authorization"] = f"Bearer {token.token}"
             yield request
 
-    http_client = httpx.AsyncClient(auth=_AzureBearerAuth(credential), timeout=120)
+    # Build httpx client with proxy scoped to OpenAI API calls only
+    http_kwargs: dict = {
+        "auth": _AzureBearerAuth(credential, proxy_url, proxy_cert),
+        "timeout": 120,
+    }
+    if proxy_url:
+        http_kwargs["proxy"] = proxy_url
+    if proxy_cert:
+        http_kwargs["verify"] = proxy_cert
+
+    http_client = httpx.AsyncClient(**http_kwargs)
 
     return AsyncOpenAI(
         base_url=endpoint,
