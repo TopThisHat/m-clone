@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     aws_elasticache_secret_name: str = ""  # e.g. "prod/myapp/redis"
     aws_region: str = "us-east-1"
 
+    # Azure OpenAI via AWS Secrets Manager
+    aws_mode: bool = False
+    aws_azure_pem_secret: str = ""
+    aws_azure_config_secret: str = ""
+    env_name: str = "local"
+    cloud_proxy_host: str = ""
+    cloud_proxy_port: int = 11111
+    cloud_proxy_cert: str = "cert/uat.cert"
+
     # Auth / SSO
     oidc_issuer: str = ""
     oidc_client_id: str = "m-clone"

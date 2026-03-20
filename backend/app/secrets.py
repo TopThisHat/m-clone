@@ -105,3 +105,43 @@ def build_redis_url(secret: dict) -> tuple[str, str | None]:
     host = secret["host"]
     port = secret.get("port", 6379)
     return f"rediss://{host}:{port}", token
+
+
+# ── Azure OpenAI (PEM + config) ─────────────────────────────────────────────
+
+_cached_azure_pem: str | None = None
+
+
+def get_azure_pem_secret(secret_name: str, region: str) -> str:
+    """Return cached Azure PEM certificate, fetching from Secrets Manager if needed."""
+    global _cached_azure_pem
+    if _cached_azure_pem is None:
+        logger.info("Fetching Azure PEM secret %r from Secrets Manager (%s)", secret_name, region)
+        raw = _fetch_secret(secret_name, region)
+        # The secret may store the PEM as a single string field or as {"pem": "..."}
+        _cached_azure_pem = raw.get("pem", raw) if isinstance(raw, dict) else str(raw)
+    return _cached_azure_pem
+
+
+def invalidate_azure_pem_secret() -> None:
+    global _cached_azure_pem
+    _cached_azure_pem = None
+    logger.info("Azure PEM secret cache cleared")
+
+
+_cached_azure_config: dict | None = None
+
+
+def get_azure_config_secret(secret_name: str, region: str) -> dict:
+    """Return cached Azure config JSON: {endpoint, client_id, tenant_id, api_key}."""
+    global _cached_azure_config
+    if _cached_azure_config is None:
+        logger.info("Fetching Azure config secret %r from Secrets Manager (%s)", secret_name, region)
+        _cached_azure_config = _fetch_secret(secret_name, region)
+    return _cached_azure_config
+
+
+def invalidate_azure_config_secret() -> None:
+    global _cached_azure_config
+    _cached_azure_config = None
+    logger.info("Azure config secret cache cleared")

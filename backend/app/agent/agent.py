@@ -1,9 +1,23 @@
+"""
+ResearchOrchestrator — drives the research agent via native OpenAI
+chat completions with streaming and tool calling.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass
 from datetime import date
+from typing import Any, AsyncIterator
 
-from pydantic_ai import Agent, RunContext
+from openai import AsyncOpenAI
 
+from app.agent.tools import execute_tool, get_openai_tools
 from app.config import settings
 from app.dependencies import AgentDeps
+from app.openai_factory import get_openai_client
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """
 You are a world-class research analyst. Your role is to conduct thorough, multi-source research
@@ -205,46 +219,213 @@ Hard Rules (additions):
 11. Call `ask_clarification` at most ONCE per session.
 """
 
-research_agent = Agent(
-    settings.default_model,
-    deps_type=AgentDeps,
-    system_prompt=SYSTEM_PROMPT,
-)
+
+# ── Orchestrator event types ─────────────────────────────────────────────────
+
+@dataclass
+class TextDelta:
+    token: str
 
 
-@research_agent.system_prompt
-def inject_user_rules(ctx: RunContext[AgentDeps]) -> str:
-    """Inject user-defined domain rules when present. The agent decides relevance."""
-    if not ctx.deps.user_rules:
-        return ""
-    rules_text = "\n".join(f"- {r}" for r in ctx.deps.user_rules)
-    return (
-        "\n## User-Defined Domain Rules\n\n"
-        "The user has provided the following domain-specific rules and facts. "
-        "**Apply ONLY the rules that are directly relevant to this query** — ignore rules about unrelated topics. "
-        "When a rule is relevant, explicitly check for compliance or violations and note findings in your report.\n\n"
-        f"{rules_text}"
-    )
+@dataclass
+class ToolCallStart:
+    call_id: str
+    name: str
+    arguments_json: str
 
 
-@research_agent.system_prompt
-def inject_current_date() -> str:
-    """Appended to the system prompt at runtime so the agent always knows today's date."""
+@dataclass
+class ToolResult:
+    call_id: str
+    name: str
+    content: str
+
+
+@dataclass
+class FinalResult:
+    text: str
+    usage: dict[str, Any]
+    messages: list[dict[str, Any]]
+
+
+OrchestratorEvent = TextDelta | ToolCallStart | ToolResult | FinalResult
+
+
+# ── Helper: build system messages ────────────────────────────────────────────
+
+def _build_system_content(deps: AgentDeps) -> str:
+    """Combine SYSTEM_PROMPT + user rules + current date."""
+    parts = [SYSTEM_PROMPT.strip()]
+
+    if deps.user_rules:
+        rules_text = "\n".join(f"- {r}" for r in deps.user_rules)
+        parts.append(
+            "\n## User-Defined Domain Rules\n\n"
+            "The user has provided the following domain-specific rules and facts. "
+            "**Apply ONLY the rules that are directly relevant to this query** — ignore rules about unrelated topics. "
+            "When a rule is relevant, explicitly check for compliance or violations and note findings in your report.\n\n"
+            f"{rules_text}"
+        )
+
     today = date.today().strftime("%B %d, %Y")
-    return (
+    parts.append(
         f"Today's date is {today}. "
         "When searching for recent information, prioritise sources published within the last 30–90 days. "
         "If a source appears outdated relative to today's date, note that explicitly in your report."
     )
 
+    return "\n\n".join(parts)
 
-def make_agent(model_str: str | None = None) -> Agent:
-    """Factory that creates an agent with a specific model.
-    Note: tools are registered on the module-level research_agent.
-    Use research_agent.iter(model=model_str) instead for model overrides.
+
+# ── Max history ──────────────────────────────────────────────────────────────
+
+_MAX_HISTORY_MESSAGES = 60
+
+
+def _trim_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(messages) <= _MAX_HISTORY_MESSAGES:
+        return messages
+    target = len(messages) - _MAX_HISTORY_MESSAGES
+    for i in range(target, len(messages)):
+        msg = messages[i]
+        if msg.get("role") == "user":
+            return messages[i:]
+    return messages[target:]
+
+
+# ── Orchestrator ─────────────────────────────────────────────────────────────
+
+class ResearchOrchestrator:
     """
-    return Agent(
-        model_str or settings.default_model,
-        deps_type=AgentDeps,
-        system_prompt=SYSTEM_PROMPT,
-    )
+    Drives the research agent via native OpenAI chat completions with
+    streaming and tool calling. Yields OrchestratorEvent items.
+    """
+
+    def __init__(self, model: str | None = None) -> None:
+        self.client: AsyncOpenAI = get_openai_client()
+        # Strip provider prefix if present (e.g. "openai:gpt-4o" → "gpt-4o")
+        raw = model or settings.default_model
+        self.model = raw.split(":", 1)[-1] if ":" in raw else raw
+
+    async def run(
+        self,
+        query: str,
+        deps: AgentDeps,
+        message_history: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[OrchestratorEvent]:
+        """
+        The main tool-calling loop:
+        1. Build messages array (system + history + user query)
+        2. Call client.chat.completions.create(stream=True, tools=...)
+        3. Accumulate streamed tool call deltas
+        4. Yield TextDelta for text tokens, ToolCallStart/ToolResult for tools
+        5. Execute tools, append tool results to messages
+        6. Loop back to step 2 until no tool calls remain
+        7. Yield FinalResult with final text + usage + messages
+        """
+        system_content = _build_system_content(deps)
+        tools = get_openai_tools()
+
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
+        if message_history:
+            messages.extend(_trim_history(message_history))
+        messages.append({"role": "user", "content": query})
+
+        total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        accumulated_text = ""
+
+        while True:
+            # --- Stream a single completion ---
+            stream = await self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools if tools else None,
+                stream=True,
+            )
+
+            # Accumulators for this turn
+            turn_text = ""
+            # {index: {id, name, arguments}} for parallel tool calls
+            tool_calls_acc: dict[int, dict[str, str]] = {}
+
+            async for chunk in stream:
+                # Track usage from the final chunk
+                if chunk.usage:
+                    total_usage["prompt_tokens"] += chunk.usage.prompt_tokens or 0
+                    total_usage["completion_tokens"] += chunk.usage.completion_tokens or 0
+                    total_usage["total_tokens"] += chunk.usage.total_tokens or 0
+
+                for choice in chunk.choices:
+                    delta = choice.delta
+                    if delta is None:
+                        continue
+
+                    # Text content
+                    if delta.content:
+                        turn_text += delta.content
+                        accumulated_text += delta.content
+                        yield TextDelta(token=delta.content)
+
+                    # Tool call deltas
+                    if delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            idx = tc_delta.index
+                            if idx not in tool_calls_acc:
+                                tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                            if tc_delta.id:
+                                tool_calls_acc[idx]["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    tool_calls_acc[idx]["name"] = tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
+
+            # --- If no tool calls, we're done ---
+            if not tool_calls_acc:
+                break
+
+            # Append the assistant message with tool_calls
+            assistant_msg: dict[str, Any] = {"role": "assistant"}
+            if turn_text:
+                assistant_msg["content"] = turn_text
+            else:
+                assistant_msg["content"] = None
+            assistant_msg["tool_calls"] = [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                }
+                for tc in [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+            ]
+            messages.append(assistant_msg)
+
+            # --- Execute each tool call ---
+            for tc in [tool_calls_acc[i] for i in sorted(tool_calls_acc)]:
+                call_id = tc["id"]
+                tool_name = tc["name"]
+                try:
+                    args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                except json.JSONDecodeError:
+                    args = {}
+
+                yield ToolCallStart(call_id=call_id, name=tool_name, arguments_json=tc["arguments"])
+
+                result_content = await execute_tool(tool_name, args, deps)
+
+                yield ToolResult(call_id=call_id, name=tool_name, content=result_content)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": result_content,
+                })
+
+        # --- Yield final result ---
+        final_text = accumulated_text
+        usage_dict = {
+            "request_tokens": total_usage["prompt_tokens"],
+            "response_tokens": total_usage["completion_tokens"],
+            "total_tokens": total_usage["total_tokens"],
+        }
+        yield FinalResult(text=final_text, usage=usage_dict, messages=messages)

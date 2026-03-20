@@ -1,13 +1,13 @@
 import asyncio
 import json
 import re
+from dataclasses import dataclass, field
+from typing import Any, Callable, Coroutine
 
 import httpx
 import yfinance as yf
-from pydantic_ai import RunContext
 from rank_bm25 import BM25Okapi
 
-from app.agent.agent import research_agent
 from app.agent.clarification import clarification_store
 from app.dependencies import AgentDeps
 
@@ -21,32 +21,82 @@ NOISE_DOMAINS = ["pinterest.com", "quora.com"]
 _CLAIM_PATTERN = re.compile(r'\$[\d,]+\.?\d*[BMTKbmtk]?|\d+\.?\d*%')
 
 
-@research_agent.tool
+# ── Tool registry ────────────────────────────────────────────────────────────
+
+@dataclass
+class ToolDef:
+    func: Callable[..., Coroutine]
+    schema: dict[str, Any]
+
+
+TOOL_REGISTRY: dict[str, ToolDef] = {}
+
+
+def _register(name: str, description: str, parameters: dict[str, Any]):
+    """Decorator: register a tool function with its OpenAI function-calling schema."""
+    def decorator(fn: Callable[..., Coroutine]):
+        TOOL_REGISTRY[name] = ToolDef(
+            func=fn,
+            schema={
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": parameters,
+                },
+            },
+        )
+        return fn
+    return decorator
+
+
+def get_openai_tools() -> list[dict[str, Any]]:
+    """Return the list of tool schemas for OpenAI chat completions."""
+    return [td.schema for td in TOOL_REGISTRY.values()]
+
+
+async def execute_tool(name: str, args: dict[str, Any], deps: AgentDeps) -> str:
+    """Look up and execute a registered tool by name."""
+    tool_def = TOOL_REGISTRY.get(name)
+    if tool_def is None:
+        return f"Unknown tool: {name}"
+    return await tool_def.func(deps=deps, **args)
+
+
+# ── Tool implementations ─────────────────────────────────────────────────────
+
+@_register(
+    "ask_clarification",
+    "Ask the user a clarifying question before beginning research. "
+    "Use ONLY when the top-level query is genuinely ambiguous in a way that changes "
+    "the entire research direction. Call at most ONCE, as the very first action — "
+    "before create_research_plan. Never call mid-research.",
+    {
+        "type": "object",
+        "properties": {
+            "question": {"type": "string", "description": "The clarifying question to ask the user."},
+            "context": {"type": "string", "description": "Optional additional context or instructions for the user."},
+            "options": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of suggested answer choices.",
+            },
+        },
+        "required": ["question"],
+    },
+)
 async def ask_clarification(
-    ctx: RunContext[AgentDeps],
+    deps: AgentDeps,
     question: str,
     context: str | None = None,
     options: list[str] | None = None,
 ) -> str:
-    """Ask the user a clarifying question before beginning research.
-
-    Use ONLY when the top-level query is genuinely ambiguous in a way that changes
-    the entire research direction. Call at most ONCE, as the very first action —
-    before create_research_plan. Never call mid-research.
-
-    The streaming layer intercepts this call via FunctionToolCallEvent and emits
-    the clarification_needed SSE before this function body even runs.
-
-    Args:
-        question: The clarifying question to ask the user.
-        context: Optional additional context or instructions for the user.
-        options: Optional list of suggested answer choices.
-    """
-    clarification_id = ctx.deps.pending_clarification_id
+    """Ask the user a clarifying question before beginning research."""
+    clarification_id = deps.pending_clarification_id
     if not clarification_id:
         return "No clarification available in this context — proceed with best assumptions."
 
-    ctx.deps.pending_clarification_id = None  # consume it
+    deps.pending_clarification_id = None  # consume it
 
     pending = clarification_store.get_pending(clarification_id)
     if pending is None:
@@ -61,28 +111,42 @@ async def ask_clarification(
     return f"User clarification: {answer}"
 
 
-@research_agent.tool
+@_register(
+    "create_research_plan",
+    "Create a structured research plan before starting information gathering. "
+    "MUST be called as the very first action for any research query.",
+    {
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string", "description": "The central research topic or question."},
+            "research_angles": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "4-6 specific sub-questions or angles to investigate.",
+            },
+            "initial_hypotheses": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Initial assumptions or hypotheses to validate or refute.",
+            },
+            "complexity": {
+                "type": "string",
+                "enum": ["simple", "standard", "deep"],
+                "description": "Research depth.",
+            },
+        },
+        "required": ["topic", "research_angles", "initial_hypotheses"],
+    },
+)
 async def create_research_plan(
-    ctx: RunContext[AgentDeps],
+    deps: AgentDeps,
     topic: str,
     research_angles: list[str],
     initial_hypotheses: list[str],
     complexity: str = "standard",
 ) -> str:
-    """Create a structured research plan before starting information gathering.
-
-    MUST be called as the very first action for any research query.
-    Defines the research angles to pursue and working hypotheses to test.
-
-    Args:
-        topic: The central research topic or question.
-        research_angles: 4–6 specific sub-questions or angles to investigate.
-        initial_hypotheses: Initial assumptions or hypotheses to validate or refute.
-        complexity: Research depth — "simple" (1-2 tools), "standard" (4+ tools, default),
-            "deep" (6+ tools, all angles before evaluation).
-    """
-    ctx.deps.research_plan = research_angles
-    ctx.deps.query_complexity = complexity
+    deps.research_plan = research_angles
+    deps.query_complexity = complexity
     angles_md = "\n".join(f"{i+1}. {a}" for i, a in enumerate(research_angles))
     hypo_md = "\n".join(f"- {h}" for h in initial_hypotheses)
 
@@ -102,31 +166,41 @@ async def create_research_plan(
     )
 
 
-@research_agent.tool
+@_register(
+    "evaluate_research_completeness",
+    "Evaluate whether enough research has been done before writing the final report. "
+    "Call this after completing a batch of research tool calls.",
+    {
+        "type": "object",
+        "properties": {
+            "findings_summary": {"type": "string", "description": "A concise summary of what has been found so far."},
+            "identified_gaps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of unanswered questions or missing information.",
+            },
+            "confidence_pct": {
+                "type": "integer",
+                "description": "Self-assessed confidence level 0-100 that research is complete.",
+            },
+        },
+        "required": ["findings_summary", "identified_gaps", "confidence_pct"],
+    },
+)
 async def evaluate_research_completeness(
-    ctx: RunContext[AgentDeps],
+    deps: AgentDeps,
     findings_summary: str,
     identified_gaps: list[str],
     confidence_pct: int,
 ) -> str:
-    """Evaluate whether enough research has been done before writing the final report.
-
-    Call this after completing a batch of research tool calls. The return value is a
-    JSON object — parse `decision` to determine next step.
-
-    Args:
-        findings_summary: A concise summary of what has been found so far.
-        identified_gaps: List of unanswered questions or missing information.
-        confidence_pct: Self-assessed confidence level 0–100 that research is complete.
-    """
-    ctx.deps.evaluation_count += 1
+    deps.evaluation_count += 1
 
     recommended_queries = identified_gaps[:3] if identified_gaps else []
 
-    if confidence_pct >= 85 or ctx.deps.evaluation_count >= 3:
+    if confidence_pct >= 85 or deps.evaluation_count >= 3:
         result = {
             "decision": "SUFFICIENT",
-            "evaluation_number": ctx.deps.evaluation_count,
+            "evaluation_number": deps.evaluation_count,
             "confidence_pct": confidence_pct,
             "gaps": identified_gaps,
             "recommended_queries": [],
@@ -134,7 +208,7 @@ async def evaluate_research_completeness(
     else:
         result = {
             "decision": "CONTINUE",
-            "evaluation_number": ctx.deps.evaluation_count,
+            "evaluation_number": deps.evaluation_count,
             "confidence_pct": confidence_pct,
             "gaps": identified_gaps,
             "recommended_queries": recommended_queries,
@@ -143,31 +217,33 @@ async def evaluate_research_completeness(
     return json.dumps(result)
 
 
-@research_agent.tool
-async def web_search(ctx: RunContext[AgentDeps], query: str) -> str:
-    """Search the web for current information, news, and online sources using Tavily.
-
-    Use this to find recent news, market developments, company announcements,
-    research articles, or any information that requires real-time web data.
-
-    Args:
-        query: The search query string. Be specific and include relevant context.
-    """
+@_register(
+    "web_search",
+    "Search the web for current information, news, and online sources using Tavily.",
+    {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "The search query string. Be specific and include relevant context."},
+        },
+        "required": ["query"],
+    },
+)
+async def web_search(deps: AgentDeps, query: str) -> str:
     from tavily import AsyncTavilyClient
 
     cache_key = ("web_search", query.strip().lower())
-    if cache_key in ctx.deps.tool_cache:
-        return ctx.deps.tool_cache[cache_key]
+    if cache_key in deps.tool_cache:
+        return deps.tool_cache[cache_key]
 
     is_financial = any(
-        kw in " ".join(ctx.deps.research_plan).lower()
+        kw in " ".join(deps.research_plan).lower()
         for kw in ["stock", "revenue", "earnings", "market cap", "valuation"]
     )
     kwargs: dict = {"exclude_domains": NOISE_DOMAINS}
     if is_financial:
         kwargs["include_domains"] = FINANCIAL_DOMAINS
 
-    client = AsyncTavilyClient(api_key=ctx.deps.tavily_api_key)
+    client = AsyncTavilyClient(api_key=deps.tavily_api_key)
     results = {}
     for attempt in range(3):
         try:
@@ -186,7 +262,7 @@ async def web_search(ctx: RunContext[AgentDeps], query: str) -> str:
     items = results.get("results", [])
     if not items:
         result = f"No results found for query: '{query}'"
-        ctx.deps.tool_cache[cache_key] = result
+        deps.tool_cache[cache_key] = result
         return result
 
     formatted = []
@@ -196,12 +272,11 @@ async def web_search(ctx: RunContext[AgentDeps], query: str) -> str:
         content = item.get("content", "")[:400]
         score = item.get("score", 0)
         if url:
-            ctx.deps.source_urls.add(url)
-            ctx.deps.source_titles[url] = title
-            # Extract numeric claims for conflict detection
+            deps.source_urls.add(url)
+            deps.source_titles[url] = title
             claims = _CLAIM_PATTERN.findall(content)
             if claims:
-                ctx.deps.source_claims.setdefault(url, []).extend(claims)
+                deps.source_claims.setdefault(url, []).extend(claims)
         formatted.append(
             f"**{i}. {title}**\n"
             f"URL: {url}\n"
@@ -210,26 +285,29 @@ async def web_search(ctx: RunContext[AgentDeps], query: str) -> str:
         )
 
     result = "\n\n---\n\n".join(formatted)
-    ctx.deps.tool_cache[cache_key] = result
+    deps.tool_cache[cache_key] = result
     return result
 
 
-@research_agent.tool
-async def wiki_lookup(ctx: RunContext[AgentDeps], topic: str) -> str:
-    """Look up a topic on Wikipedia for encyclopedic background information.
-
-    Returns the summary and key sections of the Wikipedia article.
-
-    Args:
-        topic: The Wikipedia article title or search term to look up.
-    """
+@_register(
+    "wiki_lookup",
+    "Look up a topic on Wikipedia for encyclopedic background information.",
+    {
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string", "description": "The Wikipedia article title or search term to look up."},
+        },
+        "required": ["topic"],
+    },
+)
+async def wiki_lookup(deps: AgentDeps, topic: str) -> str:
     loop = asyncio.get_event_loop()
 
     cache_key = ("wiki_lookup", topic.strip().lower())
-    if cache_key in ctx.deps.tool_cache:
-        return ctx.deps.tool_cache[cache_key]
+    if cache_key in deps.tool_cache:
+        return deps.tool_cache[cache_key]
 
-    page = await loop.run_in_executor(None, lambda: ctx.deps.wiki.page(topic))
+    page = await loop.run_in_executor(None, lambda: deps.wiki.page(topic))
 
     if not page.exists():
         return f"No Wikipedia article found for '{topic}'. Try a more specific or differently spelled term."
@@ -244,28 +322,32 @@ async def wiki_lookup(ctx: RunContext[AgentDeps], topic: str) -> str:
         result += "\n" + "\n\n".join(sections)
     result += f"\n\n**Source:** {page.fullurl}"
 
-    ctx.deps.source_urls.add(page.fullurl)
-    ctx.deps.tool_cache[cache_key] = result
+    deps.source_urls.add(page.fullurl)
+    deps.tool_cache[cache_key] = result
     return result
 
 
-@research_agent.tool
+@_register(
+    "get_financials",
+    "Retrieve financial market data for a publicly traded company via Yahoo Finance.",
+    {
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string", "description": "Stock ticker symbol (e.g. AAPL, MSFT, TSLA, NVDA)."},
+            "data_type": {
+                "type": "string",
+                "enum": ["overview", "history_1y", "history_5y", "income_stmt", "balance_sheet"],
+                "description": "Type of data to retrieve.",
+            },
+        },
+        "required": ["ticker"],
+    },
+)
 async def get_financials(
-    ctx: RunContext[AgentDeps],
+    deps: AgentDeps,
     ticker: str,
     data_type: str = "overview",
 ) -> str:
-    """Retrieve financial market data for a publicly traded company via Yahoo Finance.
-
-    Args:
-        ticker: Stock ticker symbol (e.g. AAPL, MSFT, TSLA, NVDA).
-        data_type: Type of data to retrieve. Options:
-            - 'overview': Key metrics, market cap, P/E, 52-week range, analyst targets
-            - 'history_1y': 1-year price history with performance summary
-            - 'history_5y': 5-year price history with performance summary
-            - 'income_stmt': Recent annual income statement highlights
-            - 'balance_sheet': Recent annual balance sheet highlights
-    """
     loop = asyncio.get_event_loop()
 
     def _fetch() -> str:
@@ -314,7 +396,6 @@ async def get_financials(
             min_price = hist["Low"].min()
             avg_volume = hist["Volume"].mean()
 
-            # Build chart payload
             chart = {
                 "ticker": ticker.upper(),
                 "period": period,
@@ -323,7 +404,7 @@ async def get_financials(
                 "values": [round(float(v), 2) for v in hist["Close"].tolist()],
                 "pct_change": round(float(pct_change), 2),
             }
-            ctx.deps.chart_payloads.append(chart)
+            deps.chart_payloads.append(chart)
 
             return (
                 f"**{ticker.upper()} Price History ({period.upper()})**\n"
@@ -378,27 +459,30 @@ async def get_financials(
     return await loop.run_in_executor(None, _fetch)
 
 
-@research_agent.tool
+@_register(
+    "sec_edgar_search",
+    "Search SEC EDGAR full-text search for public company filings.",
+    {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Company name, ticker, or topic to search for."},
+            "form_type": {
+                "type": "string",
+                "description": 'Optional — "10-K", "10-Q", "8-K". Empty = all forms.',
+            },
+        },
+        "required": ["query"],
+    },
+)
 async def sec_edgar_search(
-    ctx: RunContext[AgentDeps],
+    deps: AgentDeps,
     query: str,
     form_type: str = "",
 ) -> str:
-    """Search SEC EDGAR full-text search for public company filings.
-
-    Args:
-        query: Company name, ticker, or topic to search for.
-        form_type: Optional — "10-K", "10-Q", "8-K". Empty = all forms.
-    """
     cache_key = ("sec_edgar_search", query.strip().lower(), form_type.strip().upper())
-    if cache_key in ctx.deps.tool_cache:
-        return ctx.deps.tool_cache[cache_key]
+    if cache_key in deps.tool_cache:
+        return deps.tool_cache[cache_key]
 
-    params: dict = {"q": query, "dateRange": "custom", "startdt": "2020-01-01"}
-    if form_type:
-        params["forms"] = form_type.upper()
-
-    url = "https://efts.sec.gov/LATEST/search-index"
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
@@ -413,7 +497,6 @@ async def sec_edgar_search(
 
     hits = data.get("hits", {}).get("hits", [])
     if not hits:
-        # Fall back to the EDGAR full-text search API
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp2 = await client.get(
@@ -429,7 +512,7 @@ async def sec_edgar_search(
 
     if not hits:
         result = f"No SEC filings found for query: '{query}'"
-        ctx.deps.tool_cache[cache_key] = result
+        deps.tool_cache[cache_key] = result
         return result
 
     formatted = []
@@ -438,7 +521,6 @@ async def sec_edgar_search(
         company = src.get("entity_name", "Unknown")
         form = src.get("file_type", "")
         filed = src.get("file_date", "")
-        doc_id = src.get("accession_no", "").replace("-", "")
         filing_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&filenum={src.get('accession_no', '')}"
         description = src.get("period_of_report", "")
         formatted.append(
@@ -446,28 +528,29 @@ async def sec_edgar_search(
             f"Period: {description}\n"
             f"URL: {filing_url}"
         )
-        ctx.deps.source_urls.add(filing_url)
+        deps.source_urls.add(filing_url)
 
     result = "\n\n---\n\n".join(formatted)
-    ctx.deps.tool_cache[cache_key] = result
+    deps.tool_cache[cache_key] = result
     return result
 
 
-@research_agent.tool
-async def search_uploaded_documents(ctx: RunContext[AgentDeps], query: str) -> str:
-    """Search through text extracted from PDFs that the user uploaded.
-
-    Returns relevant passages from the uploaded documents that match the query.
-    Use this to cross-reference client-provided materials like annual reports,
-    research papers, or regulatory filings.
-
-    Args:
-        query: Keywords or a question to search for in the uploaded documents.
-    """
-    if not ctx.deps.pdf_context:
+@_register(
+    "search_uploaded_documents",
+    "Search through text extracted from PDFs that the user uploaded.",
+    {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Keywords or a question to search for in the uploaded documents."},
+        },
+        "required": ["query"],
+    },
+)
+async def search_uploaded_documents(deps: AgentDeps, query: str) -> str:
+    if not deps.pdf_context:
         return "No documents have been uploaded for this research session."
 
-    chunks = [c.strip() for c in ctx.deps.pdf_context.split("\n\n") if c.strip()]
+    chunks = [c.strip() for c in deps.pdf_context.split("\n\n") if c.strip()]
     if not chunks:
         return f"No relevant passages found in uploaded documents for: '{query}'"
 
@@ -480,5 +563,5 @@ async def search_uploaded_documents(ctx: RunContext[AgentDeps], query: str) -> s
         return f"No relevant passages found in uploaded documents for: '{query}'"
 
     result = "\n\n---\n\n".join(relevant)
-    filenames = ", ".join(ctx.deps.uploaded_filenames) if ctx.deps.uploaded_filenames else "uploaded document"
+    filenames = ", ".join(deps.uploaded_filenames) if deps.uploaded_filenames else "uploaded document"
     return f"**From {filenames}:**\n\n{result}"

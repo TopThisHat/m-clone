@@ -7,19 +7,11 @@ import asyncio
 import json
 import logging
 
-from openai import AsyncOpenAI
+from app.openai_factory import get_openai_client
 
 logger = logging.getLogger(__name__)
 
 _LLM_SEM = asyncio.Semaphore(5)  # max 5 concurrent LLM calls
-_client: AsyncOpenAI | None = None
-
-
-def _get_client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        _client = AsyncOpenAI()
-    return _client
 
 
 async def determine_presence(entity: dict, attribute: dict, report_md: str) -> dict:
@@ -37,7 +29,7 @@ Return JSON only: {{"present": true|false, "confidence": 0.0-1.0, "evidence": "q
 
     try:
         async with _LLM_SEM:
-            resp = await _get_client().chat.completions.create(
+            resp = await get_openai_client().chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},

@@ -7,9 +7,7 @@ from __future__ import annotations
 import json
 import logging
 
-from openai import AsyncOpenAI
-
-from app.config import settings
+from app.openai_factory import get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +25,7 @@ async def extract_memories(session_id: str, query: str, report: str) -> None:
         return  # DB not configured or unavailable
 
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        client = get_openai_client()
         prompt = (
             "Extract the most important named entities (companies, people, concepts, metrics) "
             "and key facts from the following research report. "
@@ -83,7 +81,7 @@ async def generate_suggestions(query: str, report: str) -> list[str]:
     query and completed report. Returns a list of strings (empty on error).
     """
     try:
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        client = get_openai_client()
         prompt = (
             "Given this research query and report, generate 3 concise follow-up research questions "
             "the user might want to ask next. Return a JSON array of strings, no other text.\n\n"
