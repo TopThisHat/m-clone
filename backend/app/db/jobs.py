@@ -96,20 +96,9 @@ async def db_get_queue_job_owner(job_id: str) -> dict[str, Any] | None:
 
 
 async def db_retry_dead_job(job_id: str) -> bool:
-    """Reset a dead job back to pending so it can be retried."""
-    async with _acquire() as conn:
-        result = await conn.execute(
-            """
-            UPDATE playbook.job_queue
-            SET status = 'pending', attempts = 0, last_error = NULL,
-                run_at = NOW(), worker_id = NULL, heartbeat_at = NULL, completed_at = NULL
-            WHERE id = $1::uuid AND status = 'dead'
-            """,
-            job_id,
-        )
-        updated = int(result.split()[-1]) > 0
-        if updated:
-            await conn.execute(
-                "SELECT pg_notify('job_available', $1)", job_id
-            )
-    return updated
+    """Reset a dead job back to pending so it can be retried.
+
+    Delegates to job_queue.retry_dead to avoid duplicating the reset logic.
+    """
+    from app.job_queue import retry_dead
+    return await retry_dead(job_id)

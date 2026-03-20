@@ -31,29 +31,38 @@ async def db_find_or_create_entity(name: str, entity_type: str, aliases: list[st
     """
     Find an existing kg_entity by normalized name or alias, or create a new one.
     Returns the entity UUID as a string.
+
+    Uses INSERT ... ON CONFLICT to avoid race conditions when concurrent
+    extraction workers process the same entity simultaneously.
     """
     normalized = name.lower().strip()
     async with _acquire() as conn:
+        # Check aliases first (can't be handled by ON CONFLICT)
         row = await conn.fetchrow(
-            "SELECT id FROM playbook.kg_entities WHERE LOWER(name) = $1 OR $1 = ANY(aliases)",
+            "SELECT id FROM playbook.kg_entities WHERE $1 = ANY(aliases)",
             normalized,
         )
         if row:
             entity_id = str(row["id"])
-            # Merge any new aliases
             if aliases:
                 await conn.execute(
                     "UPDATE playbook.kg_entities SET aliases = (SELECT array_agg(DISTINCT a) FROM unnest(aliases || $1::text[]) AS a), updated_at = NOW() WHERE id = $2::uuid",
                     aliases, entity_id,
                 )
             return entity_id
+
+        # Atomic upsert by name — handles concurrent inserts safely
         row = await conn.fetchrow(
             """
             INSERT INTO playbook.kg_entities (name, entity_type, aliases)
             VALUES ($1, $2, $3)
+            ON CONFLICT ((LOWER(name))) DO UPDATE SET
+                aliases = (SELECT array_agg(DISTINCT a)
+                           FROM unnest(playbook.kg_entities.aliases || EXCLUDED.aliases) AS a),
+                updated_at = NOW()
             RETURNING id
             """,
-            name.strip(), entity_type, aliases,
+            name.strip(), entity_type, aliases or [],
         )
         return str(row["id"])
 
@@ -70,71 +79,81 @@ async def db_upsert_relationship(
     """
     Insert a new relationship or detect a conflict with an existing active one.
 
+    Uses SELECT FOR UPDATE inside a transaction to prevent race conditions
+    when concurrent extraction workers process overlapping relationships.
+
     Returns a dict with keys: status ("new" | "duplicate" | "conflict"), and
     optionally old_id / new_id for conflicts.
     """
     async with _acquire() as conn:
-        existing = await conn.fetchrow(
-            """
-            SELECT id, predicate FROM playbook.kg_relationships
-            WHERE subject_id = $1::uuid AND object_id = $2::uuid
-              AND predicate_family = $3 AND is_active = TRUE
-            """,
-            subject_id, object_id, predicate_family,
-        )
+        async with conn.transaction():
+            # Lock existing row to prevent concurrent modification
+            existing = await conn.fetchrow(
+                """
+                SELECT id, predicate FROM playbook.kg_relationships
+                WHERE subject_id = $1::uuid AND object_id = $2::uuid
+                  AND predicate_family = $3 AND is_active = TRUE
+                FOR UPDATE
+                """,
+                subject_id, object_id, predicate_family,
+            )
 
-        if existing is None:
+            if existing is None:
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO playbook.kg_relationships
+                            (subject_id, predicate, predicate_family, object_id, confidence, evidence, source_session_id)
+                        VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::uuid)
+                        """,
+                        subject_id, predicate, predicate_family, object_id,
+                        confidence, evidence,
+                        source_session_id if source_session_id else None,
+                    )
+                    return {"status": "new"}
+                except asyncpg.UniqueViolationError:
+                    # Lost race with another worker — treat as duplicate
+                    return {"status": "duplicate"}
+
+            old_predicate = existing["predicate"]
+            old_id = str(existing["id"])
+
+            if old_predicate == predicate:
+                return {"status": "duplicate", "old_id": old_id}
+
+            # Conflict: supersede old, insert new, log conflict
             await conn.execute(
+                "UPDATE playbook.kg_relationships SET is_active = FALSE WHERE id = $1::uuid",
+                old_id,
+            )
+            new_row = await conn.fetchrow(
                 """
                 INSERT INTO playbook.kg_relationships
                     (subject_id, predicate, predicate_family, object_id, confidence, evidence, source_session_id)
                 VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::uuid)
+                RETURNING id
                 """,
                 subject_id, predicate, predicate_family, object_id,
                 confidence, evidence,
                 source_session_id if source_session_id else None,
             )
-            return {"status": "new"}
+            new_id = str(new_row["id"])
 
-        old_predicate = existing["predicate"]
-        old_id = str(existing["id"])
+            # Fetch names for conflict log
+            subject_row = await conn.fetchrow("SELECT name FROM playbook.kg_entities WHERE id = $1::uuid", subject_id)
+            object_row = await conn.fetchrow("SELECT name FROM playbook.kg_entities WHERE id = $1::uuid", object_id)
+            subject_name = subject_row["name"] if subject_row else subject_id
+            object_name = object_row["name"] if object_row else object_id
 
-        if old_predicate == predicate:
-            return {"status": "duplicate", "old_id": old_id}
-
-        # Conflict: supersede old, insert new, log conflict
-        await conn.execute(
-            "UPDATE playbook.kg_relationships SET is_active = FALSE WHERE id = $1::uuid",
-            old_id,
-        )
-        new_row = await conn.fetchrow(
-            """
-            INSERT INTO playbook.kg_relationships
-                (subject_id, predicate, predicate_family, object_id, confidence, evidence, source_session_id)
-            VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::uuid)
-            RETURNING id
-            """,
-            subject_id, predicate, predicate_family, object_id,
-            confidence, evidence,
-            source_session_id if source_session_id else None,
-        )
-        new_id = str(new_row["id"])
-
-        # Fetch names for conflict log
-        subject_row = await conn.fetchrow("SELECT name FROM playbook.kg_entities WHERE id = $1::uuid", subject_id)
-        object_row = await conn.fetchrow("SELECT name FROM playbook.kg_entities WHERE id = $1::uuid", object_id)
-        subject_name = subject_row["name"] if subject_row else subject_id
-        object_name = object_row["name"] if object_row else object_id
-
-        await conn.execute(
-            """
-            INSERT INTO playbook.kg_relationship_conflicts
-                (old_relationship_id, new_relationship_id, old_predicate, new_predicate, subject_name, object_name)
-            VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)
-            """,
-            old_id, new_id, old_predicate, predicate, subject_name, object_name,
-        )
-        return {"status": "conflict", "old_id": old_id, "new_id": new_id}
+            await conn.execute(
+                """
+                INSERT INTO playbook.kg_relationship_conflicts
+                    (old_relationship_id, new_relationship_id, old_predicate, new_predicate, subject_name, object_name)
+                VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)
+                """,
+                old_id, new_id, old_predicate, predicate, subject_name, object_name,
+            )
+            return {"status": "conflict", "old_id": old_id, "new_id": new_id}
 
 
 async def db_list_kg_entities(
@@ -148,26 +167,40 @@ async def db_list_kg_entities(
     idx = 0
     if search:
         idx += 1
-        conditions.append(f"LOWER(e.name) LIKE $%d" % idx)
+        conditions.append(f"LOWER(e.name) LIKE ${idx}")
         args.append(f"%{search.lower()}%")
     if entity_type:
         idx += 1
-        conditions.append(f"e.entity_type = $%d" % idx)
+        conditions.append(f"e.entity_type = ${idx}")
         args.append(entity_type)
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+    # Parameterize LIMIT/OFFSET to avoid SQL injection
+    idx += 1
+    limit_param = f"${idx}"
+    args.append(limit)
+    idx += 1
+    offset_param = f"${idx}"
+    args.append(offset)
     async with _acquire() as conn:
         count_row = await conn.fetchrow(
-            f"SELECT COUNT(*)::int AS total FROM playbook.kg_entities e{where}", *args
+            f"SELECT COUNT(*)::int AS total FROM playbook.kg_entities e{where}", *args[:-2]
         )
         total = count_row["total"] if count_row else 0
         rows = await conn.fetch(
             f"""
             SELECT e.*,
-                   (SELECT COUNT(*) FROM playbook.kg_relationships r
-                    WHERE r.subject_id = e.id OR r.object_id = e.id)::int AS relationship_count
-            FROM playbook.kg_entities e{where}
+                   COALESCE(rc.cnt, 0)::int AS relationship_count
+            FROM playbook.kg_entities e
+            LEFT JOIN (
+                SELECT entity_id, COUNT(*) AS cnt FROM (
+                    SELECT subject_id AS entity_id FROM playbook.kg_relationships
+                    UNION ALL
+                    SELECT object_id AS entity_id FROM playbook.kg_relationships
+                ) sub GROUP BY entity_id
+            ) rc ON rc.entity_id = e.id
+            {where}
             ORDER BY e.updated_at DESC
-            LIMIT {limit} OFFSET {offset}
+            LIMIT {limit_param} OFFSET {offset_param}
             """,
             *args,
         )
@@ -214,9 +247,15 @@ async def db_search_kg(query: str) -> list[dict[str, Any]]:
         rows = await conn.fetch(
             """
             SELECT e.*,
-                   (SELECT COUNT(*) FROM playbook.kg_relationships r
-                    WHERE r.subject_id = e.id OR r.object_id = e.id)::int AS relationship_count
+                   COALESCE(rc.cnt, 0)::int AS relationship_count
             FROM playbook.kg_entities e
+            LEFT JOIN (
+                SELECT entity_id, COUNT(*) AS cnt FROM (
+                    SELECT subject_id AS entity_id FROM playbook.kg_relationships
+                    UNION ALL
+                    SELECT object_id AS entity_id FROM playbook.kg_relationships
+                ) sub GROUP BY entity_id
+            ) rc ON rc.entity_id = e.id
             WHERE LOWER(e.name) LIKE $1 OR $2 = ANY(SELECT LOWER(a) FROM unnest(e.aliases) a)
             ORDER BY e.updated_at DESC LIMIT 50
             """,
@@ -282,6 +321,8 @@ async def db_get_kg_graph(
         conditions.append(f"r.predicate_family = ANY(${idx}::text[])")
         args.append(predicate_families)
     where = " AND ".join(conditions)
+    idx += 1
+    args.append(limit)
     async with _acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -293,7 +334,7 @@ async def db_get_kg_graph(
             JOIN playbook.kg_entities o ON o.id = r.object_id
             WHERE {where}
             ORDER BY r.created_at DESC
-            LIMIT {limit}
+            LIMIT ${idx}
             """,
             *args,
         )

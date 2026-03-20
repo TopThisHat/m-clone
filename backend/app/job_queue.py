@@ -202,13 +202,13 @@ async def fail(job_id: str, error: str, backoff_seconds: float = 0) -> bool:
                                END,
                 run_at      = CASE
                                 WHEN attempts + 1 >= max_attempts THEN run_at
-                                ELSE NOW() + ($3 || ' seconds')::interval
+                                ELSE NOW() + make_interval(secs => $3::float)
                               END,
                 worker_id   = NULL
             WHERE id = $1::uuid
             RETURNING attempts, max_attempts, status
             """,
-            job_id, error, str(round(backoff_seconds, 1)),
+            job_id, error, round(backoff_seconds, 1),
         )
         if not row:
             return False
@@ -244,11 +244,11 @@ async def reclaim_stale(
             WHERE status IN ('claimed', 'running')
               AND (
                   heartbeat_at IS NULL
-                  OR heartbeat_at < NOW() - ($1 || ' seconds')::interval
+                  OR heartbeat_at < NOW() - make_interval(secs => $1::float)
               )
             RETURNING id, job_type, worker_id AS old_worker
             """,
-            str(stale_threshold_seconds),
+            float(stale_threshold_seconds),
         )
         if rows:
             await conn.execute("SELECT pg_notify($1, 'reclaim')", listen_channel)

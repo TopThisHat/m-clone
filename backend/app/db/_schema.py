@@ -583,5 +583,17 @@ async def init_schema() -> None:
                 CREATE INDEX IF NOT EXISTS results_entity_attr_created_idx
                     ON validation_results(entity_id, attribute_id, created_at DESC)
             """)
+
+            # ── Knowledge graph indexes ───────────────────────────────────────
+            # object_id index for kg_relationships — the existing unique index
+            # has subject_id first, so object_id-only lookups can't use it
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_relationships_object_idx
+                    ON kg_relationships(object_id) WHERE is_active = TRUE
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_relationships_subject_idx
+                    ON kg_relationships(subject_id) WHERE is_active = TRUE
+            """)
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")

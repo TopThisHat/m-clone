@@ -30,9 +30,9 @@ async def db_lookup_knowledge(gwm_id: str, attribute_label: str, max_age_hours: 
             """
             SELECT * FROM playbook.entity_attribute_knowledge
             WHERE gwm_id = $1 AND attribute_label = $2
-              AND last_updated > NOW() - ($3 || ' hours')::interval
+              AND last_updated > NOW() - make_interval(hours => $3::float)
             """,
-            gwm_id, attribute_label, str(max_age_hours),
+            gwm_id, attribute_label, float(max_age_hours),
         )
     return _knowledge_row_to_dict(row) if row else None
 
@@ -76,8 +76,8 @@ async def db_lookup_knowledge_batch(
             FROM playbook.entity_attribute_knowledge k
             JOIN unnest($1::text[], $2::text[]) AS inp(gwm_id, attr)
               ON k.gwm_id = inp.gwm_id AND k.attribute_label = inp.attr
-            WHERE k.last_updated > NOW() - ($3 || ' hours')::interval
+            WHERE k.last_updated > NOW() - make_interval(hours => $3::float)
             """,
-            gwm_ids, attr_labels, str(max_age_hours),
+            gwm_ids, attr_labels, float(max_age_hours),
         )
     return {(r["gwm_id"], r["attribute_label"]): _knowledge_row_to_dict(r) for r in rows}
