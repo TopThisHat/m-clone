@@ -260,6 +260,7 @@ async def db_import_entities_from_library(campaign_id: str, lib_ids: list[str]) 
             SELECT $1::uuid, TRIM(label), description, NULLIF(TRIM(gwm_id), ''), metadata
             FROM playbook.entity_library
             WHERE id = ANY($2::uuid[])
+              AND TRIM(COALESCE(label, '')) != ''
               AND (gwm_id IS NULL OR NOT EXISTS (
                   SELECT 1 FROM playbook.entities
                   WHERE campaign_id = $1::uuid
@@ -284,6 +285,7 @@ async def db_import_attributes_from_library(campaign_id: str, lib_ids: list[str]
             SELECT $1::uuid, TRIM(label), description, weight
             FROM playbook.attribute_library
             WHERE id = ANY($2::uuid[])
+              AND TRIM(COALESCE(label, '')) != ''
             ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
             RETURNING *
             """,

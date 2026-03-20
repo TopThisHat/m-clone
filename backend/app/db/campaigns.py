@@ -274,6 +274,7 @@ async def db_import_entities(target_campaign_id: str, source_campaign_id: str) -
             SELECT $2::uuid, TRIM(label), description, NULLIF(TRIM(gwm_id), ''), metadata
             FROM playbook.entities src
             WHERE src.campaign_id = $1::uuid
+              AND TRIM(COALESCE(src.label, '')) != ''
               AND (src.gwm_id IS NULL OR NOT EXISTS (
                   SELECT 1 FROM playbook.entities tgt
                   WHERE tgt.campaign_id = $2::uuid
@@ -298,6 +299,7 @@ async def db_import_attributes(target_campaign_id: str, source_campaign_id: str)
             SELECT $2::uuid, TRIM(label), description, weight
             FROM playbook.attributes
             WHERE campaign_id = $1::uuid
+              AND TRIM(COALESCE(label, '')) != ''
             ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
             RETURNING *
             """,
