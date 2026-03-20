@@ -265,22 +265,32 @@ async def db_get_campaign_stats(owner_sid: str, team_id: str | None = None) -> d
 async def db_import_entities(target_campaign_id: str, source_campaign_id: str) -> list[dict[str, Any]]:
     """
     Copy entities from source campaign to target campaign, skipping duplicates.
-    Pre-filters gwm_id conflicts, then uses ON CONFLICT for label uniqueness.
+    CTE deduplicates on label, NOT EXISTS filters existing gwm_id conflicts,
+    ON CONFLICT DO NOTHING catches any remaining violations.
     """
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
+            WITH source AS (
+                SELECT DISTINCT ON (LOWER(TRIM(label)))
+                    TRIM(label) AS label,
+                    description,
+                    NULLIF(TRIM(gwm_id), '') AS gwm_id,
+                    metadata
+                FROM playbook.entities
+                WHERE campaign_id = $1::uuid
+                  AND TRIM(COALESCE(label, '')) != ''
+                ORDER BY LOWER(TRIM(label)), created_at
+            )
             INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
-            SELECT $2::uuid, TRIM(label), description, NULLIF(TRIM(gwm_id), ''), metadata
-            FROM playbook.entities src
-            WHERE src.campaign_id = $1::uuid
-              AND TRIM(COALESCE(src.label, '')) != ''
-              AND (src.gwm_id IS NULL OR NOT EXISTS (
-                  SELECT 1 FROM playbook.entities tgt
-                  WHERE tgt.campaign_id = $2::uuid
-                    AND LOWER(TRIM(tgt.gwm_id)) = LOWER(TRIM(src.gwm_id))
-              ))
-            ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
+            SELECT $2::uuid, s.label, s.description, s.gwm_id, s.metadata
+            FROM source s
+            WHERE s.gwm_id IS NULL OR NOT EXISTS (
+                SELECT 1 FROM playbook.entities tgt
+                WHERE tgt.campaign_id = $2::uuid
+                  AND LOWER(TRIM(tgt.gwm_id)) = LOWER(s.gwm_id)
+            )
+            ON CONFLICT DO NOTHING
             RETURNING *
             """,
             source_campaign_id, target_campaign_id,
@@ -291,16 +301,25 @@ async def db_import_entities(target_campaign_id: str, source_campaign_id: str) -
 async def db_import_attributes(target_campaign_id: str, source_campaign_id: str) -> list[dict[str, Any]]:
     """
     Copy attributes from source campaign to target campaign, skipping label duplicates.
+    CTE deduplicates on label, ON CONFLICT DO NOTHING as final safety net.
     """
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
+            WITH source AS (
+                SELECT DISTINCT ON (LOWER(TRIM(label)))
+                    TRIM(label) AS label,
+                    description,
+                    weight
+                FROM playbook.attributes
+                WHERE campaign_id = $1::uuid
+                  AND TRIM(COALESCE(label, '')) != ''
+                ORDER BY LOWER(TRIM(label)), created_at
+            )
             INSERT INTO playbook.attributes (campaign_id, label, description, weight)
-            SELECT $2::uuid, TRIM(label), description, weight
-            FROM playbook.attributes
-            WHERE campaign_id = $1::uuid
-              AND TRIM(COALESCE(label, '')) != ''
-            ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
+            SELECT $2::uuid, s.label, s.description, s.weight
+            FROM source s
+            ON CONFLICT DO NOTHING
             RETURNING *
             """,
             source_campaign_id, target_campaign_id,

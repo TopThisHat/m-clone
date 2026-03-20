@@ -250,23 +250,42 @@ async def db_delete_attribute_library(item_id: str, owner_sid: str) -> None:
 
 
 async def db_import_entities_from_library(campaign_id: str, lib_ids: list[str]) -> list[dict[str, Any]]:
-    """Copy entity_library rows into campaign entities, skip duplicates."""
+    """Copy entity_library rows into campaign entities, skip duplicates.
+
+    Handles all unique-constraint edge cases:
+      1. CTE deduplicates the batch on label (DISTINCT ON) so within-batch
+         label collisions never reach INSERT.
+      2. NOT EXISTS filters gwm_id conflicts against rows already in the
+         target campaign.
+      3. ON CONFLICT DO NOTHING (unqualified) catches any remaining
+         violations — especially within-batch gwm_id duplicates where two
+         library rows share a gwm_id but have different labels.
+    """
     if not lib_ids:
         return []
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
+            WITH source AS (
+                SELECT DISTINCT ON (LOWER(TRIM(label)))
+                    TRIM(label) AS label,
+                    description,
+                    NULLIF(TRIM(gwm_id), '') AS gwm_id,
+                    metadata
+                FROM playbook.entity_library
+                WHERE id = ANY($2::uuid[])
+                  AND TRIM(COALESCE(label, '')) != ''
+                ORDER BY LOWER(TRIM(label)), created_at
+            )
             INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
-            SELECT $1::uuid, TRIM(label), description, NULLIF(TRIM(gwm_id), ''), metadata
-            FROM playbook.entity_library
-            WHERE id = ANY($2::uuid[])
-              AND TRIM(COALESCE(label, '')) != ''
-              AND (gwm_id IS NULL OR NOT EXISTS (
-                  SELECT 1 FROM playbook.entities
-                  WHERE campaign_id = $1::uuid
-                    AND LOWER(TRIM(gwm_id)) = LOWER(TRIM(entity_library.gwm_id))
-              ))
-            ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
+            SELECT $1::uuid, s.label, s.description, s.gwm_id, s.metadata
+            FROM source s
+            WHERE s.gwm_id IS NULL OR NOT EXISTS (
+                SELECT 1 FROM playbook.entities
+                WHERE campaign_id = $1::uuid
+                  AND LOWER(TRIM(gwm_id)) = LOWER(s.gwm_id)
+            )
+            ON CONFLICT DO NOTHING
             RETURNING *
             """,
             campaign_id, lib_ids,
@@ -275,18 +294,30 @@ async def db_import_entities_from_library(campaign_id: str, lib_ids: list[str]) 
 
 
 async def db_import_attributes_from_library(campaign_id: str, lib_ids: list[str]) -> list[dict[str, Any]]:
-    """Copy attribute_library rows into campaign attributes, skip duplicates."""
+    """Copy attribute_library rows into campaign attributes, skip duplicates.
+
+    Uses DISTINCT ON to deduplicate labels within the batch, and unqualified
+    ON CONFLICT DO NOTHING as a final safety net.
+    """
     if not lib_ids:
         return []
     async with _acquire() as conn:
         rows = await conn.fetch(
             """
+            WITH source AS (
+                SELECT DISTINCT ON (LOWER(TRIM(label)))
+                    TRIM(label) AS label,
+                    description,
+                    weight
+                FROM playbook.attribute_library
+                WHERE id = ANY($2::uuid[])
+                  AND TRIM(COALESCE(label, '')) != ''
+                ORDER BY LOWER(TRIM(label)), created_at
+            )
             INSERT INTO playbook.attributes (campaign_id, label, description, weight)
-            SELECT $1::uuid, TRIM(label), description, weight
-            FROM playbook.attribute_library
-            WHERE id = ANY($2::uuid[])
-              AND TRIM(COALESCE(label, '')) != ''
-            ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
+            SELECT $1::uuid, s.label, s.description, s.weight
+            FROM source s
+            ON CONFLICT DO NOTHING
             RETURNING *
             """,
             campaign_id, lib_ids,

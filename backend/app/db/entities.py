@@ -60,7 +60,7 @@ async def db_bulk_create_entities(campaign_id: str, entities: list[dict[str, Any
                    WHERE campaign_id = $1::uuid
                      AND LOWER(TRIM(gwm_id)) = LOWER(i.gwm_id)
                )
-            ON CONFLICT (campaign_id, (LOWER(TRIM(label)))) DO NOTHING
+            ON CONFLICT DO NOTHING
             RETURNING *
             """,
             campaign_id, json.dumps(entities),
