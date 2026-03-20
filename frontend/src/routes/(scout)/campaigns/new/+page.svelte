@@ -4,6 +4,7 @@
 	import { entitiesApi, type EntityCreate } from '$lib/api/entities';
 	import { attributesApi, type AttributeCreate } from '$lib/api/attributes';
 	import { libraryEntitiesApi, libraryAttributesApi, type LibraryEntity, type LibraryAttribute } from '$lib/api/library';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
 	import SchedulePicker from '$lib/components/SchedulePicker.svelte';
 	import CSVUpload from '$lib/components/CSVUpload.svelte';
@@ -34,9 +35,11 @@
 	let showEntityUpload = $state(false);
 	let showEntityLibrary = $state(false);
 	let libraryEntities = $state<LibraryEntity[]>([]);
-	let libraryEntitySelectedIds = $state<Set<string>>(new Set());
+	let libraryEntitySelectedIds = $state(new SvelteSet<string>());
 	let importingEntityLib = $state(false);
 	let _libEntitiesLoaded = false;
+	let lastEntityImportCount = $state(0);
+	let selectAllEntitiesAcrossPages = $state(false);
 
 	// Step 3 — attributes
 	let attrLabel = $state('');
@@ -48,9 +51,11 @@
 	let showAttrUpload = $state(false);
 	let showAttrLibrary = $state(false);
 	let libraryAttrs = $state<LibraryAttribute[]>([]);
-	let libraryAttrSelectedIds = $state<Set<string>>(new Set());
+	let libraryAttrSelectedIds = $state(new SvelteSet<string>());
 	let importingAttrLib = $state(false);
 	let _libAttrsLoaded = false;
+	let lastAttrImportCount = $state(0);
+	let selectAllAttrsAcrossPages = $state(false);
 
 	// Templates
 	let templates = $state<AttributeTemplate[]>([]);
@@ -177,29 +182,54 @@
 	}
 
 	function toggleLibraryEntity(id: string) {
-		const next = new Set(libraryEntitySelectedIds);
+		const next = new SvelteSet(libraryEntitySelectedIds);
 		if (next.has(id)) next.delete(id); else next.add(id);
 		libraryEntitySelectedIds = next;
+		// If user manually toggles individual items, exit select-all-across-pages mode
+		selectAllEntitiesAcrossPages = false;
 	}
 
 	let allLibEntitiesSelected = $derived(libraryEntities.length > 0 && libraryEntities.every((e) => libraryEntitySelectedIds.has(e.id)));
 
+	// Derived: select-all-across-pages for entities
+	let showEntitySelectAllBanner = $derived(
+		allLibEntitiesSelected && libEntityTotal > libraryEntities.length && !selectAllEntitiesAcrossPages
+	);
+	let entityImportCount = $derived(
+		selectAllEntitiesAcrossPages ? libEntityTotal : libraryEntitySelectedIds.size
+	);
+
 	function toggleAllLibraryEntities() {
 		if (allLibEntitiesSelected) {
-			libraryEntitySelectedIds = new Set();
+			libraryEntitySelectedIds = new SvelteSet();
+			selectAllEntitiesAcrossPages = false;
 		} else {
-			libraryEntitySelectedIds = new Set(libraryEntities.map((e) => e.id));
+			libraryEntitySelectedIds = new SvelteSet(libraryEntities.map((e) => e.id));
 		}
 	}
 
 	async function importFromEntityLibrary() {
-		if (!campaign || libraryEntitySelectedIds.size === 0) return;
+		if (!campaign || entityImportCount === 0) return;
 		importingEntityLib = true;
 		try {
-			const imported = await entitiesApi.importFromLibrary(campaign.id, [...libraryEntitySelectedIds]);
+			let ids: string[];
+			if (selectAllEntitiesAcrossPages) {
+				const resp = await libraryEntitiesApi.list($scoutTeam, {
+					limit: libEntityTotal,
+					offset: 0,
+					search: libEntitySearch || undefined,
+				});
+				ids = resp.items.map((e) => e.id);
+			} else {
+				ids = [...libraryEntitySelectedIds];
+			}
+			if (ids.length === 0) return;
+			const imported = await entitiesApi.importFromLibrary(campaign.id, ids);
 			entityCount += imported.length;
-			libraryEntitySelectedIds = new Set();
+			libraryEntitySelectedIds = new SvelteSet();
+			selectAllEntitiesAcrossPages = false;
 			showEntityLibrary = false;
+			lastEntityImportCount = imported.length;
 		} catch { /* ignore */ } finally {
 			importingEntityLib = false;
 		}
@@ -232,29 +262,54 @@
 	}
 
 	function toggleLibraryAttr(id: string) {
-		const next = new Set(libraryAttrSelectedIds);
+		const next = new SvelteSet(libraryAttrSelectedIds);
 		if (next.has(id)) next.delete(id); else next.add(id);
 		libraryAttrSelectedIds = next;
+		// If user manually toggles individual items, exit select-all-across-pages mode
+		selectAllAttrsAcrossPages = false;
 	}
 
 	let allLibAttrsSelected = $derived(libraryAttrs.length > 0 && libraryAttrs.every((a) => libraryAttrSelectedIds.has(a.id)));
 
+	// Derived: select-all-across-pages for attributes
+	let showAttrSelectAllBanner = $derived(
+		allLibAttrsSelected && libAttrTotal > libraryAttrs.length && !selectAllAttrsAcrossPages
+	);
+	let attrImportCount = $derived(
+		selectAllAttrsAcrossPages ? libAttrTotal : libraryAttrSelectedIds.size
+	);
+
 	function toggleAllLibraryAttrs() {
 		if (allLibAttrsSelected) {
-			libraryAttrSelectedIds = new Set();
+			libraryAttrSelectedIds = new SvelteSet();
+			selectAllAttrsAcrossPages = false;
 		} else {
-			libraryAttrSelectedIds = new Set(libraryAttrs.map((a) => a.id));
+			libraryAttrSelectedIds = new SvelteSet(libraryAttrs.map((a) => a.id));
 		}
 	}
 
 	async function importFromAttrLibrary() {
-		if (!campaign || libraryAttrSelectedIds.size === 0) return;
+		if (!campaign || attrImportCount === 0) return;
 		importingAttrLib = true;
 		try {
-			const imported = await attributesApi.importFromLibrary(campaign.id, [...libraryAttrSelectedIds]);
+			let ids: string[];
+			if (selectAllAttrsAcrossPages) {
+				const resp = await libraryAttributesApi.list($scoutTeam, {
+					limit: libAttrTotal,
+					offset: 0,
+					search: libAttrSearch || undefined,
+				});
+				ids = resp.items.map((a) => a.id);
+			} else {
+				ids = [...libraryAttrSelectedIds];
+			}
+			if (ids.length === 0) return;
+			const imported = await attributesApi.importFromLibrary(campaign.id, ids);
 			attrCount += imported.length;
-			libraryAttrSelectedIds = new Set();
+			libraryAttrSelectedIds = new SvelteSet();
+			selectAllAttrsAcrossPages = false;
 			showAttrLibrary = false;
+			lastAttrImportCount = imported.length;
 		} catch { /* ignore */ } finally {
 			importingAttrLib = false;
 		}
@@ -275,7 +330,7 @@
 
 	<!-- Step indicator -->
 	<div class="flex items-center gap-0 mb-8">
-		{#each STEP_LABELS as label, i}
+		{#each STEP_LABELS as label, i (label)}
 			{@const s = (i + 1) as Step}
 			{@const done = step > s}
 			{@const active = step === s}
@@ -349,7 +404,7 @@
 			<div class="flex gap-3 pt-1">
 				<button type="submit" disabled={creating}
 					class="bg-gold text-navy font-semibold px-5 py-2 rounded-lg hover:bg-gold-light transition-colors disabled:opacity-50">
-					{creating ? 'Creating…' : 'Create & Continue →'}
+					{creating ? 'Creating...' : 'Create & Continue →'}
 				</button>
 				<a href="/campaigns" class="bg-navy-700 text-slate-300 px-5 py-2 rounded-lg hover:bg-navy-600 transition-colors border border-navy-600">
 					Cancel
@@ -383,7 +438,7 @@
 						       placeholder-slate-500 focus:outline-none focus:border-gold" />
 					<button type="submit" disabled={addingEntity || !entityLabel.trim()}
 						class="bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg text-sm hover:bg-navy-600 disabled:opacity-50 shrink-0">
-						{addingEntity ? '…' : '+ Add'}
+						{addingEntity ? '...' : '+ Add'}
 					</button>
 				</form>
 				{#if entityError}<p class="text-red-400 text-xs mb-2">{entityError}</p>{/if}
@@ -392,11 +447,11 @@
 				<div class="flex items-center gap-4">
 					<button onclick={() => (showEntityUpload = !showEntityUpload)}
 						class="text-xs text-gold hover:text-gold-light underline transition-colors">
-						{showEntityUpload ? 'Hide' : '↑ Upload CSV / Excel instead'}
+						{showEntityUpload ? 'Hide' : 'Upload CSV / Excel instead'}
 					</button>
 					<button onclick={openEntityLibrary}
 						class="text-xs text-gold hover:text-gold-light underline transition-colors">
-						{showEntityLibrary ? 'Hide library' : '↗ Import from Library'}
+						{showEntityLibrary ? 'Hide library' : 'Import from Library'}
 					</button>
 				</div>
 
@@ -415,10 +470,19 @@
 
 				{#if showEntityLibrary}
 					<div class="mt-3 border-t border-navy-700 pt-3">
+						<!-- Library panel header -->
+						<div class="flex items-center justify-between mb-3">
+							<h3 class="text-sm font-medium text-slate-300">Entity Library</h3>
+							<button onclick={() => { showEntityLibrary = false; }}
+								class="text-slate-500 hover:text-slate-300 text-xs transition-colors">
+								Close
+							</button>
+						</div>
+
 						<input
 							bind:value={libEntitySearch}
 							oninput={() => { libEntityPage = 0; _libEntitiesLoaded = false; loadLibraryEntities(); _libEntitiesLoaded = true; }}
-							placeholder="Search library entities…"
+							placeholder="Search library entities..."
 							aria-label="Search library entities"
 							class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold mb-2"
 						/>
@@ -428,17 +492,37 @@
 							</p>
 						{:else}
 							<div class="flex items-center justify-between mb-2">
-								<p class="text-xs text-slate-400">Showing {libraryEntities.length} of {libEntityTotal} — select entities to import:</p>
+								<p class="text-xs text-slate-400">Showing {libraryEntities.length} of {libEntityTotal} -- select entities to import:</p>
 								<label class="flex items-center gap-1.5 cursor-pointer">
 									<input type="checkbox" checked={allLibEntitiesSelected}
 										onchange={toggleAllLibraryEntities} class="accent-gold" />
 									<span class="text-xs text-slate-400">Select all</span>
 								</label>
 							</div>
-							<div class="max-h-48 overflow-y-auto space-y-1 mb-3">
-								{#each libraryEntities as lib (lib.id)}
-									<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-navy-700 cursor-pointer">
-										<input type="checkbox" checked={libraryEntitySelectedIds.has(lib.id)}
+
+							<!-- Select all across pages banner -->
+							{#if showEntitySelectAllBanner}
+								<div class="bg-gold/10 border border-gold/20 rounded-lg px-3 py-2 text-center mb-2">
+									<span class="text-xs text-slate-300">All {libraryEntities.length} on this page selected.</span>
+									<button onclick={() => { selectAllEntitiesAcrossPages = true; }}
+										class="text-xs text-gold hover:text-gold-light font-medium ml-1">
+										Select all {libEntityTotal} items
+									</button>
+								</div>
+							{:else if selectAllEntitiesAcrossPages}
+								<div class="bg-gold/10 border border-gold/20 rounded-lg px-3 py-2 text-center mb-2">
+									<span class="text-xs text-gold font-medium">All {libEntityTotal} items selected.</span>
+									<button onclick={() => { selectAllEntitiesAcrossPages = false; libraryEntitySelectedIds = new SvelteSet(); }}
+										class="text-xs text-slate-400 hover:text-slate-300 ml-1">
+										Clear selection
+									</button>
+								</div>
+							{/if}
+
+							<div class="max-h-64 overflow-y-auto mb-3">
+								{#each libraryEntities as lib, idx (lib.id)}
+									<label class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer {idx % 2 === 0 ? 'bg-navy-800/50' : 'hover:bg-navy-700'}">
+										<input type="checkbox" checked={selectAllEntitiesAcrossPages || libraryEntitySelectedIds.has(lib.id)}
 											onchange={() => toggleLibraryEntity(lib.id)} class="accent-gold" />
 										<span class="text-slate-200 text-sm">{lib.label}</span>
 										{#if lib.gwm_id}<span class="text-slate-500 font-mono text-xs">{lib.gwm_id}</span>{/if}
@@ -457,23 +541,57 @@
 										class="text-xs px-2 py-1 border border-navy-600 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30">Next →</button>
 								</div>
 							{/if}
-							<button onclick={importFromEntityLibrary}
-								disabled={libraryEntitySelectedIds.size === 0 || importingEntityLib}
-								class="bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50">
-								{importingEntityLib ? 'Importing…' : `Import Selected (${libraryEntitySelectedIds.size})`}
-							</button>
+							<!-- Sticky import button -->
+							<div class="sticky bottom-0 bg-navy-800 pt-2 border-t border-navy-700">
+								<button onclick={importFromEntityLibrary}
+									disabled={entityImportCount === 0 || importingEntityLib}
+									class="w-full bg-gold text-navy font-semibold px-3 py-2 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50 transition-colors">
+									{importingEntityLib ? 'Importing...' : `Import Selected (${entityImportCount})`}
+								</button>
+							</div>
 						{/if}
 					</div>
 				{/if}
 			</div>
 
-			<div class="flex items-center justify-between">
-				<p class="text-xs text-slate-500">You can always add more entities from the campaign page.</p>
-				<div class="flex gap-2">
-					<button onclick={() => (step = 3)}
-						class="text-slate-400 hover:text-slate-300 text-sm px-4 py-2 rounded-lg border border-navy-700 hover:border-navy-600 transition-colors">
-						{entityCount === 0 ? 'Skip for now' : 'Next →'}
-					</button>
+			<!-- Success banner after entity import -->
+			{#if lastEntityImportCount > 0}
+				<div class="mt-4 bg-green-900/20 border border-green-800/40 rounded-xl px-5 py-4 flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<div class="w-8 h-8 rounded-full bg-green-600/20 flex items-center justify-center">
+							<span class="text-green-400 text-sm font-bold">✓</span>
+						</div>
+						<div>
+							<p class="text-green-400 text-sm font-medium">{lastEntityImportCount} {lastEntityImportCount === 1 ? 'entity' : 'entities'} imported successfully</p>
+							<p class="text-slate-500 text-xs">You now have {entityCount} {entityCount === 1 ? 'entity' : 'entities'} total</p>
+						</div>
+					</div>
+				</div>
+			{/if}
+
+			<!-- Enhanced bottom navigation for step 2 -->
+			<div class="mt-4 flex items-center justify-between bg-navy-800/50 border border-navy-700 rounded-xl px-5 py-4">
+				<div>
+					<p class="text-xs text-slate-500">
+						{#if entityCount > 0}
+							<span class="text-slate-300 font-medium">{entityCount}</span> {entityCount === 1 ? 'entity' : 'entities'} ready
+						{:else}
+							No entities added yet -- you can always add them later
+						{/if}
+					</p>
+				</div>
+				<div class="flex items-center gap-3">
+					{#if entityCount === 0}
+						<button onclick={() => (step = 3)}
+							class="text-slate-400 hover:text-slate-300 text-sm px-4 py-2 rounded-lg border border-navy-700 hover:border-navy-600 transition-colors">
+							Skip for now
+						</button>
+					{:else}
+						<button onclick={() => { lastEntityImportCount = 0; step = 3; }}
+							class="bg-gold text-navy font-semibold px-6 py-2.5 rounded-lg hover:bg-gold-light transition-colors text-sm shadow-lg shadow-gold/10">
+							Continue to Attributes →
+						</button>
+					{/if}
 				</div>
 			</div>
 		</div>
@@ -508,7 +626,7 @@
 							       focus:outline-none focus:border-gold" />
 						<button type="submit" disabled={addingAttr || !attrLabel.trim()}
 							class="bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg text-sm hover:bg-navy-600 disabled:opacity-50 shrink-0">
-							{addingAttr ? '…' : '+ Add'}
+							{addingAttr ? '...' : '+ Add'}
 						</button>
 					</div>
 				</form>
@@ -520,13 +638,13 @@
 						onclick={() => { showTemplates = !showTemplates; loadTemplates(); }}
 						class="text-xs text-gold hover:text-gold-light transition-colors underline"
 					>
-						{showTemplates ? 'Hide templates' : '📋 Load from template'}
+						{showTemplates ? 'Hide templates' : 'Load from template'}
 					</button>
 					{#if attrCount > 0}
 						<div class="flex items-center gap-1.5 ml-auto">
-							<input bind:value={templateName} placeholder="Template name…" aria-label="Template name" class="bg-navy-700 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-gold w-36" />
+							<input bind:value={templateName} placeholder="Template name..." aria-label="Template name" class="bg-navy-700 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-gold w-36" />
 							<button onclick={saveTemplate} disabled={savingTemplate || !templateName.trim()} class="text-xs text-slate-400 hover:text-gold border border-navy-600 px-2 py-1 rounded transition-colors disabled:opacity-50">
-								{savingTemplate ? '…' : 'Save as template'}
+								{savingTemplate ? '...' : 'Save as template'}
 							</button>
 						</div>
 					{/if}
@@ -556,11 +674,11 @@
 				<div class="flex items-center gap-4">
 					<button onclick={() => (showAttrUpload = !showAttrUpload)}
 						class="text-xs text-gold hover:text-gold-light underline transition-colors">
-						{showAttrUpload ? 'Hide' : '↑ Upload CSV / Excel instead'}
+						{showAttrUpload ? 'Hide' : 'Upload CSV / Excel instead'}
 					</button>
 					<button onclick={openAttrLibrary}
 						class="text-xs text-gold hover:text-gold-light underline transition-colors">
-						{showAttrLibrary ? 'Hide library' : '↗ Import from Library'}
+						{showAttrLibrary ? 'Hide library' : 'Import from Library'}
 					</button>
 				</div>
 
@@ -579,10 +697,19 @@
 
 				{#if showAttrLibrary}
 					<div class="mt-3 border-t border-navy-700 pt-3">
+						<!-- Library panel header -->
+						<div class="flex items-center justify-between mb-3">
+							<h3 class="text-sm font-medium text-slate-300">Attribute Library</h3>
+							<button onclick={() => { showAttrLibrary = false; }}
+								class="text-slate-500 hover:text-slate-300 text-xs transition-colors">
+								Close
+							</button>
+						</div>
+
 						<input
 							bind:value={libAttrSearch}
 							oninput={() => { libAttrPage = 0; _libAttrsLoaded = false; loadLibraryAttrs(); _libAttrsLoaded = true; }}
-							placeholder="Search library attributes…"
+							placeholder="Search library attributes..."
 							aria-label="Search library attributes"
 							class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold mb-2"
 						/>
@@ -592,20 +719,40 @@
 							</p>
 						{:else}
 							<div class="flex items-center justify-between mb-2">
-								<p class="text-xs text-slate-400">Showing {libraryAttrs.length} of {libAttrTotal} — select attributes to import:</p>
+								<p class="text-xs text-slate-400">Showing {libraryAttrs.length} of {libAttrTotal} -- select attributes to import:</p>
 								<label class="flex items-center gap-1.5 cursor-pointer">
 									<input type="checkbox" checked={allLibAttrsSelected}
 										onchange={toggleAllLibraryAttrs} class="accent-gold" />
 									<span class="text-xs text-slate-400">Select all</span>
 								</label>
 							</div>
-							<div class="max-h-48 overflow-y-auto space-y-1 mb-3">
-								{#each libraryAttrs as lib (lib.id)}
-									<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-navy-700 cursor-pointer">
-										<input type="checkbox" checked={libraryAttrSelectedIds.has(lib.id)}
+
+							<!-- Select all across pages banner -->
+							{#if showAttrSelectAllBanner}
+								<div class="bg-gold/10 border border-gold/20 rounded-lg px-3 py-2 text-center mb-2">
+									<span class="text-xs text-slate-300">All {libraryAttrs.length} on this page selected.</span>
+									<button onclick={() => { selectAllAttrsAcrossPages = true; }}
+										class="text-xs text-gold hover:text-gold-light font-medium ml-1">
+										Select all {libAttrTotal} items
+									</button>
+								</div>
+							{:else if selectAllAttrsAcrossPages}
+								<div class="bg-gold/10 border border-gold/20 rounded-lg px-3 py-2 text-center mb-2">
+									<span class="text-xs text-gold font-medium">All {libAttrTotal} items selected.</span>
+									<button onclick={() => { selectAllAttrsAcrossPages = false; libraryAttrSelectedIds = new SvelteSet(); }}
+										class="text-xs text-slate-400 hover:text-slate-300 ml-1">
+										Clear selection
+									</button>
+								</div>
+							{/if}
+
+							<div class="max-h-64 overflow-y-auto mb-3">
+								{#each libraryAttrs as lib, idx (lib.id)}
+									<label class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer {idx % 2 === 0 ? 'bg-navy-800/50' : 'hover:bg-navy-700'}">
+										<input type="checkbox" checked={selectAllAttrsAcrossPages || libraryAttrSelectedIds.has(lib.id)}
 											onchange={() => toggleLibraryAttr(lib.id)} class="accent-gold" />
 										<span class="text-slate-200 text-sm">{lib.label}</span>
-										<span class="text-slate-500 font-mono text-xs">×{lib.weight.toFixed(1)}</span>
+										<span class="text-slate-500 font-mono text-xs">x{lib.weight.toFixed(1)}</span>
 										{#if lib.description}<span class="text-slate-500 text-xs truncate">{lib.description}</span>{/if}
 									</label>
 								{/each}
@@ -621,22 +768,40 @@
 										class="text-xs px-2 py-1 border border-navy-600 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30">Next →</button>
 								</div>
 							{/if}
-							<button onclick={importFromAttrLibrary}
-								disabled={libraryAttrSelectedIds.size === 0 || importingAttrLib}
-								class="bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50">
-								{importingAttrLib ? 'Importing…' : `Import Selected (${libraryAttrSelectedIds.size})`}
-							</button>
+							<!-- Sticky import button -->
+							<div class="sticky bottom-0 bg-navy-800 pt-2 border-t border-navy-700">
+								<button onclick={importFromAttrLibrary}
+									disabled={attrImportCount === 0 || importingAttrLib}
+									class="w-full bg-gold text-navy font-semibold px-3 py-2 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50 transition-colors">
+									{importingAttrLib ? 'Importing...' : `Import Selected (${attrImportCount})`}
+								</button>
+							</div>
 						{/if}
 					</div>
 				{/if}
 			</div>
+
+			<!-- Success banner after attribute import -->
+			{#if lastAttrImportCount > 0}
+				<div class="mt-4 bg-green-900/20 border border-green-800/40 rounded-xl px-5 py-4 flex items-center justify-between">
+					<div class="flex items-center gap-3">
+						<div class="w-8 h-8 rounded-full bg-green-600/20 flex items-center justify-center">
+							<span class="text-green-400 text-sm font-bold">✓</span>
+						</div>
+						<div>
+							<p class="text-green-400 text-sm font-medium">{lastAttrImportCount} {lastAttrImportCount === 1 ? 'attribute' : 'attributes'} imported successfully</p>
+							<p class="text-slate-500 text-xs">You now have {attrCount} {attrCount === 1 ? 'attribute' : 'attributes'} total</p>
+						</div>
+					</div>
+				</div>
+			{/if}
 
 			<!-- Summary -->
 			{#if entityCount > 0 && attrCount > 0}
 				<div class="bg-navy-800/50 border border-navy-700 rounded-lg px-4 py-3 text-sm text-slate-400">
 					Running this campaign will validate
 					<span class="text-slate-200 font-medium">{entityCount} {entityCount === 1 ? 'entity' : 'entities'}</span>
-					×
+					x
 					<span class="text-slate-200 font-medium">{attrCount} {attrCount === 1 ? 'attribute' : 'attributes'}</span>
 					=
 					<span class="text-gold font-semibold">{entityCount * attrCount} pairs</span>
@@ -644,13 +809,30 @@
 				</div>
 			{/if}
 
-			<div class="flex items-center justify-between">
-				<button onclick={() => (step = 2)} class="text-slate-500 hover:text-slate-400 text-sm transition-colors">← Back</button>
-				<div class="flex gap-2">
-					<button onclick={finish}
-						class="bg-gold text-navy font-semibold px-5 py-2 rounded-lg hover:bg-gold-light transition-colors text-sm">
-						{attrCount === 0 ? 'Skip & Go to Campaign →' : 'Done →'}
-					</button>
+			<!-- Enhanced bottom navigation for step 3 -->
+			<div class="mt-4 flex items-center justify-between bg-navy-800/50 border border-navy-700 rounded-xl px-5 py-4">
+				<div class="flex items-center gap-3">
+					<button onclick={() => { lastAttrImportCount = 0; step = 2; }} class="text-slate-500 hover:text-slate-400 text-sm transition-colors">← Back</button>
+					{#if attrCount > 0}
+						<p class="text-xs text-slate-500">
+							<span class="text-slate-300 font-medium">{attrCount}</span> {attrCount === 1 ? 'attribute' : 'attributes'} ready
+						</p>
+					{:else}
+						<p class="text-xs text-slate-500">No attributes added yet -- you can always add them later</p>
+					{/if}
+				</div>
+				<div class="flex items-center gap-3">
+					{#if attrCount === 0}
+						<button onclick={finish}
+							class="text-slate-400 hover:text-slate-300 text-sm px-4 py-2 rounded-lg border border-navy-700 hover:border-navy-600 transition-colors">
+							Skip & Go to Campaign →
+						</button>
+					{:else}
+						<button onclick={finish}
+							class="bg-gold text-navy font-semibold px-6 py-2.5 rounded-lg hover:bg-gold-light transition-colors text-sm shadow-lg shadow-gold/10">
+							Done →
+						</button>
+					{/if}
 				</div>
 			</div>
 		</div>
