@@ -490,6 +490,8 @@ html.theme-light body {
 .light .hover\:text-green-300:hover { color: #15803d !important; }
 .light .hover\:bg-navy-600:hover    { background-color: #e2e8f0 !important; }
 .light .hover\:bg-navy-700:hover    { background-color: #f1f5f9 !important; }
+.light .hover\:bg-navy-800:hover    { background-color: #f1f5f9 !important; }
+.light .hover\:bg-navy-800\/50:hover { background-color: rgba(241,245,249,0.7) !important; }
 .light .hover\:bg-red-950:hover     { background-color: #fee2e2 !important; }
 .light .hover\:border-navy-500:hover { border-color: #94a3b8 !important; }
 .light .hover\:border-gold\/30:hover { border-color: rgba(138, 98, 0, 0.3) !important; }
@@ -502,6 +504,11 @@ html.theme-light body {
 .light select {
 	background-color: #ffffff !important;
 	border-color: #cbd5e1 !important;
+	color: #1e293b !important;
+	color-scheme: light;
+}
+.light select option {
+	background-color: #ffffff !important;
 	color: #1e293b !important;
 }
 

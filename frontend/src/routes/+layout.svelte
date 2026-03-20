@@ -20,7 +20,7 @@
 	<title>Playbook Research — Private Intelligence</title>
 </svelte:head>
 
-<div class="min-h-screen bg-navy flex flex-col" class:light={$theme === 'light'}>
+<div class="h-screen bg-navy flex flex-col" class:light={$theme === 'light'}>
 	<!-- Header -->
 	<header class="border-b border-navy-700 px-4 sm:px-8 py-4 flex items-center justify-between flex-shrink-0">
 		<div class="flex items-center gap-3">
