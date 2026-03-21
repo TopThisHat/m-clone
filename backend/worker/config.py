@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings
 from app.streams import (
     STREAM_ENTITY_EXTRACTION,
     STREAM_VALIDATION_CAMPAIGN,
+    STREAM_VALIDATION_CLUSTER,
     STREAM_VALIDATION_PAIR,
 )
 
@@ -18,6 +19,7 @@ from app.streams import (
 ALL_WORKFLOW_STREAMS = [
     STREAM_VALIDATION_CAMPAIGN,
     STREAM_VALIDATION_PAIR,
+    STREAM_VALIDATION_CLUSTER,
 ]
 
 

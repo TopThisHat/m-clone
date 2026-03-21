@@ -87,8 +87,8 @@ async def enqueue_many(
     for i, j in enumerate(jobs):
         if not j.get("job_type"):
             raise ValueError(f"enqueue_many: job[{i}] missing required field 'job_type'")
-        if j.get("validation_job_id") is None and j.get("job_type") == "validation_pair":
-            raise ValueError(f"enqueue_many: validation_pair job[{i}] missing 'validation_job_id'")
+        if j.get("validation_job_id") is None and j.get("job_type") in ("validation_pair", "validation_cluster"):
+            raise ValueError(f"enqueue_many: {j['job_type']} job[{i}] missing 'validation_job_id'")
 
     job_types = [j["job_type"] for j in jobs]
     payloads = [json.dumps(j.get("payload", {})) for j in jobs]

@@ -148,11 +148,14 @@ from .knowledge import (
     db_lookup_knowledge,
     db_get_knowledge_for_campaign,
     db_lookup_knowledge_batch,
+    db_check_staleness_batch,
 )
 
 # ── Knowledge Graph ───────────────────────────────────────────────────────────
 from .knowledge_graph import (
     db_find_or_create_entity,
+    db_find_similar_entities,
+    db_merge_kg_entities,
     db_upsert_relationship,
     db_list_kg_entities,
     db_get_kg_entity,
@@ -185,6 +188,13 @@ from .library import (
     db_delete_attribute_library,
     db_import_entities_from_library,
     db_import_attributes_from_library,
+)
+
+# ── Clusters ─────────────────────────────────────────────────────────────────
+from .clusters import (
+    db_get_clusters,
+    db_save_clusters,
+    db_delete_clusters,
 )
 
 # ── Research Jobs / Job Queue ─────────────────────────────────────────────────

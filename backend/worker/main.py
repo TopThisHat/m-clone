@@ -52,6 +52,12 @@ async def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
+    # Initialize the OpenAI client (same factory the app uses — handles
+    # Azure/proxy/standard mode).  Eagerly created so aws_mode fails fast.
+    from app.openai_factory import initialize as init_openai
+    init_openai()
+    logger.info("OpenAI client initialized")
+
     # Warm the shared DB pool
     from app.db import get_pool
     await get_pool()

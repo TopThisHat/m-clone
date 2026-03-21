@@ -11,6 +11,9 @@ def _kg_entity_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     d = dict(row)
     if "id" in d and d["id"] is not None:
         d["id"] = str(d["id"])
+    for uid in ("team_id",):
+        if uid in d and d[uid] is not None:
+            d[uid] = str(d[uid])
     for ts in ("created_at", "updated_at"):
         if ts in d and d[ts] is not None:
             d[ts] = d[ts].isoformat()
@@ -19,7 +22,7 @@ def _kg_entity_to_dict(row: asyncpg.Record) -> dict[str, Any]:
 
 def _kg_rel_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     d = dict(row)
-    for f in ("id", "subject_id", "object_id", "source_session_id"):
+    for f in ("id", "subject_id", "object_id", "source_session_id", "team_id"):
         if f in d and d[f] is not None:
             d[f] = str(d[f])
     if "created_at" in d and d["created_at"] is not None:
@@ -27,20 +30,34 @@ def _kg_rel_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     return d
 
 
-async def db_find_or_create_entity(name: str, entity_type: str, aliases: list[str]) -> str:
+async def db_find_or_create_entity(
+    name: str,
+    entity_type: str,
+    aliases: list[str],
+    team_id: str | None = None,
+) -> str:
     """
     Find an existing kg_entity by normalized name or alias, or create a new one.
     Returns the entity UUID as a string.
 
+    Searches within the given team scope + master graph (team_id IS NULL).
     Uses INSERT ... ON CONFLICT to avoid race conditions when concurrent
     extraction workers process the same entity simultaneously.
     """
     normalized = name.lower().strip()
     async with _acquire() as conn:
+        # Build team-scope condition for searches
+        if team_id:
+            team_cond = "(team_id = $2::uuid OR team_id IS NULL)"
+            alias_args: list[Any] = [normalized, team_id]
+        else:
+            team_cond = "team_id IS NULL"
+            alias_args = [normalized]
+
         # Check aliases first (can't be handled by ON CONFLICT)
         row = await conn.fetchrow(
-            "SELECT id FROM playbook.kg_entities WHERE $1 = ANY(aliases)",
-            normalized,
+            f"SELECT id FROM playbook.kg_entities WHERE $1 = ANY(aliases) AND {team_cond}",
+            *alias_args,
         )
         if row:
             entity_id = str(row["id"])
@@ -54,17 +71,105 @@ async def db_find_or_create_entity(name: str, entity_type: str, aliases: list[st
         # Atomic upsert by name — handles concurrent inserts safely
         row = await conn.fetchrow(
             """
-            INSERT INTO playbook.kg_entities (name, entity_type, aliases)
-            VALUES ($1, $2, $3)
+            INSERT INTO playbook.kg_entities (name, entity_type, aliases, team_id)
+            VALUES ($1, $2, $3, $4::uuid)
             ON CONFLICT ((LOWER(name))) DO UPDATE SET
                 aliases = (SELECT array_agg(DISTINCT a)
                            FROM unnest(playbook.kg_entities.aliases || EXCLUDED.aliases) AS a),
                 updated_at = NOW()
             RETURNING id
             """,
-            name.strip(), entity_type, aliases or [],
+            name.strip(), entity_type, aliases or [], team_id,
         )
         return str(row["id"])
+
+
+async def db_find_similar_entities(
+    name: str,
+    team_id: str | None = None,
+    threshold: float = 0.3,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """
+    Find KG entities similar to `name` using pg_trgm.
+    Searches within team scope + master graph.
+    Returns list of {id, name, entity_type, aliases, similarity} sorted by similarity DESC.
+    """
+    async with _acquire() as conn:
+        # Set the similarity threshold for the % operator
+        await conn.execute(f"SET pg_trgm.similarity_threshold = {threshold}")
+        rows = await conn.fetch(
+            """
+            SELECT id, name, entity_type, aliases, metadata,
+                   similarity(LOWER(name), LOWER($1)) AS similarity
+            FROM playbook.kg_entities
+            WHERE LOWER(name) % LOWER($1)
+              AND (team_id = $2::uuid OR team_id IS NULL)
+            ORDER BY similarity DESC
+            LIMIT $3
+            """,
+            name, team_id, limit,
+        )
+    return [_kg_entity_to_dict(r) for r in rows]
+
+
+async def db_merge_kg_entities(keep_id: str, merge_id: str) -> None:
+    """
+    Merge entity merge_id into keep_id:
+    - Move all relationships from merge_id to keep_id
+    - Merge aliases (include merge_id's name as alias)
+    - Delete merge_id
+    """
+    async with _acquire() as conn:
+        async with conn.transaction():
+            # Get the entity being merged so we can keep its name as an alias
+            merge_row = await conn.fetchrow(
+                "SELECT name, aliases FROM playbook.kg_entities WHERE id = $1::uuid",
+                merge_id,
+            )
+            if merge_row is None:
+                return
+
+            # Move relationships: update subject_id references
+            await conn.execute(
+                """
+                UPDATE playbook.kg_relationships
+                SET subject_id = $1::uuid
+                WHERE subject_id = $2::uuid
+                """,
+                keep_id, merge_id,
+            )
+            # Move relationships: update object_id references
+            await conn.execute(
+                """
+                UPDATE playbook.kg_relationships
+                SET object_id = $1::uuid
+                WHERE object_id = $2::uuid
+                """,
+                keep_id, merge_id,
+            )
+
+            # Merge aliases: keep entity gets merge entity's name + aliases
+            merge_aliases = list(merge_row["aliases"] or [])
+            merge_aliases.append(merge_row["name"])
+            await conn.execute(
+                """
+                UPDATE playbook.kg_entities
+                SET aliases = (
+                    SELECT array_agg(DISTINCT a)
+                    FROM unnest(aliases || $1::text[]) AS a
+                ),
+                updated_at = NOW()
+                WHERE id = $2::uuid
+                """,
+                merge_aliases, keep_id,
+            )
+
+            # Delete the merged entity
+            await conn.execute(
+                "DELETE FROM playbook.kg_entities WHERE id = $1::uuid",
+                merge_id,
+            )
 
 
 async def db_upsert_relationship(
@@ -75,6 +180,7 @@ async def db_upsert_relationship(
     confidence: float,
     evidence: str | None,
     source_session_id: str | None,
+    team_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Insert a new relationship or detect a conflict with an existing active one.
@@ -103,12 +209,13 @@ async def db_upsert_relationship(
                     await conn.execute(
                         """
                         INSERT INTO playbook.kg_relationships
-                            (subject_id, predicate, predicate_family, object_id, confidence, evidence, source_session_id)
-                        VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::uuid)
+                            (subject_id, predicate, predicate_family, object_id, confidence, evidence, source_session_id, team_id)
+                        VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::uuid, $8::uuid)
                         """,
                         subject_id, predicate, predicate_family, object_id,
                         confidence, evidence,
                         source_session_id if source_session_id else None,
+                        team_id,
                     )
                     return {"status": "new"}
                 except asyncpg.UniqueViolationError:
@@ -129,13 +236,14 @@ async def db_upsert_relationship(
             new_row = await conn.fetchrow(
                 """
                 INSERT INTO playbook.kg_relationships
-                    (subject_id, predicate, predicate_family, object_id, confidence, evidence, source_session_id)
-                VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::uuid)
+                    (subject_id, predicate, predicate_family, object_id, confidence, evidence, source_session_id, team_id)
+                VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::uuid, $8::uuid)
                 RETURNING id
                 """,
                 subject_id, predicate, predicate_family, object_id,
                 confidence, evidence,
                 source_session_id if source_session_id else None,
+                team_id,
             )
             new_id = str(new_row["id"])
 
@@ -159,6 +267,7 @@ async def db_upsert_relationship(
 async def db_list_kg_entities(
     search: str | None = None,
     entity_type: str | None = None,
+    team_id: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -173,6 +282,10 @@ async def db_list_kg_entities(
         idx += 1
         conditions.append(f"e.entity_type = ${idx}")
         args.append(entity_type)
+    if team_id:
+        idx += 1
+        conditions.append(f"(e.team_id = ${idx}::uuid OR e.team_id IS NULL)")
+        args.append(team_id)
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     # Parameterize LIMIT/OFFSET to avoid SQL injection
     idx += 1
@@ -242,10 +355,21 @@ async def db_get_entity_relationships(
     return [_kg_rel_to_dict(r) for r in rows]
 
 
-async def db_search_kg(query: str) -> list[dict[str, Any]]:
+async def db_search_kg(
+    query: str,
+    team_id: str | None = None,
+) -> list[dict[str, Any]]:
+    conditions = ["(LOWER(e.name) LIKE $1 OR $2 = ANY(SELECT LOWER(a) FROM unnest(e.aliases) a))"]
+    args: list[Any] = [f"%{query.lower()}%", query.lower()]
+    idx = 2
+    if team_id:
+        idx += 1
+        conditions.append(f"(e.team_id = ${idx}::uuid OR e.team_id IS NULL)")
+        args.append(team_id)
+    where = " AND ".join(conditions)
     async with _acquire() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             SELECT e.*,
                    COALESCE(rc.cnt, 0)::int AS relationship_count
             FROM playbook.kg_entities e
@@ -256,10 +380,10 @@ async def db_search_kg(query: str) -> list[dict[str, Any]]:
                     SELECT object_id AS entity_id FROM playbook.kg_relationships
                 ) sub GROUP BY entity_id
             ) rc ON rc.entity_id = e.id
-            WHERE LOWER(e.name) LIKE $1 OR $2 = ANY(SELECT LOWER(a) FROM unnest(e.aliases) a)
+            WHERE {where}
             ORDER BY e.updated_at DESC LIMIT 50
             """,
-            f"%{query.lower()}%", query.lower(),
+            *args,
         )
     return [_kg_entity_to_dict(r) for r in rows]
 
@@ -306,6 +430,7 @@ async def db_list_kg_conflicts(limit: int = 50, offset: int = 0) -> list[dict[st
 async def db_get_kg_graph(
     entity_types: list[str] | None = None,
     predicate_families: list[str] | None = None,
+    team_id: str | None = None,
     limit: int = 500,
 ) -> dict[str, Any]:
     """Return nodes + edges for the D3 force-directed graph explorer."""
@@ -320,6 +445,10 @@ async def db_get_kg_graph(
         idx += 1
         conditions.append(f"r.predicate_family = ANY(${idx}::text[])")
         args.append(predicate_families)
+    if team_id:
+        idx += 1
+        conditions.append(f"(r.team_id = ${idx}::uuid OR r.team_id IS NULL)")
+        args.append(team_id)
     where = " AND ".join(conditions)
     idx += 1
     args.append(limit)

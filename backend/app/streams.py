@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 STREAM_VALIDATION_CAMPAIGN = "jobs:validation_campaign"
 STREAM_VALIDATION_PAIR = "jobs:validation_pair"
+STREAM_VALIDATION_CLUSTER = "jobs:validation_cluster"
 STREAM_ENTITY_EXTRACTION = "entity_extraction"
 
 GROUP_WORKERS = "workers"
@@ -32,6 +33,7 @@ GROUP_EXTRACTORS = "extractor"
 JOB_TYPE_TO_STREAM = {
     "validation_campaign": STREAM_VALIDATION_CAMPAIGN,
     "validation_pair": STREAM_VALIDATION_PAIR,
+    "validation_cluster": STREAM_VALIDATION_CLUSTER,
 }
 
 # ---------------------------------------------------------------------------

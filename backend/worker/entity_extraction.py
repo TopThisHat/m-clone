@@ -16,6 +16,10 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+# NOTE: LLM calls use app.openai_factory.get_openai_client() (imported lazily
+# inside extract_entities_and_relationships) so the worker gets the same
+# Azure/proxy/standard client the app uses.
+
 
 # ── Pydantic models for LLM structured output ──────────────────────────────────
 
@@ -46,8 +50,6 @@ async def extract_entities_and_relationships(report_md: str) -> ExtractionResult
     Call GPT-4o-mini to extract named entities and relationships from a report.
     Returns an ExtractionResult (may be empty on failure).
     """
-    from openai import AsyncOpenAI
-
     prompt = f"""Extract named entities and relationships from the following research report.
 
 Return ONLY valid JSON matching this schema:
@@ -76,7 +78,9 @@ Research report:
 {report_md[:8000]}"""
 
     try:
-        resp = await AsyncOpenAI().chat.completions.create(
+        from app.openai_factory import get_openai_client
+
+        resp = await get_openai_client().chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},

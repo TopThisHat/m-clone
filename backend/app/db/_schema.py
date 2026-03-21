@@ -595,5 +595,146 @@ async def init_schema() -> None:
                 CREATE INDEX IF NOT EXISTS kg_relationships_subject_idx
                     ON kg_relationships(subject_id) WHERE is_active = TRUE
             """)
+
+            # ── KG Team Scoping ───────────────────────────────────────────
+            await conn.execute("""
+                ALTER TABLE playbook.kg_entities
+                    ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL
+            """)
+            await conn.execute("""
+                ALTER TABLE playbook.kg_relationships
+                    ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL
+            """)
+            await conn.execute("""
+                ALTER TABLE playbook.entity_attribute_knowledge
+                    ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_entities_team_idx
+                    ON kg_entities(team_id) WHERE team_id IS NOT NULL
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_relationships_team_idx
+                    ON kg_relationships(team_id) WHERE team_id IS NOT NULL
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS eak_team_idx
+                    ON entity_attribute_knowledge(team_id) WHERE team_id IS NOT NULL
+            """)
+
+            # ── Staleness metadata on knowledge cache ─────────────────────
+            await conn.execute("""
+                ALTER TABLE playbook.entity_attribute_knowledge
+                    ADD COLUMN IF NOT EXISTS research_source TEXT DEFAULT 'campaign'
+            """)
+            await conn.execute("""
+                ALTER TABLE playbook.entity_attribute_knowledge
+                    ADD COLUMN IF NOT EXISTS research_session_count INT DEFAULT 1
+            """)
+
+            # ── Staleness function (STABLE — uses NOW(), per SQL expert rec)
+            await conn.execute("""
+                CREATE OR REPLACE FUNCTION playbook.compute_staleness_tier(
+                    last_updated TIMESTAMPTZ,
+                    ref_ts TIMESTAMPTZ DEFAULT NOW()
+                )
+                RETURNS TEXT AS $$
+                BEGIN
+                    IF last_updated > ref_ts - INTERVAL '3 days' THEN RETURN 'fresh';
+                    ELSIF last_updated > ref_ts - INTERVAL '14 days' THEN RETURN 'warm';
+                    ELSIF last_updated > ref_ts - INTERVAL '30 days' THEN RETURN 'stale';
+                    ELSE RETURN 'expired';
+                    END IF;
+                END;
+                $$ LANGUAGE plpgsql STABLE
+            """)
+
+            # ── Unique constraint for team-scoped knowledge cache
+            # (per SQL expert: PK must include team_id scope)
+            # Drop old PK and recreate with COALESCE for NULL team_id
+            await conn.execute("""
+                DO $$
+                BEGIN
+                    -- Only run if the new unique index doesn't exist yet
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_indexes
+                        WHERE indexname = 'eak_gwm_attr_team_unique'
+                    ) THEN
+                        -- Drop old PK if it exists
+                        ALTER TABLE playbook.entity_attribute_knowledge
+                            DROP CONSTRAINT IF EXISTS entity_attribute_knowledge_pkey;
+                        -- Add surrogate PK
+                        ALTER TABLE playbook.entity_attribute_knowledge
+                            ADD COLUMN IF NOT EXISTS id UUID DEFAULT gen_random_uuid();
+                        -- Set id for existing rows
+                        UPDATE playbook.entity_attribute_knowledge
+                            SET id = gen_random_uuid() WHERE id IS NULL;
+                        ALTER TABLE playbook.entity_attribute_knowledge
+                            ALTER COLUMN id SET NOT NULL;
+                        -- Only add PK if it doesn't exist
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint
+                            WHERE conname = 'entity_attribute_knowledge_pkey'
+                        ) THEN
+                            ALTER TABLE playbook.entity_attribute_knowledge
+                                ADD CONSTRAINT entity_attribute_knowledge_pkey PRIMARY KEY (id);
+                        END IF;
+                        -- New unique index with team_id scope
+                        CREATE UNIQUE INDEX eak_gwm_attr_team_unique
+                            ON playbook.entity_attribute_knowledge (
+                                gwm_id,
+                                attribute_label,
+                                COALESCE(team_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                            );
+                    END IF;
+                END $$
+            """)
+            # Partial index for master-only lookups
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS eak_master_lookup_idx
+                    ON entity_attribute_knowledge(gwm_id, attribute_label)
+                    WHERE team_id IS NULL
+            """)
+
+            # ── pg_trgm extension for fuzzy entity matching ───────────────
+            await conn.execute("""
+                CREATE EXTENSION IF NOT EXISTS pg_trgm
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_entities_name_trgm_idx
+                    ON kg_entities USING GIN (LOWER(name) gin_trgm_ops)
+            """)
+
+            # ── Attribute clusters table ──────────────────────────────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.attribute_clusters (
+                    id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    campaign_id                UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+                    cluster_name               TEXT NOT NULL,
+                    attribute_ids              UUID[] NOT NULL,
+                    research_question_template TEXT NOT NULL,
+                    created_at                 TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS attribute_clusters_campaign_idx
+                    ON attribute_clusters(campaign_id)
+            """)
+
+            # ── KG promotion tracking ─────────────────────────────────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.kg_promotions (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    source_team_id  UUID NOT NULL REFERENCES teams(id),
+                    entity_id       UUID NOT NULL REFERENCES kg_entities(id),
+                    promoted_at     TIMESTAMPTZ DEFAULT NOW(),
+                    promoted_by     TEXT DEFAULT 'auto'
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_promotions_entity_idx
+                    ON kg_promotions(entity_id)
+            """)
+
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")
