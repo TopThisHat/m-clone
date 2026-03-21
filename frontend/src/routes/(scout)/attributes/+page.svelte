@@ -467,7 +467,7 @@
 
 			<!-- Pagination -->
 			<Pagination
-				total={displayedCount()}
+				total={totalCount}
 				{pageSize}
 				{currentPage}
 				onPageChange={(p) => { currentPage = p; }}

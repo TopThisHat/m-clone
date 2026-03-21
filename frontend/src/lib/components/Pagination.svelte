@@ -29,7 +29,7 @@
 	}
 </script>
 
-{#if total > pageSize}
+{#if total > 0}
 	<div class="flex items-center justify-between px-4 py-3 text-sm border-t border-navy-700">
 		<div class="flex items-center gap-4">
 			<span class="text-slate-500">
