@@ -258,9 +258,9 @@
 		</div>
 
 		<!-- Sort & filter buttons -->
-		<div class="flex items-center gap-2 flex-wrap">
-			<div class="flex items-center gap-2">
-				<span class="text-xs text-slate-400">Sort:</span>
+		<div class="flex items-center gap-2 flex-wrap text-xs">
+			<div class="flex items-center gap-2 flex-wrap">
+				<span class="text-xs text-slate-400 w-full sm:w-auto mb-2 sm:mb-0">Sort:</span>
 				<button
 					onclick={() => { sortBy = 'label'; sortDir = sortDir === 'asc' && sortBy === 'label' ? 'desc' : 'asc'; }}
 					class={`text-xs px-2 py-1 rounded border transition-colors ${
@@ -332,49 +332,51 @@
 	</div>
 
 	<!-- Stats & Actions -->
-	<div class="flex items-center justify-between mb-4">
-		<div class="flex items-center gap-4 text-sm">
+	<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-3">
+		<div class="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 text-xs sm:text-sm w-full sm:w-auto">
 			{#if !loading}
-				<p class="text-slate-400">
+				<p class="text-slate-400 whitespace-nowrap">
 					<span class="text-slate-200 font-semibold">{totalCount}</span> total
 					{#if gwmIdFilter !== 'all' || debouncedSearch}
-						• <span class="text-slate-200 font-semibold">{displayedCount()}</span> shown
+						<br class="sm:hidden" />
+						<span class="sm:inline">• <span class="text-slate-200 font-semibold">{displayedCount()}</span> shown</span>
 					{/if}
 					{#if selectedIds.size > 0}
-						• <span class="text-gold font-semibold">{selectedIds.size}</span> selected
+						<br class="sm:hidden" />
+						<span class="sm:inline">• <span class="text-gold font-semibold">{selectedIds.size}</span> selected</span>
 					{/if}
 				</p>
 			{/if}
 		</div>
 
-		<div class="flex items-center gap-2">
+		<div class="flex items-center gap-1 sm:gap-2 flex-wrap justify-end w-full sm:w-auto text-xs sm:text-sm">
 			{#if selectedIds.size > 0}
 				<button
 					onclick={bulkDelete}
 					disabled={bulkDeleting}
-					class="text-xs bg-red-950 border border-red-800 text-red-400 px-3 py-1.5 rounded-lg hover:bg-red-900 disabled:opacity-50 transition-colors"
+					class="bg-red-950 border border-red-800 text-red-400 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg hover:bg-red-900 disabled:opacity-50 transition-colors"
 				>
-					{bulkDeleting ? 'Deleting…' : `Delete selected`}
+					{bulkDeleting ? 'Del…' : `Delete`}
 				</button>
 			{/if}
 			<button
 				onclick={exportCsv}
 				disabled={exporting}
-				class="text-xs bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg hover:bg-navy-600 disabled:opacity-50 transition-colors"
+				class="bg-navy-700 border border-navy-600 text-slate-300 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg hover:bg-navy-600 disabled:opacity-50 transition-colors"
 			>
-				{exporting ? 'Exporting…' : '⬇ Export CSV'}
+				{exporting ? 'Export…' : 'CSV'}
 			</button>
 			<button
 				onclick={() => { showCSV = !showCSV; showAddForm = false; }}
-				class="text-sm bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg hover:bg-navy-600 transition-colors"
+				class="bg-navy-700 border border-navy-600 text-slate-300 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg hover:bg-navy-600 transition-colors"
 			>
-				Upload CSV
+				Upload
 			</button>
 			<button
 				onclick={() => { showAddForm = !showAddForm; showCSV = false; }}
-				class="text-sm bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg hover:bg-gold-light transition-colors"
+				class="bg-gold text-navy font-semibold px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg hover:bg-gold-light transition-colors"
 			>
-				+ Add Entity
+				+ Add
 			</button>
 		</div>
 	</div>
@@ -448,8 +450,8 @@
 		</div>
 	{:else}
 		<!-- Table -->
-		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
-			<div class="overflow-x-auto">
+		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden flex flex-col">
+			<div class="overflow-x-auto flex-1">
 				<table class="w-full text-sm" aria-label="Entity library">
 					<thead class="sticky top-0 bg-navy-800 border-b border-navy-700">
 						<tr class="text-slate-400">
@@ -461,10 +463,10 @@
 									aria-label="Select all entities on this page" />
 							</th>
 							<th scope="col" class="text-left px-4 py-3 font-medium">Label</th>
-							<th scope="col" class="text-left px-4 py-3 font-medium">GWM ID</th>
-							<th scope="col" class="text-left px-4 py-3 font-medium">Description</th>
-							<th scope="col" class="text-left px-4 py-3 font-medium">Metadata</th>
-							<th scope="col" class="text-left px-4 py-3 font-medium w-20">Created</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium hidden sm:table-cell">GWM ID</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium hidden md:table-cell">Description</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium hidden lg:table-cell">Metadata</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium hidden md:table-cell w-20">Created</th>
 							<th scope="col" class="px-4 py-3 w-24"><span class="sr-only">Actions</span></th>
 						</tr>
 					</thead>
@@ -481,11 +483,11 @@
 										<label class="sr-only" for="lib-edit-label-{entity.id}">Label</label>
 										<input id="lib-edit-label-{entity.id}" bind:value={editForm.label} class="input-field w-full" />
 									</td>
-									<td class="px-4 py-2">
+									<td class="px-4 py-2 hidden sm:table-cell">
 										<label class="sr-only" for="lib-edit-gwm-{entity.id}">GWM ID</label>
 										<input id="lib-edit-gwm-{entity.id}" bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs" />
 									</td>
-									<td class="px-4 py-2">
+									<td class="px-4 py-2 hidden md:table-cell">
 										<label class="sr-only" for="lib-edit-desc-{entity.id}">Description</label>
 										<input id="lib-edit-desc-{entity.id}" bind:value={editForm.description} class="input-field w-full" />
 									</td>
@@ -500,11 +502,11 @@
 									</td>
 								{:else}
 									<td class="px-4 py-3 text-slate-200 font-medium">{entity.label}</td>
-									<td class="px-4 py-3 text-slate-400 font-mono text-xs">{entity.gwm_id ?? '—'}</td>
-									<td class="px-4 py-3 text-slate-500 max-w-xs" title={entity.description ?? ''}>
+									<td class="px-4 py-3 text-slate-400 font-mono text-xs hidden sm:table-cell">{entity.gwm_id ?? '—'}</td>
+									<td class="px-4 py-3 text-slate-500 max-w-xs hidden md:table-cell" title={entity.description ?? ''}>
 										<span class="line-clamp-2">{entity.description ?? '—'}</span>
 									</td>
-									<td class="px-4 py-3">
+									<td class="px-4 py-3 hidden lg:table-cell">
 										{#if Object.keys(entity.metadata || {}).length > 0}
 											<span class="inline-block text-xs bg-gold/10 border border-gold/30 text-gold px-2 py-0.5 rounded-full">
 												{Object.keys(entity.metadata).length} keys
@@ -513,7 +515,7 @@
 											<span class="text-slate-600 text-xs">—</span>
 										{/if}
 									</td>
-									<td class="px-4 py-3 text-slate-500 text-xs">{formatDate(entity.created_at)}</td>
+									<td class="px-4 py-3 text-slate-500 text-xs hidden md:table-cell">{formatDate(entity.created_at)}</td>
 									<td class="px-4 py-3 text-right whitespace-nowrap space-x-2">
 										<button onclick={() => startEdit(entity)} aria-label="Edit {entity.label}"
 											class="text-slate-500 hover:text-slate-300 text-xs">Edit</button>

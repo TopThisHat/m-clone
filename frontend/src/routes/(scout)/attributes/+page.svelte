@@ -227,9 +227,9 @@
 		</div>
 
 		<!-- Sort & filter buttons -->
-		<div class="flex items-center gap-4 flex-wrap">
-			<div class="flex items-center gap-2">
-				<span class="text-xs text-slate-400">Sort:</span>
+		<div class="flex items-center gap-2 lg:gap-4 flex-wrap text-xs">
+			<div class="flex items-center gap-2 flex-wrap">
+				<span class="text-xs text-slate-400 w-full lg:w-auto mb-2 lg:mb-0">Sort:</span>
 				<button
 					onclick={() => { sortBy = 'label'; sortDir = sortDir === 'asc' && sortBy === 'label' ? 'desc' : 'asc'; }}
 					class={`text-xs px-2 py-1 rounded border transition-colors ${
@@ -264,18 +264,18 @@
 
 			<div class="flex-1"></div>
 
-			<div class="flex items-center gap-2">
-				<span class="text-xs text-slate-400">Weight:</span>
+			<div class="flex items-center gap-1 w-full lg:w-auto">
+				<span class="text-xs text-slate-400 whitespace-nowrap">Weight:</span>
 				<input
 					type="range"
 					bind:value={minWeight}
 					min="0"
 					max="10"
 					step="0.1"
-					class="w-24 h-1 bg-navy-700 rounded-lg appearance-none cursor-pointer accent-gold"
+					class="w-16 sm:w-20 h-1 bg-navy-700 rounded-lg appearance-none cursor-pointer accent-gold"
 					title="Minimum weight"
 				/>
-				<span class="text-xs text-slate-400 w-8 text-right">{minWeight.toFixed(1)}</span>
+				<span class="text-xs text-slate-400 w-6 text-center">{minWeight.toFixed(1)}</span>
 				<span class="text-xs text-slate-500">–</span>
 				<input
 					type="range"
@@ -283,40 +283,41 @@
 					min="0"
 					max="10"
 					step="0.1"
-					class="w-24 h-1 bg-navy-700 rounded-lg appearance-none cursor-pointer accent-gold"
+					class="w-16 sm:w-20 h-1 bg-navy-700 rounded-lg appearance-none cursor-pointer accent-gold"
 					title="Maximum weight"
 				/>
-				<span class="text-xs text-slate-400 w-8">{maxWeight.toFixed(1)}</span>
+				<span class="text-xs text-slate-400 w-6 text-center">{maxWeight.toFixed(1)}</span>
 			</div>
 		</div>
 	</div>
 
 	<!-- Stats & Actions -->
-	<div class="flex items-center justify-between mb-4">
-		<div class="flex items-center gap-4 text-sm">
+	<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-3">
+		<div class="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4 text-xs sm:text-sm w-full sm:w-auto">
 			{#if !loading}
-				<p class="text-slate-400">
+				<p class="text-slate-400 whitespace-nowrap">
 					<span class="text-slate-200 font-semibold">{totalCount}</span> total
 					{#if (minWeight > 0 || maxWeight < 10 || debouncedSearch)}
-						• <span class="text-slate-200 font-semibold">{displayedCount()}</span> shown
+						<br class="sm:hidden" />
+						<span class="sm:inline">• <span class="text-slate-200 font-semibold">{displayedCount()}</span> shown</span>
 					{/if}
 				</p>
 			{/if}
 		</div>
 
-		<div class="flex items-center gap-2">
+		<div class="flex items-center gap-1 sm:gap-2 w-full sm:w-auto text-xs sm:text-sm">
 			<button
 				onclick={exportCsv}
 				disabled={exporting}
-				class="text-xs bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg hover:bg-navy-600 disabled:opacity-50 transition-colors"
+				class="bg-navy-700 border border-navy-600 text-slate-300 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg hover:bg-navy-600 disabled:opacity-50 transition-colors"
 			>
-				{exporting ? 'Exporting…' : '⬇ Export CSV'}
+				{exporting ? 'Export…' : 'CSV'}
 			</button>
 			<button
 				onclick={() => { showCSV = !showCSV; showAddForm = false; }}
-				class="text-sm bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg hover:bg-navy-600 transition-colors"
+				class="bg-navy-700 border border-navy-600 text-slate-300 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg hover:bg-navy-600 transition-colors"
 			>
-				Upload CSV
+				Upload
 			</button>
 		</div>
 	</div>
@@ -397,15 +398,15 @@
 		</div>
 	{:else}
 		<!-- Table -->
-		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
-			<div class="overflow-x-auto">
+		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden flex flex-col">
+			<div class="overflow-x-auto flex-1">
 				<table class="w-full text-sm" aria-label="Attribute library">
 					<thead class="sticky top-0 bg-navy-800 border-b border-navy-700">
 						<tr class="text-slate-400">
 							<th scope="col" class="text-left px-4 py-3 font-medium">Label</th>
-							<th scope="col" class="text-left px-4 py-3 font-medium">Description</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium hidden md:table-cell">Description</th>
 							<th scope="col" class="text-left px-4 py-3 font-medium w-32">Weight</th>
-							<th scope="col" class="text-left px-4 py-3 font-medium w-20">Created</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium hidden sm:table-cell w-20">Created</th>
 							<th scope="col" class="px-4 py-3 w-24"><span class="sr-only">Actions</span></th>
 						</tr>
 					</thead>
@@ -418,7 +419,7 @@
 										<label class="sr-only" for="lib-attr-label-{attr.id}">Label</label>
 										<input id="lib-attr-label-{attr.id}" bind:value={e.label} class="input-field w-full text-sm" />
 									</td>
-									<td class="px-4 py-2">
+									<td class="px-4 py-2 hidden md:table-cell">
 										<label class="sr-only" for="lib-attr-desc-{attr.id}">Description</label>
 										<input id="lib-attr-desc-{attr.id}" bind:value={e.description} class="input-field w-full text-sm" />
 									</td>
@@ -426,7 +427,7 @@
 										<label class="sr-only" for="lib-attr-weight-{attr.id}">Weight</label>
 										<input id="lib-attr-weight-{attr.id}" type="number" bind:value={e.weight} min="0" step="0.1" class="input-field w-full text-sm" />
 									</td>
-									<td class="px-4 py-2 text-slate-500 text-xs">{formatDate(attr.created_at)}</td>
+									<td class="px-4 py-2 text-slate-500 text-xs hidden sm:table-cell">{formatDate(attr.created_at)}</td>
 									<td class="px-4 py-2 text-right space-x-2">
 										<button onclick={() => saveEdit(attr.id)} aria-label="Save changes to {attr.label}"
 											class="text-green-400 hover:text-green-300 text-xs">Save</button>
@@ -437,21 +438,21 @@
 							{:else}
 								<tr class="border-t border-navy-700 hover:bg-navy-700/50 transition-colors">
 									<td class="px-4 py-3 text-slate-200 font-medium">{attr.label}</td>
-									<td class="px-4 py-3 text-slate-500 max-w-xs" title={attr.description ?? ''}>
+									<td class="px-4 py-3 text-slate-500 max-w-xs hidden md:table-cell" title={attr.description ?? ''}>
 										<span class="line-clamp-2">{attr.description ?? '—'}</span>
 									</td>
 									<td class="px-4 py-3">
 										<div class="flex items-center gap-2">
-											<div class="w-20 h-2 bg-navy-700 rounded-full overflow-hidden">
+											<div class="w-16 sm:w-20 h-2 bg-navy-700 rounded-full overflow-hidden">
 												<div
 													class={`h-full ${getWeightColor(attr.weight)} transition-all`}
 													style={`width: ${(attr.weight / 10) * 100}%`}
 												></div>
 											</div>
-											<span class="text-slate-300 font-mono text-xs w-8 text-right">{attr.weight.toFixed(1)}</span>
+											<span class="text-slate-300 font-mono text-xs w-7 sm:w-8 text-right">{attr.weight.toFixed(1)}</span>
 										</div>
 									</td>
-									<td class="px-4 py-3 text-slate-500 text-xs">{formatDate(attr.created_at)}</td>
+									<td class="px-4 py-3 text-slate-500 text-xs hidden sm:table-cell">{formatDate(attr.created_at)}</td>
 									<td class="px-4 py-3 text-right space-x-2">
 										<button onclick={() => startEdit(attr)} aria-label="Edit {attr.label}"
 											class="text-slate-400 hover:text-gold text-xs">Edit</button>
