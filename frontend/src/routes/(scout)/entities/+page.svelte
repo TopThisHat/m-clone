@@ -20,6 +20,12 @@
 	let sortBy = $state<'label' | 'gwm_id' | 'created_at'>('created_at');
 	let sortDir = $state<'asc' | 'desc'>('asc');
 
+	function toggleSort(col: typeof sortBy) {
+		if (sortBy === col) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
+		else { sortBy = col; sortDir = 'asc'; }
+		currentPage = 0;
+	}
+
 	// Filtering
 	let gwmIdFilter = $state<'all' | 'has' | 'missing'>('all');
 
@@ -52,7 +58,7 @@
 	// Export
 	let exporting = $state(false);
 
-	async function loadEntities(teamId: string | null, search: string, page: number, size: number) {
+	async function loadEntities(teamId: string | null, search: string, page: number, size: number, sort: string = 'created_at', dir: 'asc' | 'desc' = 'asc') {
 		loading = true;
 		error = '';
 		try {
@@ -60,8 +66,8 @@
 				limit: size,
 				offset: page * size,
 				search: search || undefined,
-				sort_by: sortBy,
-				sort_dir: sortDir,
+				sort_by: sort,
+				sort_dir: dir,
 			});
 			entities = resp.items;
 			totalCount = resp.total;
@@ -75,7 +81,14 @@
 	}
 
 	$effect(() => {
-		loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize);
+		// Read all reactive deps in the effect body so Svelte tracks them
+		const team = $scoutTeam;
+		const search = debouncedSearch;
+		const page = currentPage;
+		const size = pageSize;
+		const sort = sortBy;
+		const dir = sortDir;
+		loadEntities(team, search, page, size, sort, dir);
 	});
 
 	function displayedEntities() {
@@ -117,7 +130,7 @@
 			newGwmId = '';
 			newDesc = '';
 			showAddForm = false;
-			loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize);
+			loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize, sortBy, sortDir);
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to add entity';
 		} finally {
@@ -158,7 +171,7 @@
 			const next = new Set(selectedIds);
 			next.delete(id);
 			selectedIds = next;
-			loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize);
+			loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize, sortBy, sortDir);
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to delete');
 		}
@@ -183,7 +196,7 @@
 		try {
 			await Promise.all([...selectedIds].map((id) => libraryEntitiesApi.delete(id)));
 			selectedIds = new Set();
-			loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize);
+			loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize, sortBy, sortDir);
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to delete');
 		} finally {
@@ -261,36 +274,18 @@
 		<div class="flex items-center gap-2 flex-wrap text-xs">
 			<div class="flex items-center gap-2 flex-wrap">
 				<span class="text-xs text-slate-400 w-full sm:w-auto mb-2 sm:mb-0">Sort:</span>
-				<button
-					onclick={() => { sortBy = 'label'; sortDir = sortDir === 'asc' && sortBy === 'label' ? 'desc' : 'asc'; }}
-					class={`text-xs px-2 py-1 rounded border transition-colors ${
-						sortBy === 'label'
-							? 'bg-gold/10 border-gold/40 text-gold'
-							: 'border-navy-600 text-slate-400 hover:text-slate-300'
-					}`}
-				>
-					Label {sortBy === 'label' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-				</button>
-				<button
-					onclick={() => { sortBy = 'gwm_id'; sortDir = sortDir === 'asc' && sortBy === 'gwm_id' ? 'desc' : 'asc'; }}
-					class={`text-xs px-2 py-1 rounded border transition-colors ${
-						sortBy === 'gwm_id'
-							? 'bg-gold/10 border-gold/40 text-gold'
-							: 'border-navy-600 text-slate-400 hover:text-slate-300'
-					}`}
-				>
-					GWM ID {sortBy === 'gwm_id' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-				</button>
-				<button
-					onclick={() => { sortBy = 'created_at'; sortDir = sortDir === 'asc' && sortBy === 'created_at' ? 'desc' : 'asc'; }}
-					class={`text-xs px-2 py-1 rounded border transition-colors ${
-						sortBy === 'created_at'
-							? 'bg-gold/10 border-gold/40 text-gold'
-							: 'border-navy-600 text-slate-400 hover:text-slate-300'
-					}`}
-				>
-					Date {sortBy === 'created_at' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-				</button>
+				{#each [['label', 'Label'], ['gwm_id', 'GWM ID'], ['created_at', 'Date']] as [col, label]}
+					<button
+						onclick={() => toggleSort(col as typeof sortBy)}
+						class={`text-xs px-2 py-1 rounded border transition-colors ${
+							sortBy === col
+								? 'bg-gold/10 border-gold/40 text-gold'
+								: 'border-navy-600 text-slate-400 hover:text-slate-300'
+						}`}
+					>
+						{label} {sortBy === col ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+					</button>
+				{/each}
 			</div>
 
 			<div class="flex-1"></div>
@@ -392,7 +387,7 @@
 				onBulkCreate={libraryBulkCreate}
 				onUploaded={async () => {
 					showCSV = false;
-					loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize);
+					loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize, sortBy, sortDir);
 				}}
 			/>
 		</div>
@@ -450,8 +445,8 @@
 		</div>
 	{:else}
 		<!-- Table -->
-		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden flex flex-col">
-			<div class="overflow-x-auto flex-1">
+		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
+			<div class="max-h-[60vh] overflow-auto">
 				<table class="w-full text-sm" aria-label="Entity library">
 					<thead class="sticky top-0 bg-navy-800 border-b border-navy-700">
 						<tr class="text-slate-400">

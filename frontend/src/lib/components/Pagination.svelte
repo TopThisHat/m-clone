@@ -27,66 +27,58 @@
 			onPageSizeChange(newSize);
 		}
 	}
+
+	const navBtnClass = 'px-2 py-1 rounded border border-navy-600 text-slate-400 hover:text-slate-200 hover:bg-navy-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-xs';
 </script>
 
 {#if total > 0}
-	<div class="flex items-center justify-between px-4 py-3 text-sm border-t border-navy-700">
-		<div class="flex items-center gap-4">
+	<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs border-t border-navy-700 bg-navy-800">
+		<!-- Left: showing X-Y of Z + page size -->
+		<div class="flex items-center gap-3">
 			<span class="text-slate-500">
-				Showing <span class="text-slate-300 font-mono">{startItem}–{endItem}</span> of <span class="text-slate-300 font-mono">{total}</span>
+				<span class="text-slate-300 font-mono">{startItem}–{endItem}</span> of <span class="text-slate-300 font-mono">{total}</span>
 			</span>
-			<select onchange={handlePageSizeChange} value={pageSize} class="bg-navy-700 border border-navy-600 rounded px-2 py-1 text-xs text-slate-300">
-				<option value="25">25 / page</option>
-				<option value="50">50 / page</option>
-				<option value="100">100 / page</option>
-				<option value="250">250 / page</option>
-			</select>
+			{#if onPageSizeChange}
+				<select onchange={handlePageSizeChange} value={pageSize} class="bg-navy-700 border border-navy-600 rounded px-1.5 py-0.5 text-slate-300">
+					<option value={25}>25</option>
+					<option value={50}>50</option>
+					<option value={100}>100</option>
+					<option value={250}>250</option>
+				</select>
+			{/if}
 		</div>
-		<div class="flex items-center gap-2">
-			<button
-				onclick={() => onPageChange(0)}
-				disabled={currentPage === 0}
-				class="px-2 py-1 rounded border border-navy-600 text-slate-400 hover:text-slate-200 hover:bg-navy-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-xs"
-				title="First page"
-			>
-				⟨⟨
-			</button>
-			<button
-				onclick={() => onPageChange(currentPage - 1)}
-				disabled={currentPage === 0}
-				class="px-2.5 py-1 rounded border border-navy-600 text-slate-400 hover:text-slate-200 hover:bg-navy-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-			>
-				← Prev
-			</button>
-			<div class="flex items-center gap-1 px-2 text-slate-400">
-				<span>Page</span>
-				<input
-					type="number"
-					bind:value={jumpToPageInput}
-					onkeydown={(e) => e.key === 'Enter' && handlePageJump()}
-					placeholder={String(currentPage + 1)}
-					class="w-12 bg-navy-700 border border-navy-600 rounded px-1 py-0.5 text-center text-xs text-slate-300"
-					min="1"
-					max={totalPages}
-					title="Jump to page"
-				/>
-				<span>of <span class="text-slate-200 font-mono">{totalPages}</span></span>
+
+		<!-- Right: navigation -->
+		{#if totalPages > 1}
+			<div class="flex items-center gap-1">
+				<button onclick={() => onPageChange(0)} disabled={currentPage === 0} class={navBtnClass} title="First page">
+					&laquo;
+				</button>
+				<button onclick={() => onPageChange(currentPage - 1)} disabled={currentPage === 0} class={navBtnClass}>
+					&lsaquo; Prev
+				</button>
+
+				<div class="flex items-center gap-1 px-1 text-slate-400">
+					<input
+						type="number"
+						bind:value={jumpToPageInput}
+						onkeydown={(e) => e.key === 'Enter' && handlePageJump()}
+						placeholder={String(currentPage + 1)}
+						class="w-10 bg-navy-700 border border-navy-600 rounded px-1 py-0.5 text-center text-slate-300"
+						min="1"
+						max={totalPages}
+						title="Jump to page"
+					/>
+					<span>/ {totalPages}</span>
+				</div>
+
+				<button onclick={() => onPageChange(currentPage + 1)} disabled={currentPage >= totalPages - 1} class={navBtnClass}>
+					Next &rsaquo;
+				</button>
+				<button onclick={() => onPageChange(totalPages - 1)} disabled={currentPage >= totalPages - 1} class={navBtnClass} title="Last page">
+					&raquo;
+				</button>
 			</div>
-			<button
-				onclick={() => onPageChange(currentPage + 1)}
-				disabled={currentPage >= totalPages - 1}
-				class="px-2.5 py-1 rounded border border-navy-600 text-slate-400 hover:text-slate-200 hover:bg-navy-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-			>
-				Next →
-			</button>
-			<button
-				onclick={() => onPageChange(totalPages - 1)}
-				disabled={currentPage >= totalPages - 1}
-				class="px-2 py-1 rounded border border-navy-600 text-slate-400 hover:text-slate-200 hover:bg-navy-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed text-xs"
-				title="Last page"
-			>
-				⟩⟩
-			</button>
-		</div>
+		{/if}
 	</div>
 {/if}

@@ -28,7 +28,7 @@
 	}
 </script>
 
-<div class="p-6">
+<div class="p-6 h-full overflow-y-auto">
 	<!-- Top bar: nav + team -->
 	<div class="flex items-center justify-between mb-5 flex-wrap gap-3">
 		<!-- Page nav -->
