@@ -47,13 +47,15 @@ export interface BulkLibraryResult<T> {
 export const libraryEntitiesApi = {
 	list: (
 		teamId?: string | null,
-		opts?: { limit?: number; offset?: number; search?: string }
+		opts?: { limit?: number; offset?: number; search?: string; sort_by?: string; sort_dir?: 'asc' | 'desc' }
 	): Promise<PaginatedResponse<LibraryEntity>> => {
 		const params = new URLSearchParams();
 		if (teamId) params.set('team_id', teamId);
 		if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
 		if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
 		if (opts?.search) params.set('search', opts.search);
+		if (opts?.sort_by) params.set('sort_by', opts.sort_by);
+		if (opts?.sort_dir) params.set('sort_dir', opts.sort_dir);
 		const qs = params.toString();
 		return apiFetch(`/api/library/entities${qs ? `?${qs}` : ''}`);
 	},
@@ -89,13 +91,15 @@ export const libraryEntitiesApi = {
 export const libraryAttributesApi = {
 	list: (
 		teamId?: string | null,
-		opts?: { limit?: number; offset?: number; search?: string }
+		opts?: { limit?: number; offset?: number; search?: string; sort_by?: string; sort_dir?: 'asc' | 'desc' }
 	): Promise<PaginatedResponse<LibraryAttribute>> => {
 		const params = new URLSearchParams();
 		if (teamId) params.set('team_id', teamId);
 		if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
 		if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
 		if (opts?.search) params.set('search', opts.search);
+		if (opts?.sort_by) params.set('sort_by', opts.sort_by);
+		if (opts?.sort_dir) params.set('sort_dir', opts.sort_dir);
 		const qs = params.toString();
 		return apiFetch(`/api/library/attributes${qs ? `?${qs}` : ''}`);
 	},

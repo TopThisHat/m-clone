@@ -49,18 +49,36 @@ async def db_list_entity_library(
     limit: int = 50,
     offset: int = 0,
     search: str | None = None,
+    sort_by: str = "created_at",
+    sort_dir: str = "asc",
 ) -> dict[str, Any]:
+    # Whitelist sort columns
+    allowed_sort = {"label", "gwm_id", "created_at"}
+    sort_col = sort_by if sort_by in allowed_sort else "created_at"
+    sort_direction = "DESC" if sort_dir.upper() == "DESC" else "ASC"
+
+    # Search now covers label, gwm_id, and description
     if team_id:
-        _where = "WHERE team_id=$1::uuid AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')"
+        _where = """WHERE team_id=$1::uuid AND (
+            $2::text IS NULL OR
+            label ILIKE '%' || $2 || '%' OR
+            COALESCE(gwm_id, '') ILIKE '%' || $2 || '%' OR
+            COALESCE(description, '') ILIKE '%' || $2 || '%'
+        )"""
         args: list[Any] = [team_id, search]
     else:
-        _where = "WHERE owner_sid=$1 AND team_id IS NULL AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')"
+        _where = """WHERE owner_sid=$1 AND team_id IS NULL AND (
+            $2::text IS NULL OR
+            label ILIKE '%' || $2 || '%' OR
+            COALESCE(gwm_id, '') ILIKE '%' || $2 || '%' OR
+            COALESCE(description, '') ILIKE '%' || $2 || '%'
+        )"""
         args = [owner_sid, search]
 
     async with _acquire() as conn:
         if limit == 0:
             rows = await conn.fetch(
-                f"SELECT * FROM playbook.entity_library {_where} ORDER BY created_at ASC",
+                f"SELECT * FROM playbook.entity_library {_where} ORDER BY {sort_col} {sort_direction}",
                 *args,
             )
             total = len(rows)
@@ -70,7 +88,7 @@ async def db_list_entity_library(
                 *args,
             )
             rows = await conn.fetch(
-                f"SELECT * FROM playbook.entity_library {_where} ORDER BY created_at ASC LIMIT $3 OFFSET $4",
+                f"SELECT * FROM playbook.entity_library {_where} ORDER BY {sort_col} {sort_direction} LIMIT $3 OFFSET $4",
                 *args, limit, offset,
             )
     items = [_lib_row_to_dict(r) for r in rows]
@@ -158,18 +176,34 @@ async def db_list_attribute_library(
     limit: int = 50,
     offset: int = 0,
     search: str | None = None,
+    sort_by: str = "created_at",
+    sort_dir: str = "asc",
 ) -> dict[str, Any]:
+    # Whitelist sort columns
+    allowed_sort = {"label", "weight", "created_at"}
+    sort_col = sort_by if sort_by in allowed_sort else "created_at"
+    sort_direction = "DESC" if sort_dir.upper() == "DESC" else "ASC"
+
+    # Search covers label and description
     if team_id:
-        _where = "WHERE team_id=$1::uuid AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')"
+        _where = """WHERE team_id=$1::uuid AND (
+            $2::text IS NULL OR
+            label ILIKE '%' || $2 || '%' OR
+            COALESCE(description, '') ILIKE '%' || $2 || '%'
+        )"""
         args: list[Any] = [team_id, search]
     else:
-        _where = "WHERE owner_sid=$1 AND team_id IS NULL AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')"
+        _where = """WHERE owner_sid=$1 AND team_id IS NULL AND (
+            $2::text IS NULL OR
+            label ILIKE '%' || $2 || '%' OR
+            COALESCE(description, '') ILIKE '%' || $2 || '%'
+        )"""
         args = [owner_sid, search]
 
     async with _acquire() as conn:
         if limit == 0:
             rows = await conn.fetch(
-                f"SELECT * FROM playbook.attribute_library {_where} ORDER BY created_at ASC",
+                f"SELECT * FROM playbook.attribute_library {_where} ORDER BY {sort_col} {sort_direction}",
                 *args,
             )
             total = len(rows)
@@ -179,7 +213,7 @@ async def db_list_attribute_library(
                 *args,
             )
             rows = await conn.fetch(
-                f"SELECT * FROM playbook.attribute_library {_where} ORDER BY created_at ASC LIMIT $3 OFFSET $4",
+                f"SELECT * FROM playbook.attribute_library {_where} ORDER BY {sort_col} {sort_direction} LIMIT $3 OFFSET $4",
                 *args, limit, offset,
             )
     items = [_lib_row_to_dict(r) for r in rows]

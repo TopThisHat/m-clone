@@ -76,10 +76,14 @@ async def list_library_entities(
     limit: int = Query(default=50, ge=0, le=10000),
     offset: int = Query(default=0, ge=0),
     search: str | None = Query(default=None),
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="asc"),
     user=Depends(get_current_user),
 ):
     try:
-        return await db_list_entity_library(user["sub"], team_id, limit=limit, offset=offset, search=search)
+        return await db_list_entity_library(
+            user["sub"], team_id, limit=limit, offset=offset, search=search, sort_by=sort_by, sort_dir=sort_dir
+        )
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -136,10 +140,14 @@ async def list_library_attributes(
     limit: int = Query(default=50, ge=0, le=10000),
     offset: int = Query(default=0, ge=0),
     search: str | None = Query(default=None),
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="asc"),
     user=Depends(get_current_user),
 ):
     try:
-        return await db_list_attribute_library(user["sub"], team_id, limit=limit, offset=offset, search=search)
+        return await db_list_attribute_library(
+            user["sub"], team_id, limit=limit, offset=offset, search=search, sort_by=sort_by, sort_dir=sort_dir
+        )
     except DatabaseNotConfigured:
         raise _no_db()
 

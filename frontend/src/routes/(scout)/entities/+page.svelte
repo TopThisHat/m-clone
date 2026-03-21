@@ -10,11 +10,18 @@
 	let totalCount = $state(0);
 
 	// Pagination & search
-	const pageSize = 50;
+	let pageSize = $state(50);
 	let currentPage = $state(0);
 	let searchQuery = $state('');
 	let debouncedSearch = $state('');
 	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+	// Sorting
+	let sortBy = $state<'label' | 'gwm_id' | 'created_at'>('created_at');
+	let sortDir = $state<'asc' | 'desc'>('asc');
+
+	// Filtering
+	let gwmIdFilter = $state<'all' | 'has' | 'missing'>('all');
 
 	$effect(() => {
 		const q = searchQuery;
@@ -42,14 +49,19 @@
 	let selectedIds = $state<Set<string>>(new Set());
 	let bulkDeleting = $state(false);
 
-	async function loadEntities(teamId: string | null, search: string, page: number) {
+	// Export
+	let exporting = $state(false);
+
+	async function loadEntities(teamId: string | null, search: string, page: number, size: number) {
 		loading = true;
 		error = '';
 		try {
 			const resp = await libraryEntitiesApi.list(teamId, {
-				limit: pageSize,
-				offset: page * pageSize,
+				limit: size,
+				offset: page * size,
 				search: search || undefined,
+				sort_by: sortBy,
+				sort_dir: sortDir,
 			});
 			entities = resp.items;
 			totalCount = resp.total;
@@ -62,7 +74,33 @@
 		}
 	}
 
-	$effect(() => { loadEntities($scoutTeam, debouncedSearch, currentPage); });
+	$effect(() => {
+		loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize);
+	});
+
+	function displayedEntities() {
+		if (gwmIdFilter === 'has') return entities.filter(e => !!e.gwm_id);
+		if (gwmIdFilter === 'missing') return entities.filter(e => !e.gwm_id);
+		return entities;
+	}
+
+	function displayedCount() {
+		if (gwmIdFilter === 'all') return totalCount;
+		const displayed = displayedEntities();
+		return displayed.length;
+	}
+
+	function formatDate(isoString: string) {
+		const date = new Date(isoString);
+		const now = new Date();
+		const days = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+		if (days === 0) return 'today';
+		if (days === 1) return 'yesterday';
+		if (days < 7) return `${days}d ago`;
+		if (days < 30) return `${Math.floor(days / 7)}w ago`;
+		if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+		return `${Math.floor(days / 365)}y ago`;
+	}
 
 	async function addEntity(e: Event) {
 		e.preventDefault();
@@ -79,7 +117,7 @@
 			newGwmId = '';
 			newDesc = '';
 			showAddForm = false;
-			loadEntities($scoutTeam, debouncedSearch, currentPage);
+			loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize);
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to add entity';
 		} finally {
@@ -92,7 +130,9 @@
 		editForm = { label: entity.label, gwm_id: entity.gwm_id ?? '', description: entity.description ?? '' };
 	}
 
-	function cancelEdit() { editingId = null; }
+	function cancelEdit() {
+		editingId = null;
+	}
 
 	async function saveEdit(entity: LibraryEntity) {
 		editSaving = true;
@@ -118,7 +158,7 @@
 			const next = new Set(selectedIds);
 			next.delete(id);
 			selectedIds = next;
-			loadEntities($scoutTeam, debouncedSearch, currentPage);
+			loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize);
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to delete');
 		}
@@ -126,14 +166,15 @@
 
 	function toggleSelect(id: string) {
 		const next = new Set(selectedIds);
-		if (next.has(id)) next.delete(id); else next.add(id);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
 		selectedIds = next;
 	}
 
 	function toggleSelectAll() {
-		selectedIds = selectedIds.size === entities.length
+		selectedIds = selectedIds.size === displayedEntities().length
 			? new Set()
-			: new Set(entities.map((e) => e.id));
+			: new Set(displayedEntities().map((e) => e.id));
 	}
 
 	async function bulkDelete() {
@@ -142,11 +183,51 @@
 		try {
 			await Promise.all([...selectedIds].map((id) => libraryEntitiesApi.delete(id)));
 			selectedIds = new Set();
-			loadEntities($scoutTeam, debouncedSearch, currentPage);
+			loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize);
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to delete');
 		} finally {
 			bulkDeleting = false;
+		}
+	}
+
+	async function exportCsv() {
+		exporting = true;
+		try {
+			const resp = await libraryEntitiesApi.list($scoutTeam, {
+				limit: 0,
+				search: debouncedSearch || undefined,
+				sort_by: sortBy,
+				sort_dir: sortDir,
+			});
+			const rows = resp.items;
+
+			// Build CSV
+			const headers = ['Label', 'GWM ID', 'Description', 'Metadata Keys', 'Created'];
+			const csvLines = [
+				headers.map(h => `"${h}"`).join(','),
+				...rows.map(r => [
+					`"${r.label.replace(/"/g, '""')}"`,
+					`"${(r.gwm_id ?? '').replace(/"/g, '""')}"`,
+					`"${(r.description ?? '').replace(/"/g, '""')}"`,
+					`"${Object.keys(r.metadata || {}).join(', ')}"`,
+					`"${r.created_at}"`,
+				].join(','))
+			];
+
+			const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `entities-${new Date().toISOString().split('T')[0]}.csv`;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			URL.revokeObjectURL(url);
+		} catch (err: unknown) {
+			alert(err instanceof Error ? err.message : 'Failed to export');
+		} finally {
+			exporting = false;
 		}
 	}
 
@@ -155,34 +236,134 @@
 	}
 </script>
 
-<div class="max-w-5xl mx-auto">
+<div class="max-w-7xl mx-auto">
+	<!-- Header -->
 	<div class="flex items-center justify-between mb-6">
 		<div>
-			<h1 class="font-serif text-gold text-2xl font-bold">Entity Library</h1>
-			<p class="text-slate-500 text-sm mt-1">Add entities here to reuse them across campaigns.</p>
+			<h1 class="font-serif text-gold text-3xl font-bold">Entity Library</h1>
+			<p class="text-slate-500 text-sm mt-2">Reusable entities across your campaigns</p>
 		</div>
 	</div>
 
-	<!-- Action bar -->
+	<!-- Filter & Sort Bar -->
+	<div class="bg-navy-800 border border-navy-700 rounded-xl p-4 mb-6 space-y-3">
+		<!-- Search input -->
+		<div>
+			<input
+				bind:value={searchQuery}
+				placeholder="Search label, GWM ID, description…"
+				aria-label="Search entities"
+				class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
+			/>
+		</div>
+
+		<!-- Sort & filter buttons -->
+		<div class="flex items-center gap-2 flex-wrap">
+			<div class="flex items-center gap-2">
+				<span class="text-xs text-slate-400">Sort:</span>
+				<button
+					onclick={() => { sortBy = 'label'; sortDir = sortDir === 'asc' && sortBy === 'label' ? 'desc' : 'asc'; }}
+					class={`text-xs px-2 py-1 rounded border transition-colors ${
+						sortBy === 'label'
+							? 'bg-gold/10 border-gold/40 text-gold'
+							: 'border-navy-600 text-slate-400 hover:text-slate-300'
+					}`}
+				>
+					Label {sortBy === 'label' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+				</button>
+				<button
+					onclick={() => { sortBy = 'gwm_id'; sortDir = sortDir === 'asc' && sortBy === 'gwm_id' ? 'desc' : 'asc'; }}
+					class={`text-xs px-2 py-1 rounded border transition-colors ${
+						sortBy === 'gwm_id'
+							? 'bg-gold/10 border-gold/40 text-gold'
+							: 'border-navy-600 text-slate-400 hover:text-slate-300'
+					}`}
+				>
+					GWM ID {sortBy === 'gwm_id' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+				</button>
+				<button
+					onclick={() => { sortBy = 'created_at'; sortDir = sortDir === 'asc' && sortBy === 'created_at' ? 'desc' : 'asc'; }}
+					class={`text-xs px-2 py-1 rounded border transition-colors ${
+						sortBy === 'created_at'
+							? 'bg-gold/10 border-gold/40 text-gold'
+							: 'border-navy-600 text-slate-400 hover:text-slate-300'
+					}`}
+				>
+					Date {sortBy === 'created_at' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+				</button>
+			</div>
+
+			<div class="flex-1"></div>
+
+			<div class="flex items-center gap-2">
+				<span class="text-xs text-slate-400">Filter:</span>
+				<button
+					onclick={() => (gwmIdFilter = 'all')}
+					class={`text-xs px-2.5 py-0.5 rounded-full border transition-colors ${
+						gwmIdFilter === 'all'
+							? 'bg-gold/10 border-gold/40 text-gold'
+							: 'border-navy-600 text-slate-400 hover:text-slate-300'
+					}`}
+				>
+					All
+				</button>
+				<button
+					onclick={() => (gwmIdFilter = 'has')}
+					class={`text-xs px-2.5 py-0.5 rounded-full border transition-colors ${
+						gwmIdFilter === 'has'
+							? 'bg-gold/10 border-gold/40 text-gold'
+							: 'border-navy-600 text-slate-400 hover:text-slate-300'
+					}`}
+				>
+					Has GWM ID
+				</button>
+				<button
+					onclick={() => (gwmIdFilter = 'missing')}
+					class={`text-xs px-2.5 py-0.5 rounded-full border transition-colors ${
+						gwmIdFilter === 'missing'
+							? 'bg-gold/10 border-gold/40 text-gold'
+							: 'border-navy-600 text-slate-400 hover:text-slate-300'
+					}`}
+				>
+					Missing GWM ID
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Stats & Actions -->
 	<div class="flex items-center justify-between mb-4">
-		<div class="flex items-center gap-3">
+		<div class="flex items-center gap-4 text-sm">
 			{#if !loading}
-				<p class="text-sm text-slate-400">
-					<span class="text-slate-200 font-medium">{totalCount}</span>
-					{totalCount === 1 ? 'entity' : 'entities'} in library
+				<p class="text-slate-400">
+					<span class="text-slate-200 font-semibold">{totalCount}</span> total
+					{#if gwmIdFilter !== 'all' || debouncedSearch}
+						• <span class="text-slate-200 font-semibold">{displayedCount()}</span> shown
+					{/if}
+					{#if selectedIds.size > 0}
+						• <span class="text-gold font-semibold">{selectedIds.size}</span> selected
+					{/if}
 				</p>
 			{/if}
+		</div>
+
+		<div class="flex items-center gap-2">
 			{#if selectedIds.size > 0}
 				<button
 					onclick={bulkDelete}
 					disabled={bulkDeleting}
-					class="text-xs bg-red-950 border border-red-800 text-red-400 px-3 py-1 rounded-lg hover:bg-red-900 disabled:opacity-50"
+					class="text-xs bg-red-950 border border-red-800 text-red-400 px-3 py-1.5 rounded-lg hover:bg-red-900 disabled:opacity-50 transition-colors"
 				>
-					{bulkDeleting ? 'Deleting…' : `Delete selected (${selectedIds.size})`}
+					{bulkDeleting ? 'Deleting…' : `Delete selected`}
 				</button>
 			{/if}
-		</div>
-		<div class="flex gap-2">
+			<button
+				onclick={exportCsv}
+				disabled={exporting}
+				class="text-xs bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg hover:bg-navy-600 disabled:opacity-50 transition-colors"
+			>
+				{exporting ? 'Exporting…' : '⬇ Export CSV'}
+			</button>
 			<button
 				onclick={() => { showCSV = !showCSV; showAddForm = false; }}
 				class="text-sm bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg hover:bg-navy-600 transition-colors"
@@ -198,16 +379,7 @@
 		</div>
 	</div>
 
-	<!-- Search -->
-	<div class="mb-4">
-		<input
-			bind:value={searchQuery}
-			placeholder="Search entities…"
-			aria-label="Search entities"
-			class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
-		/>
-	</div>
-
+	<!-- CSV Upload Section -->
 	{#if showCSV}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
 			<div class="flex items-center justify-between mb-4">
@@ -218,12 +390,13 @@
 				onBulkCreate={libraryBulkCreate}
 				onUploaded={async () => {
 					showCSV = false;
-					loadEntities($scoutTeam, debouncedSearch, currentPage);
+					loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize);
 				}}
 			/>
 		</div>
 	{/if}
 
+	<!-- Add Form Section -->
 	{#if showAddForm}
 		<form onsubmit={addEntity} class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
 			<h3 class="font-medium text-slate-200 mb-4">Add Entity to Library</h3>
@@ -254,89 +427,113 @@
 		</form>
 	{/if}
 
+	<!-- Error -->
 	{#if error}
 		<p class="text-red-400 mb-4 text-sm">{error}</p>
 	{/if}
 
+	<!-- Loading / Empty State -->
 	{#if loading}
 		<p class="text-slate-500">Loading…</p>
-	{:else if entities.length === 0}
+	{:else if displayedEntities().length === 0}
 		<div class="text-center py-12 text-slate-500">
 			{#if debouncedSearch}
 				<p>No entities match "{debouncedSearch}".</p>
+			{:else if gwmIdFilter !== 'all'}
+				<p>No entities {gwmIdFilter === 'has' ? 'with GWM ID' : 'without GWM ID'}.</p>
 			{:else}
 				<p>No entities in the library yet. Add them manually or upload a CSV.</p>
 				<p class="text-sm mt-2">Entities added here can be imported into any campaign.</p>
 			{/if}
 		</div>
 	{:else}
+		<!-- Table -->
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
-			<table class="w-full text-sm" aria-label="Entity library">
-				<thead>
-					<tr class="border-b border-navy-700 text-slate-400">
-						<th scope="col" class="px-4 py-3 w-8">
-							<input type="checkbox"
-								checked={selectedIds.size === entities.length && entities.length > 0}
-								onchange={toggleSelectAll}
-								class="accent-gold"
-								aria-label="Select all entities on this page" />
-						</th>
-						<th scope="col" class="text-left px-4 py-3">Label</th>
-						<th scope="col" class="text-left px-4 py-3">GWM ID</th>
-						<th scope="col" class="text-left px-4 py-3">Description</th>
-						<th scope="col" class="px-4 py-3 w-24"><span class="sr-only">Actions</span></th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each entities as entity (entity.id)}
-						<tr class="border-t border-navy-700 hover:bg-navy-700/50">
-							<td class="px-4 py-3">
-								<input type="checkbox" checked={selectedIds.has(entity.id)}
-									onchange={() => toggleSelect(entity.id)} class="accent-gold"
-									aria-label="Select {entity.label}" />
-							</td>
-							{#if editingId === entity.id}
-								<td class="px-4 py-2">
-									<label class="sr-only" for="lib-edit-label-{entity.id}">Label</label>
-									<input id="lib-edit-label-{entity.id}" bind:value={editForm.label} class="input-field w-full" />
-								</td>
-								<td class="px-4 py-2">
-									<label class="sr-only" for="lib-edit-gwm-{entity.id}">GWM ID</label>
-									<input id="lib-edit-gwm-{entity.id}" bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs" />
-								</td>
-								<td class="px-4 py-2">
-									<label class="sr-only" for="lib-edit-desc-{entity.id}">Description</label>
-									<input id="lib-edit-desc-{entity.id}" bind:value={editForm.description} class="input-field w-full" />
-								</td>
-								<td class="px-4 py-2 text-right whitespace-nowrap">
-									<button onclick={() => saveEdit(entity)} disabled={editSaving}
-										aria-label="Save changes to {entity.label}"
-										class="text-gold hover:text-gold-light text-xs mr-2 disabled:opacity-50">
-										{editSaving ? '…' : 'Save'}
-									</button>
-									<button onclick={cancelEdit} aria-label="Cancel editing {entity.label}"
-										class="text-slate-500 hover:text-slate-300 text-xs">Cancel</button>
-								</td>
-							{:else}
-								<td class="px-4 py-3 text-slate-200 font-medium">{entity.label}</td>
-								<td class="px-4 py-3 text-slate-400 font-mono text-xs">{entity.gwm_id ?? '—'}</td>
-								<td class="px-4 py-3 text-slate-500 max-w-sm" title={entity.description ?? ''}><span class="line-clamp-2">{entity.description ?? '—'}</span></td>
-								<td class="px-4 py-3 text-right whitespace-nowrap">
-									<button onclick={() => startEdit(entity)} aria-label="Edit {entity.label}"
-										class="text-slate-500 hover:text-slate-300 text-xs mr-2">Edit</button>
-									<button onclick={() => deleteEntity(entity.id)} aria-label="Delete {entity.label}"
-										class="text-red-400/60 hover:text-red-400 text-xs">Delete</button>
-								</td>
-							{/if}
+			<div class="overflow-x-auto">
+				<table class="w-full text-sm" aria-label="Entity library">
+					<thead class="sticky top-0 bg-navy-800 border-b border-navy-700">
+						<tr class="text-slate-400">
+							<th scope="col" class="px-4 py-3 w-8">
+								<input type="checkbox"
+									checked={selectedIds.size === displayedEntities().length && displayedEntities().length > 0}
+									onchange={toggleSelectAll}
+									class="accent-gold"
+									aria-label="Select all entities on this page" />
+							</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium">Label</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium">GWM ID</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium">Description</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium">Metadata</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium w-20">Created</th>
+							<th scope="col" class="px-4 py-3 w-24"><span class="sr-only">Actions</span></th>
 						</tr>
-					{/each}
-				</tbody>
-			</table>
+					</thead>
+					<tbody>
+						{#each displayedEntities() as entity (entity.id)}
+							<tr class="border-t border-navy-700 hover:bg-navy-700/50 transition-colors">
+								<td class="px-4 py-3">
+									<input type="checkbox" checked={selectedIds.has(entity.id)}
+										onchange={() => toggleSelect(entity.id)} class="accent-gold"
+										aria-label="Select {entity.label}" />
+								</td>
+								{#if editingId === entity.id}
+									<td class="px-4 py-2">
+										<label class="sr-only" for="lib-edit-label-{entity.id}">Label</label>
+										<input id="lib-edit-label-{entity.id}" bind:value={editForm.label} class="input-field w-full" />
+									</td>
+									<td class="px-4 py-2">
+										<label class="sr-only" for="lib-edit-gwm-{entity.id}">GWM ID</label>
+										<input id="lib-edit-gwm-{entity.id}" bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs" />
+									</td>
+									<td class="px-4 py-2">
+										<label class="sr-only" for="lib-edit-desc-{entity.id}">Description</label>
+										<input id="lib-edit-desc-{entity.id}" bind:value={editForm.description} class="input-field w-full" />
+									</td>
+									<td colspan="3" class="px-4 py-2 text-right whitespace-nowrap space-x-2">
+										<button onclick={() => saveEdit(entity)} disabled={editSaving}
+											aria-label="Save changes to {entity.label}"
+											class="text-gold hover:text-gold-light text-xs disabled:opacity-50">
+											{editSaving ? '…' : 'Save'}
+										</button>
+										<button onclick={cancelEdit} aria-label="Cancel editing {entity.label}"
+											class="text-slate-500 hover:text-slate-300 text-xs">Cancel</button>
+									</td>
+								{:else}
+									<td class="px-4 py-3 text-slate-200 font-medium">{entity.label}</td>
+									<td class="px-4 py-3 text-slate-400 font-mono text-xs">{entity.gwm_id ?? '—'}</td>
+									<td class="px-4 py-3 text-slate-500 max-w-xs" title={entity.description ?? ''}>
+										<span class="line-clamp-2">{entity.description ?? '—'}</span>
+									</td>
+									<td class="px-4 py-3">
+										{#if Object.keys(entity.metadata || {}).length > 0}
+											<span class="inline-block text-xs bg-gold/10 border border-gold/30 text-gold px-2 py-0.5 rounded-full">
+												{Object.keys(entity.metadata).length} keys
+											</span>
+										{:else}
+											<span class="text-slate-600 text-xs">—</span>
+										{/if}
+									</td>
+									<td class="px-4 py-3 text-slate-500 text-xs">{formatDate(entity.created_at)}</td>
+									<td class="px-4 py-3 text-right whitespace-nowrap space-x-2">
+										<button onclick={() => startEdit(entity)} aria-label="Edit {entity.label}"
+											class="text-slate-500 hover:text-slate-300 text-xs">Edit</button>
+										<button onclick={() => deleteEntity(entity.id)} aria-label="Delete {entity.label}"
+											class="text-red-400/60 hover:text-red-400 text-xs">Delete</button>
+									</td>
+								{/if}
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+
+			<!-- Pagination -->
 			<Pagination
-				total={totalCount}
+				total={displayedCount()}
 				{pageSize}
 				{currentPage}
 				onPageChange={(p) => { currentPage = p; selectedIds = new Set(); }}
+				onPageSizeChange={(size) => { pageSize = size; currentPage = 0; selectedIds = new Set(); }}
 			/>
 		</div>
 	{/if}
