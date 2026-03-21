@@ -2,6 +2,7 @@ export interface User {
 	sid: string;
 	display_name: string;
 	email: string;
+	is_super_admin?: boolean;
 }
 
 export async function me(): Promise<User | null> {

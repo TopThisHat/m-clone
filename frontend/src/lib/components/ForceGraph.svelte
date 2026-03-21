@@ -35,25 +35,25 @@
 
 	// Theme-dependent colors
 	const themeColors = $derived(theme === 'light' ? {
-		bg: '#f8fafc',
-		edgeStroke: '#94a3b8',
-		edgeDim: '#e2e8f0',
-		arrowFill: '#94a3b8',
-		pillFill: '#ffffff',
-		pillStroke: '#e2e8f0',
-		edgeText: '#64748b',
-		nodeText: '#1e293b',
+		bg: '#F5F6F8',
+		edgeStroke: '#8E99A4',
+		edgeDim: '#D6DAE0',
+		arrowFill: '#8E99A4',
+		pillFill: '#FFFFFF',
+		pillStroke: '#D6DAE0',
+		edgeText: '#5D6D7E',
+		nodeText: '#1B2838',
 		typeBadgeOpacity: 0.85,
 	} : {
-		bg: '#0d1117',
-		edgeStroke: '#334155',
-		edgeDim: '#1c2128',
-		arrowFill: '#475569',
-		pillFill: '#161b22',
-		pillStroke: '#30363d',
-		edgeText: '#8b949e',
-		nodeText: '#fff',
-		typeBadgeOpacity: 0.7,
+		bg: '#0B1426',
+		edgeStroke: '#2C3E50',
+		edgeDim: '#1A2332',
+		arrowFill: '#34495E',
+		pillFill: '#0F1D2F',
+		pillStroke: '#243447',
+		edgeText: '#7F8C9B',
+		nodeText: '#E8ECF0',
+		typeBadgeOpacity: 0.75,
 	});
 
 	let containerEl: HTMLDivElement;
@@ -61,12 +61,12 @@
 
 	// Neo4j-style: all circles, distinguished by color only
 	const TYPE_COLORS: Record<string, { fill: string; stroke: string }> = {
-		person:      { fill: '#4C8BF5', stroke: '#3A6FCC' },
-		company:     { fill: '#9B59B6', stroke: '#7D3C98' },
-		sports_team: { fill: '#E67E22', stroke: '#CA6F1E' },
-		location:    { fill: '#2ECC71', stroke: '#27AE60' },
-		product:     { fill: '#F1C40F', stroke: '#D4AC0D' },
-		other:       { fill: '#7F8C8D', stroke: '#616A6B' },
+		person:      { fill: '#1B365D', stroke: '#142847' },
+		company:     { fill: '#1A5276', stroke: '#154360' },
+		sports_team: { fill: '#8B6914', stroke: '#6E5310' },
+		location:    { fill: '#1E6E3E', stroke: '#175A32' },
+		product:     { fill: '#5D6D7E', stroke: '#4A5768' },
+		other:       { fill: '#7B8794', stroke: '#626E7A' },
 	};
 
 	function getColors(type: string) {
@@ -187,11 +187,11 @@
 			.attr('orient', 'auto')
 			.append('path')
 			.attr('d', 'M2,2 L10,6 L2,10 Z')
-			.attr('fill', '#f97316');
+			.attr('fill', '#C0922B');
 
 		// Glow filter for hover/selected
 		const glow = defs.append('filter').attr('id', 'node-glow');
-		glow.append('feGaussianBlur').attr('stdDeviation', '4').attr('result', 'blur');
+		glow.append('feGaussianBlur').attr('stdDeviation', '2.5').attr('result', 'blur');
 		glow.append('feMerge').selectAll('feMergeNode')
 			.data(['blur', 'SourceGraphic'])
 			.join('feMergeNode')
@@ -318,7 +318,7 @@
 					const s = typeof e.source === 'object' ? (e.source as SimNode).id : e.source;
 					const t = typeof e.target === 'object' ? (e.target as SimNode).id : e.target;
 					return s === d.id || t === d.id;
-				}).attr('stroke', '#58a6ff').attr('stroke-width', 3);
+				}).attr('stroke', '#2980B9').attr('stroke-width', 3);
 				edgeTexts.filter((e) => {
 					const s = typeof e.source === 'object' ? (e.source as SimNode).id : e.source;
 					const t = typeof e.target === 'object' ? (e.target as SimNode).id : e.target;
@@ -423,7 +423,7 @@
 
 		linkPaths
 			.attr('stroke', (d: SimEdge) => {
-				if (highlightedEdgeIds?.has(d.id)) return '#f97316';
+				if (highlightedEdgeIds?.has(d.id)) return '#C0922B';
 				if (hasHighlight) return themeColors.edgeDim;
 				return themeColors.edgeStroke;
 			})
@@ -454,7 +454,7 @@
 		const { nodeGs } = refs;
 
 		nodeGs.select('.hover-ring')
-			.attr('stroke', (d: SimNode) => d.id === selectedNodeId ? '#58a6ff' : 'transparent')
+			.attr('stroke', (d: SimNode) => d.id === selectedNodeId ? '#2980B9' : 'transparent')
 			.attr('stroke-opacity', (d: SimNode) => d.id === selectedNodeId ? 0.8 : 0);
 		nodeGs.select('.node-circle')
 			.attr('stroke-width', (d: SimNode) => d.id === selectedNodeId ? 4 : 2.5);

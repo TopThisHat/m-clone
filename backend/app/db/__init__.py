@@ -24,6 +24,7 @@ from .users import (
     db_upsert_user,
     db_get_user,
     db_update_user_theme,
+    db_is_super_admin,
 )
 
 # ── Teams ─────────────────────────────────────────────────────────────────────
@@ -165,6 +166,11 @@ from .knowledge_graph import (
     db_list_kg_conflicts,
     db_get_kg_graph,
     db_get_deal_partners,
+    db_update_kg_entity,
+    db_delete_kg_entity,
+    db_update_kg_relationship,
+    db_delete_kg_relationship,
+    db_query_kg,
 )
 
 # ── Templates ─────────────────────────────────────────────────────────────────

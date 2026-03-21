@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app.auth import create_jwt, get_current_user
 from app.config import settings
-from app.db import DatabaseNotConfigured, db_upsert_user, db_get_user, db_update_user_theme
+from app.db import DatabaseNotConfigured, db_upsert_user, db_get_user, db_update_user_theme, db_is_super_admin
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -40,12 +40,14 @@ async def me(request: Request):
     payload = decode_jwt(jwt_cookie)
     sid = payload["sub"]
 
-    # Try to fetch theme from DB; fall back to JWT data if DB unavailable
+    # Try to fetch theme + super admin from DB; fall back to JWT data if DB unavailable
     theme = "dark"
+    is_sa = False
     try:
         user_row = await db_get_user(sid)
         if user_row:
             theme = user_row.get("theme") or "dark"
+        is_sa = await db_is_super_admin(sid)
     except DatabaseNotConfigured:
         pass
 
@@ -54,6 +56,7 @@ async def me(request: Request):
         "display_name": payload.get("display_name", ""),
         "email": payload.get("email", ""),
         "theme": theme,
+        "is_super_admin": is_sa,
     }
 
 

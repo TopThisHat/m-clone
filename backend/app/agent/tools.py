@@ -587,3 +587,57 @@ async def search_uploaded_documents(deps: AgentDeps, query: str) -> str:
     result = "\n\n---\n\n".join(relevant)
     filenames = ", ".join(deps.uploaded_filenames) if deps.uploaded_filenames else "uploaded document"
     return f"**From {filenames}:**\n\n{result}"
+
+
+@_register(
+    "query_knowledge_graph",
+    "Search the internal knowledge graph for entities and relationships. "
+    "Use this to answer questions about known people, companies, deals, and relationships. "
+    "Searches both the master graph and the user's team graph, and reports which source "
+    "provided each result.",
+    {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The entity name, keyword, or question to search the knowledge graph for.",
+            },
+        },
+        "required": ["query"],
+    },
+)
+async def query_knowledge_graph(deps: AgentDeps, query: str) -> str:
+    """Search the knowledge graph for entities and their relationships."""
+    try:
+        from app.db import db_query_kg
+
+        team_id = getattr(deps, "team_id", None)
+        results = await db_query_kg(query, team_id=team_id)
+
+        if not results["entities"] and not results["relationships"]:
+            return f"No knowledge graph results found for: '{query}'"
+
+        sources = ", ".join(results["sources_used"]) if results["sources_used"] else "none"
+        parts = [f"**Knowledge Graph Results** (sources: {sources})\n"]
+
+        if results["entities"]:
+            parts.append("### Entities Found")
+            for e in results["entities"][:10]:
+                aliases = f" (aka: {', '.join(e.get('aliases', [])[:3])})" if e.get("aliases") else ""
+                desc = f" — {e['description']}" if e.get("description") else ""
+                source_tag = f" [{e.get('graph_source', 'unknown')}]"
+                parts.append(f"- **{e['name']}** ({e.get('entity_type', 'unknown')}){aliases}{desc}{source_tag}")
+
+        if results["relationships"]:
+            parts.append("\n### Relationships")
+            for r in results["relationships"][:15]:
+                source_tag = f" [{r.get('graph_source', 'unknown')}]"
+                conf = f" ({int(r.get('confidence', 1) * 100)}%)" if r.get("confidence", 1) < 1 else ""
+                parts.append(
+                    f"- {r.get('subject_name', '?')} **{r.get('predicate', '?')}** "
+                    f"{r.get('object_name', '?')}{conf}{source_tag}"
+                )
+
+        return "\n".join(parts)
+    except Exception as exc:
+        return f"Knowledge graph query failed: {exc}"

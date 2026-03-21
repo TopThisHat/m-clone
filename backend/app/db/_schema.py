@@ -736,5 +736,39 @@ async def init_schema() -> None:
                     ON kg_promotions(entity_id)
             """)
 
+            # ── Super admin flag on users ─────────────────────────────────
+            await conn.execute("""
+                ALTER TABLE playbook.users
+                    ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE
+            """)
+
+            # ── Disambiguation context for entity deduplication ───────────
+            await conn.execute("""
+                ALTER TABLE playbook.kg_entities
+                    ADD COLUMN IF NOT EXISTS disambiguation_context TEXT DEFAULT ''
+            """)
+            await conn.execute("""
+                ALTER TABLE playbook.kg_entities
+                    ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''
+            """)
+
+            # ── Unique constraint scoped by team_id for kg_entities ───────
+            await conn.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_indexes
+                        WHERE indexname = 'kg_entities_name_team_unique'
+                    ) THEN
+                        DROP INDEX IF EXISTS playbook.kg_entities_name_idx;
+                        CREATE UNIQUE INDEX kg_entities_name_team_unique
+                            ON playbook.kg_entities (
+                                LOWER(name),
+                                COALESCE(team_id, '00000000-0000-0000-0000-000000000000'::uuid)
+                            );
+                    END IF;
+                END $$
+            """)
+
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")

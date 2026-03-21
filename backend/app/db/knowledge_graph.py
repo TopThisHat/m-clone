@@ -30,15 +30,22 @@ def _kg_rel_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     return d
 
 
+# ── Entity CRUD ──────────────────────────────────────────────────────────────
+
 async def db_find_or_create_entity(
     name: str,
     entity_type: str,
     aliases: list[str],
     team_id: str | None = None,
+    disambiguation_context: str = "",
 ) -> str:
     """
     Find an existing kg_entity by normalized name or alias, or create a new one.
     Returns the entity UUID as a string.
+
+    When disambiguation_context is provided (e.g. "CEO of Acme Corp"), it is
+    compared against existing entities with the same name to decide whether to
+    create a new record or merge with an existing one.
 
     Searches within the given team scope + master graph (team_id IS NULL).
     Uses INSERT ... ON CONFLICT to avoid race conditions when concurrent
@@ -56,32 +63,60 @@ async def db_find_or_create_entity(
 
         # Check aliases first (can't be handled by ON CONFLICT)
         row = await conn.fetchrow(
-            f"SELECT id FROM playbook.kg_entities WHERE $1 = ANY(aliases) AND {team_cond}",
+            f"SELECT id, disambiguation_context FROM playbook.kg_entities WHERE $1 = ANY(aliases) AND {team_cond}",
             *alias_args,
         )
         if row:
-            entity_id = str(row["id"])
-            if aliases:
+            existing_ctx = row["disambiguation_context"] or ""
+            # If disambiguation context suggests a different person, skip alias match
+            if disambiguation_context and existing_ctx and _contexts_conflict(disambiguation_context, existing_ctx):
+                pass  # Fall through to create new entity
+            else:
+                entity_id = str(row["id"])
+                updates = ["aliases = (SELECT array_agg(DISTINCT a) FROM unnest(aliases || $1::text[]) AS a)", "updated_at = NOW()"]
+                update_args: list[Any] = [aliases or []]
+                if disambiguation_context and not existing_ctx:
+                    updates.append(f"disambiguation_context = ${len(update_args) + 1}")
+                    update_args.append(disambiguation_context)
+                update_args.append(entity_id)
                 await conn.execute(
-                    "UPDATE playbook.kg_entities SET aliases = (SELECT array_agg(DISTINCT a) FROM unnest(aliases || $1::text[]) AS a), updated_at = NOW() WHERE id = $2::uuid",
-                    aliases, entity_id,
+                    f"UPDATE playbook.kg_entities SET {', '.join(updates)} WHERE id = ${len(update_args)}::uuid",
+                    *update_args,
                 )
-            return entity_id
+                return entity_id
 
         # Atomic upsert by name — handles concurrent inserts safely
+        # Use team-scoped unique constraint
         row = await conn.fetchrow(
             """
-            INSERT INTO playbook.kg_entities (name, entity_type, aliases, team_id)
-            VALUES ($1, $2, $3, $4::uuid)
-            ON CONFLICT ((LOWER(name))) DO UPDATE SET
+            INSERT INTO playbook.kg_entities (name, entity_type, aliases, team_id, disambiguation_context)
+            VALUES ($1, $2, $3, $4::uuid, $5)
+            ON CONFLICT (LOWER(name), COALESCE(team_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO UPDATE SET
                 aliases = (SELECT array_agg(DISTINCT a)
                            FROM unnest(playbook.kg_entities.aliases || EXCLUDED.aliases) AS a),
+                disambiguation_context = CASE
+                    WHEN playbook.kg_entities.disambiguation_context = '' AND EXCLUDED.disambiguation_context != ''
+                    THEN EXCLUDED.disambiguation_context
+                    ELSE playbook.kg_entities.disambiguation_context
+                END,
                 updated_at = NOW()
             RETURNING id
             """,
-            name.strip(), entity_type, aliases or [], team_id,
+            name.strip(), entity_type, aliases or [], team_id, disambiguation_context or "",
         )
         return str(row["id"])
+
+
+def _contexts_conflict(ctx_a: str, ctx_b: str) -> bool:
+    """Heuristic check if two disambiguation contexts refer to different entities."""
+    a_lower = ctx_a.lower()
+    b_lower = ctx_b.lower()
+    # If both have company/org context and they differ, likely different people
+    a_orgs = {w for w in a_lower.split() if len(w) > 3}
+    b_orgs = {w for w in b_lower.split() if len(w) > 3}
+    if a_orgs and b_orgs and not a_orgs & b_orgs:
+        return True
+    return False
 
 
 async def db_find_similar_entities(
@@ -100,7 +135,7 @@ async def db_find_similar_entities(
         await conn.execute(f"SET pg_trgm.similarity_threshold = {threshold}")
         rows = await conn.fetch(
             """
-            SELECT id, name, entity_type, aliases, metadata,
+            SELECT id, name, entity_type, aliases, metadata, disambiguation_context, description,
                    similarity(LOWER(name), LOWER($1)) AS similarity
             FROM playbook.kg_entities
             WHERE LOWER(name) % LOWER($1)
@@ -122,7 +157,6 @@ async def db_merge_kg_entities(keep_id: str, merge_id: str) -> None:
     """
     async with _acquire() as conn:
         async with conn.transaction():
-            # Get the entity being merged so we can keep its name as an alias
             merge_row = await conn.fetchrow(
                 "SELECT name, aliases FROM playbook.kg_entities WHERE id = $1::uuid",
                 merge_id,
@@ -130,47 +164,96 @@ async def db_merge_kg_entities(keep_id: str, merge_id: str) -> None:
             if merge_row is None:
                 return
 
-            # Move relationships: update subject_id references
             await conn.execute(
-                """
-                UPDATE playbook.kg_relationships
-                SET subject_id = $1::uuid
-                WHERE subject_id = $2::uuid
-                """,
+                "UPDATE playbook.kg_relationships SET subject_id = $1::uuid WHERE subject_id = $2::uuid",
                 keep_id, merge_id,
             )
-            # Move relationships: update object_id references
             await conn.execute(
-                """
-                UPDATE playbook.kg_relationships
-                SET object_id = $1::uuid
-                WHERE object_id = $2::uuid
-                """,
+                "UPDATE playbook.kg_relationships SET object_id = $1::uuid WHERE object_id = $2::uuid",
                 keep_id, merge_id,
             )
 
-            # Merge aliases: keep entity gets merge entity's name + aliases
             merge_aliases = list(merge_row["aliases"] or [])
             merge_aliases.append(merge_row["name"])
             await conn.execute(
                 """
                 UPDATE playbook.kg_entities
-                SET aliases = (
-                    SELECT array_agg(DISTINCT a)
-                    FROM unnest(aliases || $1::text[]) AS a
-                ),
-                updated_at = NOW()
+                SET aliases = (SELECT array_agg(DISTINCT a) FROM unnest(aliases || $1::text[]) AS a),
+                    updated_at = NOW()
                 WHERE id = $2::uuid
                 """,
                 merge_aliases, keep_id,
             )
+            await conn.execute("DELETE FROM playbook.kg_entities WHERE id = $1::uuid", merge_id)
 
-            # Delete the merged entity
-            await conn.execute(
-                "DELETE FROM playbook.kg_entities WHERE id = $1::uuid",
-                merge_id,
-            )
 
+async def db_update_kg_entity(
+    entity_id: str,
+    patch: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Update an entity's editable fields. Returns updated entity or None."""
+    allowed = {"name", "entity_type", "aliases", "metadata", "description", "disambiguation_context"}
+    fields = {k: v for k, v in patch.items() if k in allowed}
+    if not fields:
+        return await db_get_kg_entity(entity_id)
+    set_parts = []
+    values: list[Any] = []
+    for i, (k, v) in enumerate(fields.items(), 1):
+        if k == "aliases":
+            set_parts.append(f"aliases = ${i}::text[]")
+        elif k == "metadata":
+            set_parts.append(f"metadata = ${i}::jsonb")
+        else:
+            set_parts.append(f"{k} = ${i}")
+        values.append(v)
+    set_parts.append(f"updated_at = NOW()")
+    values.append(entity_id)
+    sql = f"UPDATE playbook.kg_entities SET {', '.join(set_parts)} WHERE id = ${len(values)}::uuid RETURNING *"
+    async with _acquire() as conn:
+        row = await conn.fetchrow(sql, *values)
+    return _kg_entity_to_dict(row) if row else None
+
+
+async def db_delete_kg_entity(entity_id: str) -> bool:
+    """Delete an entity and cascade-delete its relationships."""
+    async with _acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM playbook.kg_entities WHERE id = $1::uuid", entity_id
+        )
+    return result.endswith("1")
+
+
+async def db_update_kg_relationship(
+    rel_id: str,
+    patch: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Update a relationship's editable fields."""
+    allowed = {"predicate", "predicate_family", "confidence", "evidence"}
+    fields = {k: v for k, v in patch.items() if k in allowed}
+    if not fields:
+        return None
+    set_parts = []
+    values: list[Any] = []
+    for i, (k, v) in enumerate(fields.items(), 1):
+        set_parts.append(f"{k} = ${i}")
+        values.append(v)
+    values.append(rel_id)
+    sql = f"UPDATE playbook.kg_relationships SET {', '.join(set_parts)} WHERE id = ${len(values)}::uuid RETURNING *"
+    async with _acquire() as conn:
+        row = await conn.fetchrow(sql, *values)
+    return _kg_rel_to_dict(row) if row else None
+
+
+async def db_delete_kg_relationship(rel_id: str) -> bool:
+    """Delete a relationship."""
+    async with _acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM playbook.kg_relationships WHERE id = $1::uuid", rel_id
+        )
+    return result.endswith("1")
+
+
+# ── Relationship upsert ──────────────────────────────────────────────────────
 
 async def db_upsert_relationship(
     subject_id: str,
@@ -193,7 +276,6 @@ async def db_upsert_relationship(
     """
     async with _acquire() as conn:
         async with conn.transaction():
-            # Lock existing row to prevent concurrent modification
             existing = await conn.fetchrow(
                 """
                 SELECT id, predicate FROM playbook.kg_relationships
@@ -219,7 +301,6 @@ async def db_upsert_relationship(
                     )
                     return {"status": "new"}
                 except asyncpg.UniqueViolationError:
-                    # Lost race with another worker — treat as duplicate
                     return {"status": "duplicate"}
 
             old_predicate = existing["predicate"]
@@ -247,7 +328,6 @@ async def db_upsert_relationship(
             )
             new_id = str(new_row["id"])
 
-            # Fetch names for conflict log
             subject_row = await conn.fetchrow("SELECT name FROM playbook.kg_entities WHERE id = $1::uuid", subject_id)
             object_row = await conn.fetchrow("SELECT name FROM playbook.kg_entities WHERE id = $1::uuid", object_id)
             subject_name = subject_row["name"] if subject_row else subject_id
@@ -264,6 +344,8 @@ async def db_upsert_relationship(
             return {"status": "conflict", "old_id": old_id, "new_id": new_id}
 
 
+# ── List / Search / Stats ────────────────────────────────────────────────────
+
 async def db_list_kg_entities(
     search: str | None = None,
     entity_type: str | None = None,
@@ -276,7 +358,7 @@ async def db_list_kg_entities(
     idx = 0
     if search:
         idx += 1
-        conditions.append(f"LOWER(e.name) LIKE ${idx}")
+        conditions.append(f"(LOWER(e.name) LIKE ${idx} OR LOWER(e.description) LIKE ${idx})")
         args.append(f"%{search.lower()}%")
     if entity_type:
         idx += 1
@@ -287,7 +369,6 @@ async def db_list_kg_entities(
         conditions.append(f"(e.team_id = ${idx}::uuid OR e.team_id IS NULL)")
         args.append(team_id)
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
-    # Parameterize LIMIT/OFFSET to avoid SQL injection
     idx += 1
     limit_param = f"${idx}"
     args.append(limit)
@@ -359,7 +440,9 @@ async def db_search_kg(
     query: str,
     team_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    conditions = ["(LOWER(e.name) LIKE $1 OR $2 = ANY(SELECT LOWER(a) FROM unnest(e.aliases) a))"]
+    conditions = [
+        "(LOWER(e.name) LIKE $1 OR $2 = ANY(SELECT LOWER(a) FROM unnest(e.aliases) a) OR LOWER(e.description) LIKE $1)"
+    ]
     args: list[Any] = [f"%{query.lower()}%", query.lower()]
     idx = 2
     if team_id:
@@ -388,17 +471,37 @@ async def db_search_kg(
     return [_kg_entity_to_dict(r) for r in rows]
 
 
-async def db_get_kg_stats() -> dict[str, Any]:
+async def db_get_kg_stats(team_id: str | None = None) -> dict[str, Any]:
+    if team_id:
+        team_cond_e = "WHERE (team_id = $1::uuid OR team_id IS NULL)"
+        team_cond_r = "WHERE is_active = TRUE AND (team_id = $1::uuid OR team_id IS NULL)"
+        args: list[Any] = [team_id]
+    else:
+        team_cond_e = ""
+        team_cond_r = "WHERE is_active = TRUE"
+        args = []
     async with _acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT
-                (SELECT COUNT(*)::int FROM playbook.kg_entities) AS total_entities,
-                (SELECT COUNT(*)::int FROM playbook.kg_relationships WHERE is_active = TRUE) AS total_relationships,
-                (SELECT COUNT(*)::int FROM playbook.kg_relationship_conflicts) AS total_conflicts,
-                (SELECT COUNT(DISTINCT entity_type)::int FROM playbook.kg_entities) AS entity_types
-            """
-        )
+        if args:
+            row = await conn.fetchrow(
+                f"""
+                SELECT
+                    (SELECT COUNT(*)::int FROM playbook.kg_entities {team_cond_e}) AS total_entities,
+                    (SELECT COUNT(*)::int FROM playbook.kg_relationships {team_cond_r}) AS total_relationships,
+                    (SELECT COUNT(*)::int FROM playbook.kg_relationship_conflicts) AS total_conflicts,
+                    (SELECT COUNT(DISTINCT entity_type)::int FROM playbook.kg_entities {team_cond_e}) AS entity_types
+                """,
+                *args,
+            )
+        else:
+            row = await conn.fetchrow(
+                f"""
+                SELECT
+                    (SELECT COUNT(*)::int FROM playbook.kg_entities) AS total_entities,
+                    (SELECT COUNT(*)::int FROM playbook.kg_relationships WHERE is_active = TRUE) AS total_relationships,
+                    (SELECT COUNT(*)::int FROM playbook.kg_relationship_conflicts) AS total_conflicts,
+                    (SELECT COUNT(DISTINCT entity_type)::int FROM playbook.kg_entities) AS entity_types
+                """
+            )
     return dict(row) if row else {"total_entities": 0, "total_relationships": 0, "total_conflicts": 0, "entity_types": 0}
 
 
@@ -425,12 +528,15 @@ async def db_list_kg_conflicts(limit: int = 50, offset: int = 0) -> list[dict[st
     return result
 
 
-# ── KG Graph / Deal-Partners ──────────────────────────────────────────────────
+# ── KG Graph / Deal-Partners ────────────────────────────────────────────────
 
 async def db_get_kg_graph(
     entity_types: list[str] | None = None,
     predicate_families: list[str] | None = None,
     team_id: str | None = None,
+    search: str | None = None,
+    metadata_key: str | None = None,
+    metadata_value: str | None = None,
     limit: int = 500,
 ) -> dict[str, Any]:
     """Return nodes + edges for the D3 force-directed graph explorer."""
@@ -449,15 +555,39 @@ async def db_get_kg_graph(
         idx += 1
         conditions.append(f"(r.team_id = ${idx}::uuid OR r.team_id IS NULL)")
         args.append(team_id)
+    if search:
+        idx += 1
+        search_like = f"%{search.lower()}%"
+        conditions.append(
+            f"(LOWER(s.name) LIKE ${idx} OR LOWER(o.name) LIKE ${idx} "
+            f"OR LOWER(s.description) LIKE ${idx} OR LOWER(o.description) LIKE ${idx} "
+            f"OR ${idx} = ANY(SELECT LOWER(a) FROM unnest(s.aliases) a) "
+            f"OR ${idx} = ANY(SELECT LOWER(a) FROM unnest(o.aliases) a))"
+        )
+        args.append(search_like)
+    if metadata_key and metadata_value:
+        idx += 1
+        meta_k = metadata_key
+        idx += 1
+        conditions.append(
+            f"(s.metadata->>'{meta_k}' ILIKE ${idx} OR o.metadata->>'{meta_k}' ILIKE ${idx})"
+        )
+        args.append(f"%{metadata_value}%")
+    elif metadata_key:
+        conditions.append(
+            f"(s.metadata ? '{metadata_key}' OR o.metadata ? '{metadata_key}')"
+        )
     where = " AND ".join(conditions)
     idx += 1
     args.append(limit)
     async with _acquire() as conn:
         rows = await conn.fetch(
             f"""
-            SELECT r.id, r.subject_id, r.object_id, r.predicate, r.predicate_family, r.confidence,
+            SELECT r.id, r.subject_id, r.object_id, r.predicate, r.predicate_family, r.confidence, r.team_id,
                    s.name AS subject_name, s.entity_type AS subject_type, s.aliases AS subject_aliases,
-                   o.name AS object_name, o.entity_type AS object_type, o.aliases AS object_aliases
+                   s.description AS subject_description, s.metadata AS subject_metadata,
+                   o.name AS object_name, o.entity_type AS object_type, o.aliases AS object_aliases,
+                   o.description AS object_description, o.metadata AS object_metadata
             FROM playbook.kg_relationships r
             JOIN playbook.kg_entities s ON s.id = r.subject_id
             JOIN playbook.kg_entities o ON o.id = r.object_id
@@ -474,11 +604,20 @@ async def db_get_kg_graph(
         sid = str(r["subject_id"])
         oid = str(r["object_id"])
         if sid not in node_map:
-            node_map[sid] = {"id": sid, "name": r["subject_name"], "entity_type": r["subject_type"],
-                             "aliases": list(r["subject_aliases"] or [])}
+            node_map[sid] = {
+                "id": sid, "name": r["subject_name"], "entity_type": r["subject_type"],
+                "aliases": list(r["subject_aliases"] or []),
+                "description": r["subject_description"] or "",
+                "metadata": dict(r["subject_metadata"]) if r["subject_metadata"] else {},
+            }
         if oid not in node_map:
-            node_map[oid] = {"id": oid, "name": r["object_name"], "entity_type": r["object_type"],
-                             "aliases": list(r["object_aliases"] or [])}
+            node_map[oid] = {
+                "id": oid, "name": r["object_name"], "entity_type": r["object_type"],
+                "aliases": list(r["object_aliases"] or []),
+                "description": r["object_description"] or "",
+                "metadata": dict(r["object_metadata"]) if r["object_metadata"] else {},
+            }
+        edge_source = "team" if r["team_id"] else "master"
         edges.append({
             "id": str(r["id"]),
             "source": sid,
@@ -486,6 +625,7 @@ async def db_get_kg_graph(
             "predicate": r["predicate"],
             "predicate_family": r["predicate_family"],
             "confidence": float(r["confidence"]),
+            "graph_source": edge_source,
         })
     return {"nodes": list(node_map.values()), "edges": edges}
 
@@ -513,7 +653,6 @@ async def db_get_deal_partners() -> list[dict[str, Any]]:
             ORDER BY a.person1_name, b.person2_name
             """
         )
-    # Group by person pair
     groups: dict[str, dict[str, Any]] = {}
     for r in rows:
         key = f"{r['person1_id']}:{r['person2_id']}"
@@ -530,3 +669,106 @@ async def db_get_deal_partners() -> list[dict[str, Any]]:
             "person2_predicate": r["person2_predicate"],
         })
     return list(groups.values())
+
+
+# ── KG Query (for agent tool) ───────────────────────────────────────────────
+
+async def db_query_kg(
+    query: str,
+    team_id: str | None = None,
+) -> dict[str, Any]:
+    """
+    Search the knowledge graph for entities and relationships matching a query.
+    Searches both master graph (team_id IS NULL) and team graph if team_id provided.
+    Returns results with source attribution (master vs team).
+    """
+    search_pattern = f"%{query.lower()}%"
+    results: dict[str, Any] = {"entities": [], "relationships": [], "sources_used": []}
+
+    async with _acquire() as conn:
+        # Search entities in master graph
+        master_entities = await conn.fetch(
+            """
+            SELECT e.*, 'master' AS graph_source,
+                   COALESCE(rc.cnt, 0)::int AS relationship_count
+            FROM playbook.kg_entities e
+            LEFT JOIN (
+                SELECT entity_id, COUNT(*) AS cnt FROM (
+                    SELECT subject_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
+                    UNION ALL
+                    SELECT object_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
+                ) sub GROUP BY entity_id
+            ) rc ON rc.entity_id = e.id
+            WHERE e.team_id IS NULL
+              AND (LOWER(e.name) LIKE $1
+                   OR $2 = ANY(SELECT LOWER(a) FROM unnest(e.aliases) a)
+                   OR LOWER(e.description) LIKE $1)
+            ORDER BY e.updated_at DESC
+            LIMIT 20
+            """,
+            search_pattern, query.lower(),
+        )
+        if master_entities:
+            results["sources_used"].append("master")
+            for r in master_entities:
+                d = _kg_entity_to_dict(r)
+                d["graph_source"] = "master"
+                results["entities"].append(d)
+
+        # Search team graph if team_id provided
+        if team_id:
+            team_entities = await conn.fetch(
+                """
+                SELECT e.*, 'team' AS graph_source,
+                       COALESCE(rc.cnt, 0)::int AS relationship_count
+                FROM playbook.kg_entities e
+                LEFT JOIN (
+                    SELECT entity_id, COUNT(*) AS cnt FROM (
+                        SELECT subject_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
+                        UNION ALL
+                        SELECT object_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
+                    ) sub GROUP BY entity_id
+                ) rc ON rc.entity_id = e.id
+                WHERE e.team_id = $1::uuid
+                  AND (LOWER(e.name) LIKE $2
+                       OR $3 = ANY(SELECT LOWER(a) FROM unnest(e.aliases) a)
+                       OR LOWER(e.description) LIKE $2)
+                ORDER BY e.updated_at DESC
+                LIMIT 20
+                """,
+                team_id, search_pattern, query.lower(),
+            )
+            if team_entities:
+                results["sources_used"].append("team")
+                for r in team_entities:
+                    d = _kg_entity_to_dict(r)
+                    d["graph_source"] = "team"
+                    results["entities"].append(d)
+
+        # Get relationships for found entities
+        entity_ids = [e["id"] for e in results["entities"]]
+        if entity_ids:
+            rels = await conn.fetch(
+                """
+                SELECT r.*,
+                       s.name AS subject_name, s.entity_type AS subject_type,
+                       o.name AS object_name, o.entity_type AS object_type,
+                       CASE WHEN r.team_id IS NULL THEN 'master' ELSE 'team' END AS graph_source
+                FROM playbook.kg_relationships r
+                JOIN playbook.kg_entities s ON s.id = r.subject_id
+                JOIN playbook.kg_entities o ON o.id = r.object_id
+                WHERE r.is_active = TRUE
+                  AND (r.subject_id = ANY($1::uuid[]) OR r.object_id = ANY($1::uuid[]))
+                ORDER BY r.confidence DESC, r.created_at DESC
+                LIMIT 50
+                """,
+                entity_ids,
+            )
+            for r in rels:
+                d = _kg_rel_to_dict(r)
+                d["graph_source"] = r["graph_source"]
+                d["subject_name"] = r["subject_name"]
+                d["object_name"] = r["object_name"]
+                results["relationships"].append(d)
+
+    return results

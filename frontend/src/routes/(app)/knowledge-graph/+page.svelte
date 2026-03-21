@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import {
 		kgApi,
 		type KGEntity,
 		type KGRelationship,
 		type KGStats,
 	} from '$lib/api/knowledgeGraph';
+	import { scoutTeam } from '$lib/stores/scoutTeamStore';
 
 	let entities = $state<KGEntity[]>([]);
 	let stats = $state<KGStats | null>(null);
@@ -23,11 +25,16 @@
 	let relationships = $state<KGRelationship[]>([]);
 	let loadingRels = $state(false);
 
+	function getTeamId(): string | undefined {
+		return get(scoutTeam) ?? undefined;
+	}
+
 	onMount(async () => {
 		try {
+			const teamId = getTeamId();
 			const [entitiesResult, statsResult] = await Promise.all([
-				kgApi.listEntities({ limit: pageSize, offset: 0 }),
-				kgApi.getStats(),
+				kgApi.listEntities({ team_id: teamId, limit: pageSize, offset: 0 }),
+				kgApi.getStats(teamId),
 			]);
 			entities = entitiesResult.items;
 			total = entitiesResult.total;
@@ -46,6 +53,7 @@
 			const result = await kgApi.listEntities({
 				search: searchQuery || undefined,
 				entity_type: typeFilter || undefined,
+				team_id: getTeamId(),
 				limit: pageSize,
 				offset: 0,
 			});
@@ -65,6 +73,7 @@
 			const result = await kgApi.listEntities({
 				search: searchQuery || undefined,
 				entity_type: typeFilter || undefined,
+				team_id: getTeamId(),
 				limit: pageSize,
 				offset: p * pageSize,
 			});
@@ -95,13 +104,13 @@
 
 	function typeColor(type: string): string {
 		const colors: Record<string, string> = {
-			PERSON: 'bg-blue-900 text-blue-300',
-			ORGANIZATION: 'bg-purple-900 text-purple-300',
-			COMPANY: 'bg-purple-900 text-purple-300',
-			SPORTS_TEAM: 'bg-orange-900 text-orange-300',
-			LOCATION: 'bg-green-900 text-green-300',
+			PERSON: 'bg-[#1B365D] text-blue-200',
+			ORGANIZATION: 'bg-[#1A5276] text-teal-200',
+			COMPANY: 'bg-[#1A5276] text-teal-200',
+			SPORTS_TEAM: 'bg-[#8B6914]/20 text-amber-300',
+			LOCATION: 'bg-[#1E6E3E] text-green-200',
 			EVENT: 'bg-gold/10 text-gold',
-			PRODUCT: 'bg-yellow-900 text-yellow-300',
+			PRODUCT: 'bg-[#5D6D7E] text-slate-200',
 			CONCEPT: 'bg-slate-700 text-slate-300',
 		};
 		return colors[type.toUpperCase()] ?? 'bg-navy-700 text-slate-400';

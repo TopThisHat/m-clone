@@ -60,3 +60,12 @@ async def db_update_user_theme(sid: str, theme: str) -> None:
             "UPDATE playbook.users SET theme = $1 WHERE sid = $2",
             theme, sid,
         )
+
+
+async def db_is_super_admin(sid: str) -> bool:
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT is_super_admin FROM playbook.users WHERE sid = $1",
+            sid,
+        )
+    return bool(row and row["is_super_admin"])

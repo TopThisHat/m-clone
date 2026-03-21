@@ -32,6 +32,8 @@ class AgentDeps:
     tool_sse_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     # All clarification IDs created in this session — used for cleanup on stream disconnect
     active_clarification_ids: list = field(default_factory=list)
+    # Team context for KG queries
+    team_id: str | None = None
 
 
 _DEPTH_MAP = {"fast": "simple", "balanced": "standard", "deep": "deep"}

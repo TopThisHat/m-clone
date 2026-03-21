@@ -1,3 +1,15 @@
-1.  UThe worker needs to be able to use llm the same way app does.  Setting proxy for token, etc.  Try to reuse as much as possible an dnesure worker when using an LLM operates just like app does.
-2.  I need to improve the workflow and knowlede graph.  This is my critiera.  I need to scope KG to teams but information with KG should be fed to master graph.  There needs to be a process to try to ensure entities are not duplicated.  You can use an llm and postgres functionality to help with this.  I also need to ensure that there is a concept of staleness.  This means if the master kg or scoped campaign kg researched a concept within a timeperiod the workfow will skip it..  The workflow for validating needs to be reworked.  Since there can be thousands of
-entities and 50-100 attributes that can be thousands of research calls.  I want to group attributes into logical attribtes and use an llm to generate a question that would be able to cover the grouping of attributes.  The verification should then take the research and see if any of the attributes in the campaign are present.  Design a workflow for all of this and write it in Kg_PLAN.md.  Then revisit it and be critical of it.   Create a team with KG expert, Job queue expert, SQL POSTGRES Expert and a person who always looks for problems.  
+Your team consisten of a frontend developer, backend developer, ui/ux designer, maachine learning expert, and the hyper critical senior engineer who enjoys pointing out flaws.  Your developers are epxerts in their language and when fixing and implementing code also take the chance to refactor bad design pattners.
+Product has requested these features:
+# Team Scope KG
+The Scouting Report should not be available unless the user is part of the team.  A team cannot ever see the master knowledge only the KG built by their campaigns and users who are part of their team quiries (but only if the results were shared by the team).
+#  KG.  
+Viewing the KG graph should allow for filtering for by metadata, label, description, relationships and GWM_IDS
+Users should be able to edit the KG directly if there is wrong info for their team if they are an admin/owner level.  The MASTER KG should not be limited to just GWM_ID entities.  
+# M: Componenet
+Before an entity is put into the graph we need to ensure that the entiity doesn't already exist, we may need to include conect of how that peron shows up to ensure we have ability to tell the difference between two different people with the same name.  
+# Query hraph.  
+We need an agent tool that'll allow for users to Ask questions to the graph.  It should search the master graph and team graph and let it know which one it got the answer from.  
+# Super Admin view.
+An super admin can view the team graph.  They can fiew any team graph and they want.  
+# Reevaluate 
+the colors of the graph.  Ensure the styling is professional and suitable for a bank

@@ -27,6 +27,7 @@ class ExtractedEntity(BaseModel):
     name: str
     type: str  # person | company | sports_team | location | product | other
     aliases: list[str] = []
+    disambiguation_context: str = ""  # e.g. "CEO of Acme Corp" to distinguish same-name entities
 
 
 class ExtractedRelationship(BaseModel):
@@ -55,7 +56,7 @@ async def extract_entities_and_relationships(report_md: str) -> ExtractionResult
 Return ONLY valid JSON matching this schema:
 {{
   "entities": [
-    {{"name": "string", "type": "person|company|sports_team|location|product|other", "aliases": ["alt name", ...]}}
+    {{"name": "string", "type": "person|company|sports_team|location|product|other", "aliases": ["alt name", ...], "disambiguation_context": "brief context to identify this entity uniquely, e.g. role/title/affiliation"}}
   ],
   "relationships": [
     {{
@@ -73,6 +74,10 @@ Only include entities and relationships that are clearly stated in the report.
 Use canonical, full names for entities. Use "sports_team" type for sports franchises/clubs
 (not "company"). Predicate families must be one of:
 ownership, employment, transaction, location, partnership.
+
+For each entity, provide a "disambiguation_context" that helps distinguish people with the
+same name (e.g. "CEO of Goldman Sachs", "NFL quarterback for Kansas City Chiefs").
+This is especially important for person entities.
 
 Research report:
 {report_md[:8000]}"""
@@ -108,7 +113,10 @@ async def _process_message(session_id: str, report_md: str) -> None:
     entity_id_map: dict[str, str] = {}
     for ent in result.entities:
         try:
-            eid = await db_find_or_create_entity(ent.name, ent.type, ent.aliases)
+            eid = await db_find_or_create_entity(
+                ent.name, ent.type, ent.aliases,
+                disambiguation_context=ent.disambiguation_context,
+            )
             entity_id_map[ent.name.lower().strip()] = eid
         except Exception as exc:
             logger.warning("db_find_or_create_entity failed for '%s': %s", ent.name, exc)
