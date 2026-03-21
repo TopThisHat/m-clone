@@ -1,12 +1,3 @@
-1.  On Event is deprecated and fix
-2. PDF gives unsupported color function
-3.  PDF Download crashes browers
-4.  header on share/[id] doens't respond to light or dark mode also play book is redudant
-5.  Link when copied and paste and sent to someone on the team it gives a 404.  However, if that same user clikcs on the link from the teams page they see it.
-6.  User preference for light and dark mode fetches one ach page causing weird load on light mode
-7.  When creating a public link from share it isn't clear a link is being generating
-8.  signal handler should handlw dinows
-9. Attribute delete should exist for bulk
-10.  When creating a new campaign there should be a select all type functionality
-11.  When I bulk load ana ttribute on new campaign feature I get a 500.  Ensure we proper handle duplicates smartly for a good user experienc
-12.  Campaigns are not editable via the campaign card
+1.  UThe worker needs to be able to use llm the same way app does.  Setting proxy for token, etc.  Try to reuse as much as possible an dnesure worker when using an LLM operates just like app does.
+2.  I need to improve the workflow and knowlede graph.  This is my critiera.  I need to scope KG to teams but information with KG should be fed to master graph.  There needs to be a process to try to ensure entities are not duplicated.  You can use an llm and postgres functionality to help with this.  I also need to ensure that there is a concept of staleness.  This means if the master kg or scoped campaign kg researched a concept within a timeperiod the workfow will skip it..  The workflow for validating needs to be reworked.  Since there can be thousands of
+entities and 50-100 attributes that can be thousands of research calls.  I want to group attributes into logical attribtes and use an llm to generate a question that would be able to cover the grouping of attributes.  The verification should then take the research and see if any of the attributes in the campaign are present.  Design a workflow for all of this and write it in Kg_PLAN.md.  Then revisit it and be critical of it.   Create a team with KG expert, Job queue expert, SQL POSTGRES Expert and a person who always looks for problems.  
