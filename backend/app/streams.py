@@ -142,13 +142,27 @@ async def ack_job(stream: str, group: str, msg_id: str) -> None:
 _EXTRACTION_CONSUMER = f"extractor-{socket.gethostname()}"
 
 
-async def publish_for_extraction(session_id: str, report_md: str) -> None:
+async def publish_for_extraction(
+    session_id: str,
+    report_md: str,
+    *,
+    team_id: str | None = None,
+    is_document: bool = False,
+) -> None:
     """Publish a report to the entity_extraction Redis stream."""
     if not report_md or not report_md.strip():
         return
     try:
         r = await get_redis()
-        await r.xadd(STREAM_ENTITY_EXTRACTION, {"session_id": session_id, "report_md": report_md})
+        fields: dict[str, str] = {
+            "session_id": session_id,
+            "report_md": report_md,
+        }
+        if team_id:
+            fields["team_id"] = team_id
+        if is_document:
+            fields["is_document"] = "true"
+        await r.xadd(STREAM_ENTITY_EXTRACTION, fields)
         logger.debug("Published extraction task for session_id=%s", session_id)
     except Exception as exc:
         logger.warning("Failed to publish extraction task for session_id=%s: %s", session_id, exc)

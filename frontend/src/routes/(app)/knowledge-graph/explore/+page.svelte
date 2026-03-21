@@ -12,6 +12,7 @@
 		type KGRelationship,
 		type KGQueryResult,
 	} from '$lib/api/knowledgeGraph';
+	import { uploadToKG, isSupportedFile, SUPPORTED_EXTENSIONS, type KGUploadResult } from '$lib/api/documents';
 
 	const ENTITY_TYPES = ['person', 'company', 'sports_team', 'location', 'product', 'other'];
 	const PREDICATE_FAMILIES = ['ownership', 'employment', 'transaction', 'location', 'partnership'];
@@ -70,6 +71,14 @@
 	let queryLoading = $state(false);
 	let queryResult = $state<KGQueryResult | null>(null);
 	let queryError = $state('');
+
+	// --------------- Upload state ---------------
+	let uploadPanelOpen = $state(false);
+	let uploadDragging = $state(false);
+	let uploadFile = $state<File | null>(null);
+	let uploading = $state(false);
+	let uploadResult = $state<KGUploadResult | null>(null);
+	let uploadError = $state('');
 
 	// --------------- Derived ---------------
 	let isAdmin = $derived(user?.is_super_admin === true);
@@ -302,6 +311,45 @@
 		}
 	}
 
+	// --------------- Upload ---------------
+	async function handleUpload() {
+		if (!uploadFile) return;
+		uploading = true;
+		uploadError = '';
+		uploadResult = null;
+		try {
+			uploadResult = await uploadToKG(uploadFile, teamId ?? undefined);
+			uploadFile = null;
+		} catch (err: unknown) {
+			uploadError = err instanceof Error ? err.message : 'Upload failed';
+		} finally {
+			uploading = false;
+		}
+	}
+
+	function handleFileDrop(e: DragEvent) {
+		e.preventDefault();
+		uploadDragging = false;
+		const file = e.dataTransfer?.files[0];
+		if (file && isSupportedFile(file.name)) {
+			uploadFile = file;
+			uploadError = '';
+			uploadResult = null;
+		} else if (file) {
+			uploadError = `Unsupported file type. Accepted: ${SUPPORTED_EXTENSIONS.join(', ')}`;
+		}
+	}
+
+	function handleFileSelect(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (file) {
+			uploadFile = file;
+			uploadError = '';
+			uploadResult = null;
+		}
+	}
+
 	// --------------- Helpers ---------------
 	function typeColor(type: string): string {
 		const colors: Record<string, string> = {
@@ -465,6 +513,16 @@
 			Query
 		</button>
 
+		<!-- Upload button -->
+		<button
+			onclick={() => (uploadPanelOpen = !uploadPanelOpen)}
+			class="text-xs px-2.5 py-1 rounded border transition-colors {uploadPanelOpen
+				? 'border-gold text-gold bg-gold/10'
+				: 'border-navy-600 text-slate-400 hover:text-slate-200'}"
+		>
+			Upload
+		</button>
+
 		<span class="text-xs text-slate-600 ml-auto">
 			{graphData.nodes.length} nodes / {graphData.edges.length} edges
 		</span>
@@ -533,6 +591,112 @@
 				/>
 			{/if}
 		</div>
+
+		<!-- Upload panel (slide-out) -->
+		{#if uploadPanelOpen}
+			<div class="w-80 bg-navy-900 border-l border-navy-700 overflow-y-auto flex flex-col">
+				<div class="flex items-center justify-between px-4 py-3 border-b border-navy-700">
+					<h3 class="text-sm font-semibold text-slate-200">Upload to KG</h3>
+					<button
+						onclick={() => (uploadPanelOpen = false)}
+						class="text-slate-500 hover:text-slate-300 text-xs"
+					>
+						&times;
+					</button>
+				</div>
+
+				<div class="p-4 space-y-3 flex-1">
+					<!-- Drop zone -->
+					<div
+						class="border-2 border-dashed rounded-lg p-6 text-center transition-colors {uploadDragging
+							? 'border-gold bg-gold/5'
+							: 'border-navy-600 hover:border-navy-500'}"
+						role="region"
+						aria-label="File drop zone"
+						ondragover={(e) => { e.preventDefault(); uploadDragging = true; }}
+						ondragleave={() => (uploadDragging = false)}
+						ondrop={handleFileDrop}
+					>
+						<p class="text-xs text-slate-400 mb-2">
+							Drag & drop a file here
+						</p>
+						<p class="text-[10px] text-slate-600 mb-3">
+							PDF, DOCX, Excel, CSV, PNG, JPEG
+						</p>
+						<label class="text-xs px-3 py-1.5 rounded border border-navy-600 text-slate-300 hover:text-slate-200 hover:border-navy-500 cursor-pointer transition-colors">
+							Browse files
+							<input
+								type="file"
+								accept={SUPPORTED_EXTENSIONS.join(',')}
+								onchange={handleFileSelect}
+								class="hidden"
+							/>
+						</label>
+					</div>
+
+					<!-- Selected file -->
+					{#if uploadFile}
+						<div class="flex items-center gap-2 bg-navy-800 rounded px-3 py-2">
+							<span class="text-xs text-slate-200 truncate flex-1">{uploadFile.name}</span>
+							<span class="text-[10px] text-slate-500 shrink-0">
+								{(uploadFile.size / 1024).toFixed(0)} KB
+							</span>
+							<button
+								onclick={() => { uploadFile = null; uploadResult = null; uploadError = ''; }}
+								class="text-slate-500 hover:text-slate-300 text-xs shrink-0"
+							>
+								&times;
+							</button>
+						</div>
+
+						<button
+							onclick={handleUpload}
+							disabled={uploading}
+							class="w-full text-xs px-3 py-2 rounded transition-colors {uploading
+								? 'bg-navy-700 text-slate-500 cursor-not-allowed'
+								: 'bg-gold/20 text-gold border border-gold/30 hover:bg-gold/30'}"
+						>
+							{uploading ? 'Processing...' : 'Extract & Add to KG'}
+						</button>
+					{/if}
+
+					<!-- Error -->
+					{#if uploadError}
+						<p class="text-xs text-red-400">{uploadError}</p>
+					{/if}
+
+					<!-- Success result -->
+					{#if uploadResult}
+						<div class="bg-navy-800 rounded p-3 space-y-1">
+							<p class="text-xs text-green-400 font-medium">Queued for processing</p>
+							<p class="text-[10px] text-slate-400">{uploadResult.filename}</p>
+							<p class="text-[10px] text-slate-500">{uploadResult.char_count.toLocaleString()} characters extracted</p>
+							<p class="text-[10px] text-slate-600 mt-1">
+								Entities and relationships will appear in the graph shortly.
+							</p>
+							<button
+								onclick={() => { uploadResult = null; fetchGraph(); }}
+								class="text-[10px] text-gold hover:text-gold-light mt-1 transition-colors"
+							>
+								Refresh graph
+							</button>
+						</div>
+					{/if}
+
+					<!-- Supported formats info -->
+					<div class="text-[10px] text-slate-600 pt-2 border-t border-navy-700">
+						<p class="font-medium text-slate-500 mb-1">Supported formats:</p>
+						<ul class="space-y-0.5">
+							<li>PDF — text & tables</li>
+							<li>DOCX — paragraphs & tables</li>
+							<li>Excel (.xlsx, .xls) — all sheets</li>
+							<li>CSV / TSV — tabular data</li>
+							<li>Images (PNG, JPEG, GIF, WebP) — OCR via AI</li>
+						</ul>
+					</div>
+				</div>
+			</div>
+		{/if}
 
 		<!-- Query panel (slide-out) -->
 		{#if queryPanelOpen}
@@ -631,7 +795,7 @@
 		{/if}
 
 		<!-- Detail panel -->
-		{#if selectedNode && !queryPanelOpen}
+		{#if selectedNode && !queryPanelOpen && !uploadPanelOpen}
 			<div class="w-80 bg-navy-900 border-l border-navy-700 overflow-y-auto p-4">
 				<div class="flex items-center justify-between mb-3">
 					<h3 class="text-sm font-semibold text-slate-200 truncate">{selectedNode.name}</h3>
