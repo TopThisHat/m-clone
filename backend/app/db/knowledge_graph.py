@@ -350,6 +350,7 @@ async def db_list_kg_entities(
     search: str | None = None,
     entity_type: str | None = None,
     team_id: str | None = None,
+    include_master: bool = False,
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -366,8 +367,14 @@ async def db_list_kg_entities(
         args.append(entity_type)
     if team_id:
         idx += 1
-        conditions.append(f"(e.team_id = ${idx}::uuid OR e.team_id IS NULL)")
+        if include_master:
+            conditions.append(f"(e.team_id = ${idx}::uuid OR e.team_id IS NULL)")
+        else:
+            conditions.append(f"e.team_id = ${idx}::uuid")
         args.append(team_id)
+    elif not include_master:
+        # No team and not super admin — should not happen (router blocks it)
+        conditions.append("FALSE")
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     idx += 1
     limit_param = f"${idx}"
@@ -439,6 +446,7 @@ async def db_get_entity_relationships(
 async def db_search_kg(
     query: str,
     team_id: str | None = None,
+    include_master: bool = False,
 ) -> list[dict[str, Any]]:
     conditions = [
         "(LOWER(e.name) LIKE $1 OR $2 = ANY(SELECT LOWER(a) FROM unnest(e.aliases) a) OR LOWER(e.description) LIKE $1)"
@@ -447,8 +455,13 @@ async def db_search_kg(
     idx = 2
     if team_id:
         idx += 1
-        conditions.append(f"(e.team_id = ${idx}::uuid OR e.team_id IS NULL)")
+        if include_master:
+            conditions.append(f"(e.team_id = ${idx}::uuid OR e.team_id IS NULL)")
+        else:
+            conditions.append(f"e.team_id = ${idx}::uuid")
         args.append(team_id)
+    elif not include_master:
+        conditions.append("FALSE")
     where = " AND ".join(conditions)
     async with _acquire() as conn:
         rows = await conn.fetch(
@@ -471,14 +484,22 @@ async def db_search_kg(
     return [_kg_entity_to_dict(r) for r in rows]
 
 
-async def db_get_kg_stats(team_id: str | None = None) -> dict[str, Any]:
+async def db_get_kg_stats(team_id: str | None = None, include_master: bool = False) -> dict[str, Any]:
     if team_id:
-        team_cond_e = "WHERE (team_id = $1::uuid OR team_id IS NULL)"
-        team_cond_r = "WHERE is_active = TRUE AND (team_id = $1::uuid OR team_id IS NULL)"
+        if include_master:
+            team_cond_e = "WHERE (team_id = $1::uuid OR team_id IS NULL)"
+            team_cond_r = "WHERE is_active = TRUE AND (team_id = $1::uuid OR team_id IS NULL)"
+        else:
+            team_cond_e = "WHERE team_id = $1::uuid"
+            team_cond_r = "WHERE is_active = TRUE AND team_id = $1::uuid"
         args: list[Any] = [team_id]
-    else:
+    elif include_master:
         team_cond_e = ""
         team_cond_r = "WHERE is_active = TRUE"
+        args = []
+    else:
+        team_cond_e = "WHERE FALSE"
+        team_cond_r = "WHERE FALSE"
         args = []
     async with _acquire() as conn:
         if args:
@@ -534,6 +555,7 @@ async def db_get_kg_graph(
     entity_types: list[str] | None = None,
     predicate_families: list[str] | None = None,
     team_id: str | None = None,
+    include_master: bool = False,
     search: str | None = None,
     metadata_key: str | None = None,
     metadata_value: str | None = None,
@@ -553,8 +575,13 @@ async def db_get_kg_graph(
         args.append(predicate_families)
     if team_id:
         idx += 1
-        conditions.append(f"(r.team_id = ${idx}::uuid OR r.team_id IS NULL)")
+        if include_master:
+            conditions.append(f"(r.team_id = ${idx}::uuid OR r.team_id IS NULL)")
+        else:
+            conditions.append(f"r.team_id = ${idx}::uuid")
         args.append(team_id)
+    elif not include_master:
+        conditions.append("FALSE")
     if search:
         idx += 1
         search_like = f"%{search.lower()}%"
@@ -676,44 +703,46 @@ async def db_get_deal_partners() -> list[dict[str, Any]]:
 async def db_query_kg(
     query: str,
     team_id: str | None = None,
+    include_master: bool = False,
 ) -> dict[str, Any]:
     """
     Search the knowledge graph for entities and relationships matching a query.
-    Searches both master graph (team_id IS NULL) and team graph if team_id provided.
+    Only searches master graph if include_master is True (super admin).
     Returns results with source attribution (master vs team).
     """
     search_pattern = f"%{query.lower()}%"
     results: dict[str, Any] = {"entities": [], "relationships": [], "sources_used": []}
 
     async with _acquire() as conn:
-        # Search entities in master graph
-        master_entities = await conn.fetch(
-            """
-            SELECT e.*, 'master' AS graph_source,
-                   COALESCE(rc.cnt, 0)::int AS relationship_count
-            FROM playbook.kg_entities e
-            LEFT JOIN (
-                SELECT entity_id, COUNT(*) AS cnt FROM (
-                    SELECT subject_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
-                    UNION ALL
-                    SELECT object_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
-                ) sub GROUP BY entity_id
-            ) rc ON rc.entity_id = e.id
-            WHERE e.team_id IS NULL
-              AND (LOWER(e.name) LIKE $1
-                   OR $2 = ANY(SELECT LOWER(a) FROM unnest(e.aliases) a)
-                   OR LOWER(e.description) LIKE $1)
-            ORDER BY e.updated_at DESC
-            LIMIT 20
-            """,
-            search_pattern, query.lower(),
-        )
-        if master_entities:
-            results["sources_used"].append("master")
-            for r in master_entities:
-                d = _kg_entity_to_dict(r)
-                d["graph_source"] = "master"
-                results["entities"].append(d)
+        # Search entities in master graph only if super admin
+        if include_master:
+            master_entities = await conn.fetch(
+                """
+                SELECT e.*, 'master' AS graph_source,
+                       COALESCE(rc.cnt, 0)::int AS relationship_count
+                FROM playbook.kg_entities e
+                LEFT JOIN (
+                    SELECT entity_id, COUNT(*) AS cnt FROM (
+                        SELECT subject_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
+                        UNION ALL
+                        SELECT object_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
+                    ) sub GROUP BY entity_id
+                ) rc ON rc.entity_id = e.id
+                WHERE e.team_id IS NULL
+                  AND (LOWER(e.name) LIKE $1
+                       OR $2 = ANY(SELECT LOWER(a) FROM unnest(e.aliases) a)
+                       OR LOWER(e.description) LIKE $1)
+                ORDER BY e.updated_at DESC
+                LIMIT 20
+                """,
+                search_pattern, query.lower(),
+            )
+            if master_entities:
+                results["sources_used"].append("master")
+                for r in master_entities:
+                    d = _kg_entity_to_dict(r)
+                    d["graph_source"] = "master"
+                    results["entities"].append(d)
 
         # Search team graph if team_id provided
         if team_id:

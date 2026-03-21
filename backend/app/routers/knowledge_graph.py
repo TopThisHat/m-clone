@@ -44,12 +44,13 @@ def _can(role: str | None, min_role: str) -> bool:
     return ROLE_ORDER.get(role or "", -1) >= ROLE_ORDER[min_role]
 
 
-async def _resolve_team_id(user: dict[str, Any], team_id: str | None) -> str | None:
-    """Resolve and validate team_id access for the current user.
+async def _resolve_team_access(user: dict[str, Any], team_id: str | None) -> tuple[str | None, bool]:
+    """Resolve team_id and whether the user may see the master graph.
 
-    If team_id is provided, verify user is a member (or super admin).
-    If not provided, use the user's first team (if they have one).
-    Returns None for master-only access.
+    Returns (resolved_team_id, include_master).
+    - Super admins: can see master graph and any team graph.
+    - Regular users: can only see their own team's graph (never master).
+      If they have no team and aren't super admin, raises 403.
     """
     sid = user["sub"]
     is_sa = await db_is_super_admin(sid)
@@ -59,13 +60,17 @@ async def _resolve_team_id(user: dict[str, Any], team_id: str | None) -> str | N
             is_member = await db_is_team_member(team_id, sid)
             if not is_member:
                 raise HTTPException(status_code=403, detail="Not a member of this team")
-        return team_id
+        return team_id, is_sa
 
-    # Auto-resolve: use first team if available
+    if is_sa:
+        # Super admin with no team_id specified → master graph
+        return None, True
+
+    # Regular user: auto-resolve to their first team
     teams = await db_list_user_teams(sid)
     if teams:
-        return teams[0]["id"]
-    return None
+        return teams[0]["id"], False
+    raise HTTPException(status_code=403, detail="You must be part of a team to view the knowledge graph")
 
 
 async def _require_kg_edit(user: dict[str, Any], team_id: str | None) -> None:
@@ -93,10 +98,11 @@ async def list_entities(
     user=Depends(get_current_user),
 ):
     try:
-        resolved_team = await _resolve_team_id(user, team_id)
+        resolved_team, include_master = await _resolve_team_access(user, team_id)
         return await db_list_kg_entities(
             search=search, entity_type=entity_type,
-            team_id=resolved_team, limit=limit, offset=offset,
+            team_id=resolved_team, include_master=include_master,
+            limit=limit, offset=offset,
         )
     except DatabaseNotConfigured:
         raise _no_db()
@@ -110,9 +116,15 @@ async def get_entity(entity_id: str, user=Depends(get_current_user)):
         raise _no_db()
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
-    # Verify team access if entity is team-scoped
-    if entity.get("team_id"):
-        await _resolve_team_id(user, entity["team_id"])
+    # Verify team access
+    entity_team = entity.get("team_id")
+    if entity_team:
+        await _resolve_team_access(user, entity_team)
+    else:
+        # Master graph entity — only super admins
+        sid = user["sub"]
+        if not await db_is_super_admin(sid):
+            raise HTTPException(status_code=403, detail="Only super admins can view master graph entities")
     return entity
 
 
@@ -135,8 +147,8 @@ async def search_entities(
     user=Depends(get_current_user),
 ):
     try:
-        resolved_team = await _resolve_team_id(user, team_id)
-        return await db_search_kg(q, team_id=resolved_team)
+        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        return await db_search_kg(q, team_id=resolved_team, include_master=include_master)
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -147,8 +159,8 @@ async def get_stats(
     user=Depends(get_current_user),
 ):
     try:
-        resolved_team = await _resolve_team_id(user, team_id)
-        return await db_get_kg_stats(team_id=resolved_team)
+        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        return await db_get_kg_stats(team_id=resolved_team, include_master=include_master)
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -165,12 +177,13 @@ async def get_graph(
     user=Depends(get_current_user),
 ):
     try:
-        resolved_team = await _resolve_team_id(user, team_id)
+        resolved_team, include_master = await _resolve_team_access(user, team_id)
         et = [t.strip() for t in entity_types.split(",")] if entity_types else None
         pf = [f.strip() for f in predicate_families.split(",")] if predicate_families else None
         return await db_get_kg_graph(
             entity_types=et, predicate_families=pf,
-            team_id=resolved_team, search=search,
+            team_id=resolved_team, include_master=include_master,
+            search=search,
             metadata_key=metadata_key, metadata_value=metadata_value,
             limit=limit,
         )
@@ -304,8 +317,8 @@ async def query_graph(
     user=Depends(get_current_user),
 ):
     try:
-        resolved_team = await _resolve_team_id(user, team_id)
-        return await db_query_kg(q, team_id=resolved_team)
+        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        return await db_query_kg(q, team_id=resolved_team, include_master=include_master)
     except DatabaseNotConfigured:
         raise _no_db()
 
