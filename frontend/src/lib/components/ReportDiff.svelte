@@ -140,12 +140,12 @@
 		</div>
 
 		{#if mode === 'unified'}
-			<div class="px-5 py-4 font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap max-h-[60vh] overflow-y-auto">
+			<div class="px-5 py-4 font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap max-h-[50vh] sm:max-h-[60vh] lg:max-h-[70vh] overflow-y-auto">
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 				{@html unifiedHtml}
 			</div>
 		{:else if mode === 'side'}
-			<div class="grid grid-cols-2 divide-x divide-navy-700 max-h-[60vh] overflow-y-auto">
+			<div class="grid grid-cols-2 divide-x divide-navy-700 max-h-[50vh] sm:max-h-[60vh] lg:max-h-[70vh] overflow-y-auto">
 				<div class="px-4 py-3">
 					<p class="text-[10px] text-slate-600 uppercase tracking-wide mb-2">Previous</p>
 					<div class="font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">

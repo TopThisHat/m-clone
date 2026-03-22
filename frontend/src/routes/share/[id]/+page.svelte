@@ -289,7 +289,7 @@
 	{/if}
 </svelte:head>
 
-<div class="min-h-screen bg-navy-950" class:light={$theme === 'light'}>
+<div class="h-full overflow-y-auto bg-navy-950" class:light={$theme === 'light'}>
 	<!-- Sticky top bar -->
 	<div class="sticky top-0 z-20 bg-navy-950/95 backdrop-blur border-b border-navy-700">
 		<div class="max-w-6xl mx-auto px-4 sm:px-6 flex items-center gap-3 h-12">
@@ -577,7 +577,7 @@
 		<!-- Comments sidebar (team-shared, authenticated users) -->
 		{#if showComments && session.visibility === 'team' && $currentUser}
 			<aside class="w-80 flex-shrink-0">
-				<div class="sticky top-20 max-h-[calc(100vh-5rem)] overflow-y-auto">
+				<div class="sticky top-20 max-h-[calc(100vh-5rem)] flex flex-col">
 					<CommentThread
 						sessionId={session.id}
 						unseenIds={unseenIds}

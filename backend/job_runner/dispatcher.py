@@ -59,6 +59,15 @@ class Dispatcher:
         for stream in set(JOB_TYPE_TO_STREAM.values()):
             await create_consumer_group(stream, GROUP_WORKERS)
 
+        # Startup sweep: immediately reclaim any jobs orphaned by a prior crash
+        from app.job_queue import reclaim_stale
+        try:
+            reclaimed = await reclaim_stale(settings.stale_threshold)
+            if reclaimed:
+                logger.info("Startup sweep: reclaimed %d orphaned job(s)", reclaimed)
+        except Exception as exc:
+            logger.warning("Startup sweep failed: %s", exc)
+
         reclaim_task = asyncio.create_task(self._reclaim_loop())
         reconcile_task = asyncio.create_task(self._reconcile_loop())
         listen_task = asyncio.create_task(self._listen_loop())

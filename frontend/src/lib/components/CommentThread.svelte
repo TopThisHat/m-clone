@@ -327,7 +327,7 @@
 	);
 </script>
 
-<div bind:this={containerEl} class="border-t border-navy-700 mt-4">
+<div bind:this={containerEl} class="border-t border-navy-700 mt-4 flex flex-col h-full">
 	<button
 		onclick={() => { open = !open; if (open) setLastSeen(sessionId); }}
 		class="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-500 hover:text-slate-300 transition-colors"
@@ -347,7 +347,7 @@
 	</button>
 
 	{#if open}
-		<div class="px-4 pb-4 space-y-4 max-h-[60vh] overflow-y-auto">
+		<div class="px-4 pb-4 space-y-4 flex-1 overflow-y-auto min-h-0">
 			{#if loading}
 				<p class="text-xs text-slate-600">Loading…</p>
 			{:else}

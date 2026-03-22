@@ -271,10 +271,42 @@ async def _process_message(
     }
 
 
+_MAX_EXTRACTION_RETRIES = 3
+_RETRY_KEY_TTL = 3600  # 1 hour
+
+
+async def _get_extraction_retry_count(session_id: str, msg_id: str) -> int:
+    """Get the retry count for an extraction message from Redis."""
+    try:
+        from app.streams import get_redis
+        r = await get_redis()
+        key = f"extraction_retries:{session_id}:{msg_id}"
+        count = await r.get(key)
+        return int(count) if count else 0
+    except Exception:
+        return 0
+
+
+async def _increment_extraction_retry(session_id: str, msg_id: str) -> int:
+    """Increment and return the retry count for an extraction message."""
+    try:
+        from app.streams import get_redis
+        r = await get_redis()
+        key = f"extraction_retries:{session_id}:{msg_id}"
+        count = await r.incr(key)
+        await r.expire(key, _RETRY_KEY_TTL)
+        return count
+    except Exception:
+        return 0
+
+
 async def run_extraction_worker() -> None:
     """
     Long-running consumer loop. Reads from the Redis 'entity_extraction' stream
     and processes each message via the LLM extraction pipeline.
+
+    ACKs only on success. On failure, leaves the message unacked for redelivery
+    up to _MAX_EXTRACTION_RETRIES times, then ACKs to prevent infinite loops.
     """
     from app.streams import (
         create_extraction_group as create_consumer_group,
@@ -300,10 +332,22 @@ async def run_extraction_worker() -> None:
                     session_id, report_md,
                     team_id=team_id, is_document=is_document,
                 )
-            except Exception as exc:
-                logger.error("Error processing extraction message %s: %s", msg_id, exc)
-            finally:
+                # ACK only on success
                 await ack_message(msg_id)
+            except Exception as exc:
+                retry_count = await _increment_extraction_retry(session_id, msg_id)
+                if retry_count >= _MAX_EXTRACTION_RETRIES:
+                    logger.error(
+                        "Extraction permanently failed for session=%s msg=%s after %d retries: %s",
+                        session_id, msg_id, retry_count, exc,
+                    )
+                    await ack_message(msg_id)
+                else:
+                    logger.error(
+                        "Extraction failed for session=%s msg=%s (attempt %d/%d), will retry: %s",
+                        session_id, msg_id, retry_count, _MAX_EXTRACTION_RETRIES, exc,
+                    )
+                    # Leave unacked — consumer group will redeliver
         except asyncio.CancelledError:
             logger.info("Entity extraction worker cancelled")
             break

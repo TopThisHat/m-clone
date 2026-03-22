@@ -1,6 +1,10 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from app.export import markdown_to_docx
 
@@ -178,6 +182,15 @@ async def share_to_team(session_id: str, body: TeamShareBody, user=Depends(get_c
                 )
         except Exception:
             pass
+        # Publish report to KG extraction pipeline for team-scoped entities
+        report_md = session.get("report_markdown") or ""
+        if report_md.strip():
+            try:
+                from app.streams import publish_for_extraction
+                await publish_for_extraction(session_id, report_md, team_id=body.team_id)
+                logger.info("Session %s shared to team %s: published for KG extraction", session_id, body.team_id)
+            except Exception as exc:
+                logger.warning("Session %s: KG extraction publish failed on share: %s", session_id, exc)
         return result
     except DatabaseNotConfigured:
         raise _no_db()

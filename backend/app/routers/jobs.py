@@ -270,6 +270,25 @@ async def retry_dead_job(job_id: str, user=Depends(get_current_user)):
     return {"retried": retried}
 
 
+@router.post("/api/campaigns/{campaign_id}/retry-dead")
+async def bulk_retry_dead_jobs(campaign_id: str, user=Depends(get_current_user)):
+    """Reset all dead jobs for a campaign back to pending for retry."""
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        dead_jobs = await db_list_dead_jobs(campaign_id)
+        retried = 0
+        for job in dead_jobs:
+            try:
+                if await db_retry_dead_job(str(job["id"])):
+                    retried += 1
+            except Exception:
+                pass
+        logger.info("Campaign %s: bulk-retried %d/%d dead jobs", campaign_id, retried, len(dead_jobs))
+        return {"retried": retried}
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
 @router.get("/api/campaigns/{campaign_id}/knowledge", response_model=list[KnowledgeOut])
 async def get_knowledge(campaign_id: str, user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])

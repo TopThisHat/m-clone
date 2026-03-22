@@ -374,11 +374,28 @@ async def finalize_validation_job(validation_job_id: str, root_queue_job_id: str
             logger.error("Validation job %s: score recompute failed: %s", validation_job_id, exc)
 
         try:
+            # Look up campaign team_id for team-scoped KG extraction
+            campaign_team_id = None
+            try:
+                campaign_row = await pool.fetchrow(
+                    """
+                    SELECT c.team_id::text
+                    FROM playbook.validation_jobs vj
+                    JOIN playbook.campaigns c ON c.id = vj.campaign_id
+                    WHERE vj.id = $1::uuid
+                    """,
+                    validation_job_id,
+                )
+                if campaign_row:
+                    campaign_team_id = campaign_row["team_id"]
+            except Exception as exc:
+                logger.warning("Validation job %s: campaign team_id lookup failed: %s", validation_job_id, exc)
+
             combined_report = await db_get_job_combined_report(validation_job_id)
             if combined_report:
                 from app.streams import publish_for_extraction
-                await publish_for_extraction(validation_job_id, combined_report)
-                logger.info("Validation job %s: published combined report for KG extraction", validation_job_id)
+                await publish_for_extraction(validation_job_id, combined_report, team_id=campaign_team_id)
+                logger.info("Validation job %s: published combined report for KG extraction (team_id=%s)", validation_job_id, campaign_team_id)
         except Exception as exc:
             logger.warning("Validation job %s: failed to publish for KG extraction: %s", validation_job_id, exc)
     else:

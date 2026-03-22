@@ -46,7 +46,7 @@
 		</div>
 
 		<!-- Report content -->
-		<div class="p-6 max-h-[55vh] overflow-y-auto">
+		<div class="p-6 max-h-[50vh] sm:max-h-[60vh] lg:max-h-[70vh] overflow-y-auto">
 			{#if $reportHtml}
 				<article class="prose prose-sm max-w-none">
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
