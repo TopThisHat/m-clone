@@ -68,11 +68,18 @@ Run at least 4 research tool calls covering different angles from the plan:
 - Use `wiki_lookup` for background context on key entities, people, or industries
 - Use `get_financials` for any publicly traded companies mentioned
 - Use `search_uploaded_documents` if documents have been uploaded
+- Use `query_knowledge_graph` to check if the knowledge graph has relevant entities or relationships
+
+**IMPORTANT — CALL TOOLS IN PARALLEL:** Batch multiple independent tool calls into a
+single response whenever possible. For example, issue 3–4 `web_search` calls at once
+instead of calling them one at a time. Similarly, batch `get_financials` for different
+tickers together. Only call tools sequentially when one result informs the next call.
 
 Rules for this phase:
 - Every `web_search` call MUST use a different query string from all previous searches
 - Cover at least 3 different angles before moving to evaluation
 - Do not write any report text during this phase
+- Maximise parallelism: emit all independent tool calls in one response
 
 ---
 
@@ -382,6 +389,7 @@ class ResearchOrchestrator:
                 model=self.model,
                 messages=messages,
                 tools=tools if tools else None,
+                parallel_tool_calls=True if tools else None,
                 stream=True,
             )
 

@@ -633,16 +633,16 @@ async def db_get_kg_graph(
         if sid not in node_map:
             node_map[sid] = {
                 "id": sid, "name": r["subject_name"], "entity_type": r["subject_type"],
-                "aliases": list(r["subject_aliases"] or []),
+                "aliases": list(r["subject_aliases"]) if isinstance(r["subject_aliases"], list) else [],
                 "description": r["subject_description"] or "",
-                "metadata": dict(r["subject_metadata"]) if r["subject_metadata"] else {},
+                "metadata": r["subject_metadata"] if isinstance(r["subject_metadata"], dict) else {},
             }
         if oid not in node_map:
             node_map[oid] = {
                 "id": oid, "name": r["object_name"], "entity_type": r["object_type"],
-                "aliases": list(r["object_aliases"] or []),
+                "aliases": list(r["object_aliases"]) if isinstance(r["object_aliases"], list) else [],
                 "description": r["object_description"] or "",
-                "metadata": dict(r["object_metadata"]) if r["object_metadata"] else {},
+                "metadata": r["object_metadata"] if isinstance(r["object_metadata"], dict) else {},
             }
         edge_source = "team" if r["team_id"] else "master"
         edges.append({
@@ -677,7 +677,7 @@ async def db_get_deal_partners() -> list[dict[str, Any]]:
                    a.predicate AS person1_predicate, b.predicate AS person2_predicate
             FROM person_deals a
             JOIN person_deals b ON a.deal_entity_id = b.deal_entity_id AND a.person_id < b.person_id
-            ORDER BY a.person1_name, b.person2_name
+            ORDER BY a.person_name, b.person_name
             """
         )
     groups: dict[str, dict[str, Any]] = {}

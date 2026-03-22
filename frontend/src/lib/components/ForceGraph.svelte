@@ -36,41 +36,50 @@
 	// Theme-dependent colors
 	const themeColors = $derived(theme === 'light' ? {
 		bg: '#F5F6F8',
-		edgeStroke: '#8E99A4',
-		edgeDim: '#D6DAE0',
-		arrowFill: '#8E99A4',
+		edgeStroke: '#94A3B8',
+		edgeDim: '#CBD5E1',
+		arrowFill: '#94A3B8',
 		pillFill: '#FFFFFF',
-		pillStroke: '#D6DAE0',
-		edgeText: '#5D6D7E',
-		nodeText: '#1B2838',
-		typeBadgeOpacity: 0.85,
+		pillStroke: '#CBD5E1',
+		edgeText: '#475569',
+		nodeText: '#FFFFFF',
+		typeBadgeText: '#475569',
+		typeBadgeOpacity: 0.9,
 	} : {
 		bg: '#0B1426',
-		edgeStroke: '#2C3E50',
-		edgeDim: '#1A2332',
-		arrowFill: '#34495E',
-		pillFill: '#0F1D2F',
-		pillStroke: '#243447',
-		edgeText: '#7F8C9B',
-		nodeText: '#E8ECF0',
-		typeBadgeOpacity: 0.75,
+		edgeStroke: '#475569',
+		edgeDim: '#1E293B',
+		arrowFill: '#64748B',
+		pillFill: '#1E293B',
+		pillStroke: '#334155',
+		edgeText: '#94A3B8',
+		nodeText: '#FFFFFF',
+		typeBadgeText: '#94A3B8',
+		typeBadgeOpacity: 0.85,
 	});
 
 	let containerEl: HTMLDivElement;
 	let simulation: d3.Simulation<SimNode, SimEdge> | null = null;
 
-	// Neo4j-style: all circles, distinguished by color only
-	const TYPE_COLORS: Record<string, { fill: string; stroke: string }> = {
-		person:      { fill: '#1B365D', stroke: '#142847' },
-		company:     { fill: '#1A5276', stroke: '#154360' },
-		sports_team: { fill: '#8B6914', stroke: '#6E5310' },
-		location:    { fill: '#1E6E3E', stroke: '#175A32' },
-		product:     { fill: '#5D6D7E', stroke: '#4A5768' },
-		other:       { fill: '#7B8794', stroke: '#626E7A' },
-	};
+	// Theme-aware node colors — vivid fills with clear contrast in both modes
+	const typeColors = $derived(theme === 'light' ? {
+		person:      { fill: '#2563EB', stroke: '#1D4ED8' },
+		company:     { fill: '#0891B2', stroke: '#0E7490' },
+		sports_team: { fill: '#D97706', stroke: '#B45309' },
+		location:    { fill: '#16A34A', stroke: '#15803D' },
+		product:     { fill: '#7C3AED', stroke: '#6D28D9' },
+		other:       { fill: '#64748B', stroke: '#475569' },
+	} as Record<string, { fill: string; stroke: string }> : {
+		person:      { fill: '#3B82F6', stroke: '#2563EB' },
+		company:     { fill: '#06B6D4', stroke: '#0891B2' },
+		sports_team: { fill: '#F59E0B', stroke: '#D97706' },
+		location:    { fill: '#22C55E', stroke: '#16A34A' },
+		product:     { fill: '#A78BFA', stroke: '#7C3AED' },
+		other:       { fill: '#94A3B8', stroke: '#64748B' },
+	} as Record<string, { fill: string; stroke: string }>);
 
 	function getColors(type: string) {
-		return TYPE_COLORS[type.toLowerCase()] ?? TYPE_COLORS.other;
+		return typeColors[type.toLowerCase()] ?? typeColors.other;
 	}
 
 	const NODE_RADIUS = 26;
@@ -299,7 +308,7 @@
 			.attr('class', 'type-badge')
 			.attr('y', NODE_RADIUS + 14)
 			.attr('text-anchor', 'middle')
-			.attr('fill', (d) => getColors(d.entity_type).fill)
+			.attr('fill', themeColors.typeBadgeText)
 			.attr('font-size', '8px')
 			.attr('font-family', 'system-ui, sans-serif')
 			.attr('opacity', themeColors.typeBadgeOpacity)
@@ -323,7 +332,7 @@
 					const s = typeof e.source === 'object' ? (e.source as SimNode).id : e.source;
 					const t = typeof e.target === 'object' ? (e.target as SimNode).id : e.target;
 					return s === d.id || t === d.id;
-				}).attr('fill', '#e6edf3').attr('font-weight', '600');
+				}).attr('fill', theme === 'light' ? '#1E293B' : '#E2E8F0').attr('font-weight', '600');
 			})
 			.on('mouseleave', function () {
 				d3.select(this).select('.hover-ring').attr('stroke', 'transparent');

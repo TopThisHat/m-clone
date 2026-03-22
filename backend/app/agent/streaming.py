@@ -16,9 +16,9 @@ from app.dependencies import AgentDeps
 
 _MAX_HISTORY_MESSAGES = 60
 
+# NOTE: Keep in sync with TOOL_REGISTRY in tools.py when adding/removing tools.
 TOOL_METADATA: dict[str, dict[str, str]] = {
     "web_search": {"label": "Web Search", "icon": "search"},
-    "tavily_search": {"label": "Web Search", "icon": "search"},
     "wiki_lookup": {"label": "Wikipedia", "icon": "book"},
     "get_financials": {"label": "Financial Data", "icon": "chart"},
     "search_uploaded_documents": {"label": "Documents", "icon": "document"},
@@ -26,6 +26,7 @@ TOOL_METADATA: dict[str, dict[str, str]] = {
     "evaluate_research_completeness": {"label": "Evaluation", "icon": "evaluate"},
     "sec_edgar_search": {"label": "SEC Filing", "icon": "document"},
     "ask_clarification": {"label": "Clarification Needed", "icon": "tool"},
+    "query_knowledge_graph": {"label": "Knowledge Graph", "icon": "graph"},
 }
 
 
