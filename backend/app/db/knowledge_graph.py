@@ -17,6 +17,11 @@ def _kg_entity_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     for ts in ("created_at", "updated_at"):
         if ts in d and d[ts] is not None:
             d[ts] = d[ts].isoformat()
+    # Normalize nullable array/object columns
+    if d.get("aliases") is None:
+        d["aliases"] = []
+    if d.get("metadata") is None:
+        d["metadata"] = {}
     return d
 
 

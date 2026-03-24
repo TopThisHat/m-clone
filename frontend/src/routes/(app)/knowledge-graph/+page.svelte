@@ -204,8 +204,8 @@
 							{entity.entity_type}
 						</span>
 						<span class="text-sm font-medium text-slate-200 flex-1">{entity.name}</span>
-						{#if entity.aliases.length > 0}
-							<span class="text-xs text-slate-600">aka {entity.aliases.slice(0, 2).join(', ')}</span>
+						{#if entity.aliases?.length > 0}
+							<span class="text-xs text-slate-600">aka {(entity.aliases ?? []).slice(0, 2).join(', ')}</span>
 						{/if}
 						<span class="text-xs text-slate-500">{entity.relationship_count} rels</span>
 						<span class="text-slate-600 text-xs">{expandedId === entity.id ? '−' : '+'}</span>

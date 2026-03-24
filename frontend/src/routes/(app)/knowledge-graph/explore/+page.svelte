@@ -116,7 +116,7 @@
 		for (const dp of dealPartners) {
 			ids.add(dp.person1.id);
 			ids.add(dp.person2.id);
-			for (const deal of dp.shared_deals) {
+			for (const deal of (dp.shared_deals ?? [])) {
 				ids.add(deal.entity_id);
 			}
 		}
@@ -130,7 +130,7 @@
 		for (const dp of dealPartners) {
 			personIds.add(dp.person1.id);
 			personIds.add(dp.person2.id);
-			for (const deal of dp.shared_deals) dealEntityIds.add(deal.entity_id);
+			for (const deal of (dp.shared_deals ?? [])) dealEntityIds.add(deal.entity_id);
 		}
 		const ids = new Set<string>();
 		for (const e of graphData.edges) {
@@ -354,7 +354,7 @@
 			name: selectedNode.name,
 			entity_type: selectedNode.entity_type,
 			description: selectedNode.description ?? '',
-			aliases: selectedNode.aliases.join(', '),
+			aliases: (selectedNode.aliases ?? []).join(', '),
 		};
 		editingEntity = true;
 	}
@@ -930,14 +930,14 @@
 
 					{#if queryResult}
 						<!-- Sources used -->
-						{#if queryResult.sources_used.length > 0}
+						{#if queryResult.sources_used?.length > 0}
 							<div class="text-[10px] text-slate-500">
-								Sources: {queryResult.sources_used.join(', ')}
+								Sources: {(queryResult.sources_used ?? []).join(', ')}
 							</div>
 						{/if}
 
 						<!-- Entities -->
-						{#if queryResult.entities.length > 0}
+						{#if queryResult.entities?.length > 0}
 							<div>
 								<h4 class="text-xs font-semibold text-slate-400 mb-1.5">Entities</h4>
 								<div class="space-y-1">
@@ -956,7 +956,7 @@
 						{/if}
 
 						<!-- Relationships -->
-						{#if queryResult.relationships.length > 0}
+						{#if queryResult.relationships?.length > 0}
 							<div>
 								<h4 class="text-xs font-semibold text-slate-400 mb-1.5">
 									Relationships
@@ -980,7 +980,7 @@
 							</div>
 						{/if}
 
-						{#if queryResult.entities.length === 0 && queryResult.relationships.length === 0}
+						{#if (queryResult.entities?.length ?? 0) === 0 && (queryResult.relationships?.length ?? 0) === 0}
 							<p class="text-xs text-slate-500">No results found.</p>
 						{/if}
 					{/if}
@@ -1015,9 +1015,9 @@
 					<p class="text-xs text-slate-400 mt-2">{selectedNode.description}</p>
 				{/if}
 
-				{#if selectedNode.aliases.length > 0}
+				{#if selectedNode.aliases?.length > 0}
 					<p class="text-xs text-slate-500 mt-2">
-						Also known as: {selectedNode.aliases.join(', ')}
+						Also known as: {(selectedNode.aliases ?? []).join(', ')}
 					</p>
 				{/if}
 
