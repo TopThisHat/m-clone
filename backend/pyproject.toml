@@ -14,6 +14,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "yfinance>=0.2.40",
     "Wikipedia-API>=0.7",
+    "certifi>=2024.0",
     "httpx>=0.27",
     "python-dotenv>=1.0",
     "tavily-python>=0.5",

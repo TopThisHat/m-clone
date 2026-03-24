@@ -9,7 +9,10 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from contextlib import contextmanager
+from pathlib import Path
 
+import certifi
 import httpx
 from openai import AsyncOpenAI
 
@@ -18,6 +21,71 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _client: AsyncOpenAI | None = None
+
+_CERT_EXTENSIONS = {".cert", ".crt", ".pem"}
+
+
+def _build_combined_ca_bundle(cert_dir: Path) -> str:
+    """Build a CA bundle combining system CAs (certifi) with proxy certs.
+
+    Returns the path to a temp file containing the combined bundle,
+    or certifi.where() if cert_dir doesn't exist or has no cert files.
+    """
+    if not cert_dir.is_dir():
+        return certifi.where()
+
+    extra_certs: list[Path] = [
+        p for p in sorted(cert_dir.iterdir())
+        if p.is_file() and p.suffix in _CERT_EXTENSIONS
+    ]
+    if not extra_certs:
+        return certifi.where()
+
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=".pem", delete=False, mode="w", encoding="utf-8",
+    )
+    # Start with the full system CA bundle
+    tmp.write(Path(certifi.where()).read_text(encoding="utf-8"))
+    # Append each proxy / corporate cert
+    for cert_path in extra_certs:
+        tmp.write("\n")
+        tmp.write(cert_path.read_text(encoding="utf-8"))
+    tmp.flush()
+    bundle_path = tmp.name
+    tmp.close()
+    logger.info(
+        "Combined CA bundle: %s (%d extra certs from %s)",
+        bundle_path, len(extra_certs), cert_dir,
+    )
+    return bundle_path
+
+
+@contextmanager
+def _proxy_env(proxy_url: str | None, ca_bundle: str | None):
+    """Temporarily set HTTPS_PROXY and REQUESTS_CA_BUNDLE, restoring on exit.
+
+    No-ops when proxy_url is None.
+    """
+    if proxy_url is None:
+        yield
+        return
+
+    old_proxy = os.environ.get("HTTPS_PROXY")
+    old_cert = os.environ.get("REQUESTS_CA_BUNDLE")
+    try:
+        os.environ["HTTPS_PROXY"] = proxy_url
+        if ca_bundle:
+            os.environ["REQUESTS_CA_BUNDLE"] = ca_bundle
+        yield
+    finally:
+        if old_proxy is not None:
+            os.environ["HTTPS_PROXY"] = old_proxy
+        else:
+            os.environ.pop("HTTPS_PROXY", None)
+        if old_cert is not None:
+            os.environ["REQUESTS_CA_BUNDLE"] = old_cert
+        else:
+            os.environ.pop("REQUESTS_CA_BUNDLE", None)
 
 
 def _build_standard_client() -> AsyncOpenAI:
@@ -52,8 +120,10 @@ def _build_azure_client() -> AsyncOpenAI:
     proxy_cert: str | None = None
     if settings.env_name in ("dev", "uat", "prod") and settings.cloud_proxy_host:
         proxy_url = f"http://{settings.cloud_proxy_host}:{settings.cloud_proxy_port}"
-        proxy_cert = settings.cloud_proxy_cert
-        logger.info("Azure proxy configured: %s (cert: %s)", proxy_url, proxy_cert)
+        # Build combined CA bundle: system CAs + proxy certs from cert directory
+        cert_dir = Path(settings.cloud_proxy_cert).parent
+        proxy_cert = _build_combined_ca_bundle(cert_dir)
+        logger.info("Azure proxy configured: %s (ca_bundle: %s)", proxy_url, proxy_cert)
 
     credential = CertificateCredential(
         tenant_id=tenant_id,
@@ -76,26 +146,10 @@ def _build_azure_client() -> AsyncOpenAI:
             self._proxy_cert = _proxy_cert
 
         def auth_flow(self, request: httpx.Request):
-            old_proxy = os.environ.get("HTTPS_PROXY")
-            old_cert = os.environ.get("REQUESTS_CA_BUNDLE")
-            try:
-                if self._proxy_url:
-                    os.environ["HTTPS_PROXY"] = self._proxy_url
-                if self._proxy_cert:
-                    os.environ["REQUESTS_CA_BUNDLE"] = self._proxy_cert
+            with _proxy_env(self._proxy_url, self._proxy_cert):
                 token = self._cred.get_token(
                     "https://cognitiveservices.azure.com/.default"
                 )
-            finally:
-                # Restore original env — keep proxy out of tool HTTP calls
-                if old_proxy is not None:
-                    os.environ["HTTPS_PROXY"] = old_proxy
-                else:
-                    os.environ.pop("HTTPS_PROXY", None)
-                if old_cert is not None:
-                    os.environ["REQUESTS_CA_BUNDLE"] = old_cert
-                else:
-                    os.environ.pop("REQUESTS_CA_BUNDLE", None)
             request.headers["Authorization"] = f"Bearer {token.token}"
             yield request
 
