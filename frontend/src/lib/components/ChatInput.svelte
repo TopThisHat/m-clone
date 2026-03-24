@@ -1,14 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { startResearch, cancelResearch } from '$lib/api/research';
-	import { uploadPdf } from '$lib/api/documents';
+	import {
+		uploadDocument,
+		uploadDocumentToSession,
+		ACCEPT_STRING,
+		type UploadFileStatus
+	} from '$lib/api/documents';
 	import { isStreaming, errorMessage, messageHistory, chatMessages } from '$lib/stores/reportStore';
+	import { activeSessionId } from '$lib/stores/sessionStore';
 
 	let query = $state('');
-	let pdfSessionKey = $state<string | undefined>(undefined);
-	let uploading = $state(false);
-	let uploadInfo = $state<{ filename: string; pages: number } | null>(null);
-	let uploadError = $state<string | null>(null);
+	let documents = $state<UploadFileStatus[]>([]);
+	let docSessionKey = $state<string | undefined>(undefined);
 	let fileInput = $state<HTMLInputElement | undefined>();
 	let textareaEl = $state<HTMLTextAreaElement | undefined>();
 
@@ -31,54 +35,97 @@
 		}
 	});
 
-	const showPdfAttach = $derived(!$isStreaming);
+	// 9.4: Reset when activeSessionId becomes null (new research)
+	// Intentional imperative reset — not derivable, these states have independent lifecycles
+	$effect(() => {
+		if ($activeSessionId === null) {
+			documents = [];
+			docSessionKey = undefined;
+		}
+	});
+
+	const uploading = $derived(documents.some((d) => d.status === 'uploading' || d.status === 'pending'));
+	const showAttach = $derived(!$isStreaming);
+
+	function getTypeLabel(filename: string): string {
+		const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
+		if (ext === '.pdf') return 'PDF';
+		if (ext === '.xlsx' || ext === '.xls') return 'Excel';
+		if (ext === '.csv') return 'CSV';
+		if (ext === '.tsv') return 'TSV';
+		if (ext === '.docx') return 'Word';
+		if (['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) return 'Image';
+		return 'File';
+	}
+
+	function getMetaLabel(doc: UploadFileStatus): string | null {
+		if (doc.status !== 'success' || !doc.result) return null;
+		const r = doc.result;
+		if (r.pages) return `${r.pages} pg`;
+		if (r.sheets) return `${r.sheets} sheets`;
+		if (r.rows) return `${r.rows} rows`;
+		return null;
+	}
 
 	async function handleFileSelect(e: Event) {
 		const input = e.target as HTMLInputElement;
-		const file = input.files?.[0];
-		if (!file) return;
-		uploading = true;
-		uploadError = null;
-		uploadInfo = null;
-		try {
-			const result = await uploadPdf(file);
-			pdfSessionKey = result.session_key;
-			uploadInfo = { filename: result.filename, pages: result.pages };
-		} catch (err) {
-			uploadError = err instanceof Error ? err.message : 'Upload failed';
-			pdfSessionKey = undefined;
-		} finally {
-			uploading = false;
-		}
-	}
+		const files = input.files;
+		if (!files || files.length === 0) return;
 
-	function removeDocument() {
-		pdfSessionKey = undefined;
-		uploadInfo = null;
-		uploadError = null;
+		const fileList = Array.from(files);
+
+		for (const file of fileList) {
+			const entry: UploadFileStatus = { filename: file.name, status: 'uploading' };
+			documents = [...documents, entry];
+			const idx = documents.length - 1;
+
+			try {
+				const result = docSessionKey
+					? await uploadDocumentToSession(file, docSessionKey)
+					: await uploadDocument(file);
+
+				docSessionKey = result.session_key;
+				documents = documents.map((d, j) =>
+					j === idx ? { ...d, status: 'success' as const, result } : d
+				);
+			} catch (err) {
+				const errorMsg = err instanceof Error ? err.message : 'Upload failed';
+				documents = documents.map((d, j) =>
+					j === idx ? { ...d, status: 'error' as const, error: errorMsg } : d
+				);
+			}
+		}
+
 		if (fileInput) fileInput.value = '';
 	}
 
+	function removeDocument(index: number) {
+		documents = documents.filter((_, i) => i !== index);
+		if (documents.length === 0) {
+			docSessionKey = undefined;
+		}
+	}
+
+	// 9.2: Capture docSessionKey, clear UI, then pass captured key
 	async function handleSubmit() {
 		const q = query.trim();
 		if (!q || $isStreaming || uploading) return;
 
 		const history = $messageHistory;
-		const pdfKey = pdfSessionKey;
+		const capturedDocKey = docSessionKey;
 
 		query = '';
 		resetTextarea();
 		errorMessage.set(null);
 
-		// Clear PDF after first send
-		if (pdfKey) {
-			pdfSessionKey = undefined;
-			uploadInfo = null;
+		if (capturedDocKey) {
+			docSessionKey = undefined;
+			documents = [];
 			if (fileInput) fileInput.value = '';
 		}
 
 		try {
-			await startResearch(q, pdfKey, history, depth, selectedModel);
+			await startResearch(q, capturedDocKey, history, depth, selectedModel);
 		} catch (err) {
 			if (err instanceof Error && err.name === 'AbortError') return;
 			errorMessage.set(err instanceof Error ? err.message : 'An error occurred');
@@ -103,59 +150,81 @@
 		textareaEl.style.height = Math.min(textareaEl.scrollHeight, 160) + 'px';
 	}
 
+	const isTruncated = $derived(documents.some((d) => d.result?.truncated));
+
 	const placeholder = $derived(
 		$chatMessages.length > 0 ? 'Ask a follow-up question...' : 'Ask a research question...'
 	);
 </script>
 
 <div class="flex flex-col gap-2">
-	{#if uploadError}
-		<p class="text-red-400 text-xs px-1">{uploadError}</p>
-	{/if}
-
-	<!-- Attached PDF indicator -->
-	{#if uploadInfo}
-		<div
-			class="flex items-center justify-between bg-navy-700 border border-navy-600 rounded-lg px-4 py-2"
-		>
-			<div class="flex items-center gap-2 min-w-0">
-				<svg
-					class="w-3.5 h-3.5 text-gold flex-shrink-0"
-					fill="none"
-					stroke="currentColor"
-					viewBox="0 0 24 24"
+	<!-- Document chips + errors -->
+	{#if documents.length > 0}
+		<div class="flex flex-wrap gap-1.5">
+			{#each documents as doc, i (i)}
+				<div
+					class="flex items-center gap-1.5 bg-navy-700 border rounded px-2.5 py-1
+					       {doc.status === 'error' ? 'border-red-800/50' : 'border-navy-600'}"
 				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width="1.5"
-						d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-					/>
-				</svg>
-				<span class="text-xs text-slate-300 truncate">{uploadInfo.filename}</span>
-				<span class="text-xs text-slate-500 flex-shrink-0">{uploadInfo.pages}p</span>
-			</div>
-			<button
-				onclick={removeDocument}
-				class="text-slate-500 hover:text-red-400 text-xs ml-2 flex-shrink-0 transition-colors"
-				aria-label="Remove document"
-			>
-				✕
-			</button>
+					{#if doc.status === 'uploading'}
+						<span class="flex gap-0.5">
+							{#each [0, 1, 2] as j (j)}
+								<span
+									class="w-1 h-1 bg-gold rounded-full animate-bounce"
+									style="animation-delay: {j * 0.12}s"
+								></span>
+							{/each}
+						</span>
+					{:else}
+						<span
+							class="text-[10px] font-medium px-1 py-0.5 rounded
+							       {doc.status === 'error' ? 'bg-red-900/40 text-red-400' : 'bg-navy-600 text-gold'}"
+						>
+							{getTypeLabel(doc.filename)}
+						</span>
+					{/if}
+					<span class="text-xs text-slate-300 truncate max-w-[120px]">{doc.filename}</span>
+					{#if doc.status === 'success'}
+						{@const meta = getMetaLabel(doc)}
+						{#if meta}
+							<span class="text-[10px] text-slate-500">{meta}</span>
+						{/if}
+					{/if}
+					{#if doc.status === 'error'}
+						<span class="text-[10px] text-red-400 truncate max-w-[100px]">{doc.error}</span>
+					{/if}
+					{#if doc.status !== 'uploading'}
+						<button
+							onclick={() => removeDocument(i)}
+							class="text-slate-500 hover:text-red-400 transition-colors text-xs ml-0.5 flex-shrink-0"
+							aria-label="Remove {doc.filename}"
+						>
+							&#10005;
+						</button>
+					{/if}
+				</div>
+			{/each}
 		</div>
+
+		{#if isTruncated}
+			<p class="text-amber-400 text-xs px-1">
+				Some documents were truncated to fit within the session size limit.
+			</p>
+		{/if}
 	{/if}
 
 	<!-- Input row -->
 	<div class="flex items-end gap-2">
-		<!-- PDF attach icon (only on fresh conversation) -->
-		{#if showPdfAttach}
+		<!-- Attach icon -->
+		{#if showAttach}
 			<label
-				class="flex-shrink-0 cursor-pointer text-slate-500 hover:text-gold transition-colors pb-3"
-				title="Attach PDF document"
+				class="flex-shrink-0 cursor-pointer text-slate-500 hover:text-gold transition-colors pb-3
+				       {uploading ? 'pointer-events-none opacity-60' : ''}"
+				title="Attach documents"
 			>
 				{#if uploading}
 					<span class="flex gap-0.5 pb-0.5">
-						{#each [0, 1, 2] as i}
+						{#each [0, 1, 2] as i (i)}
 							<span
 								class="w-1 h-1 bg-gold rounded-full animate-bounce"
 								style="animation-delay: {i * 0.12}s"
@@ -175,7 +244,8 @@
 				<input
 					bind:this={fileInput}
 					type="file"
-					accept=".pdf"
+					accept={ACCEPT_STRING}
+					multiple
 					onchange={handleFileSelect}
 					class="hidden"
 					disabled={uploading}
@@ -229,7 +299,7 @@
 		<div class="flex items-center gap-3 flex-wrap">
 			<!-- Depth selector -->
 			<div class="flex rounded-lg border border-navy-600 overflow-hidden text-xs">
-				{#each ['fast', 'balanced', 'deep'] as d}
+				{#each ['fast', 'balanced', 'deep'] as d (d)}
 					<button
 						onclick={() => (depth = d as 'fast' | 'balanced' | 'deep')}
 						class="flex-1 px-3 py-1.5 transition-colors
@@ -246,7 +316,7 @@
 					bind:value={selectedModel}
 					class="input-base text-xs py-1.5 px-3 w-auto"
 				>
-					{#each models as m}
+					{#each models as m (m.id)}
 						<option value={m.id}>{m.label} — {m.description}</option>
 					{/each}
 				</select>

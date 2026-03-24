@@ -559,7 +559,7 @@ async def sec_edgar_search(
 
 @_register(
     "search_uploaded_documents",
-    "Search through text extracted from PDFs that the user uploaded.",
+    "Search through text extracted from documents the user uploaded (PDF, DOCX, Excel, CSV, images, etc.).",
     {
         "type": "object",
         "properties": {
@@ -569,10 +569,10 @@ async def sec_edgar_search(
     },
 )
 async def search_uploaded_documents(deps: AgentDeps, query: str) -> str:
-    if not deps.pdf_context:
+    if not deps.doc_context:
         return "No documents have been uploaded for this research session."
 
-    chunks = [c.strip() for c in deps.pdf_context.split("\n\n") if c.strip()]
+    chunks = [c.strip() for c in deps.doc_context.split("\n\n") if c.strip()]
     if not chunks:
         return f"No relevant passages found in uploaded documents for: '{query}'"
 

@@ -16,11 +16,40 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+_EXTENSION_TYPE_MAP: dict[str, str] = {
+    ".pdf": "pdf",
+    ".docx": "docx",
+    ".xlsx": "xlsx",
+    ".xls": "xlsx",
+    ".csv": "csv",
+    ".tsv": "csv",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".gif": "image",
+    ".webp": "image",
+}
+
+
+@dataclass
+class DocumentSession:
+    text: str
+    filenames: list[str] = field(default_factory=list)
+    metadata: list[dict] = field(default_factory=list)
+
+
+def _infer_type_from_filename(filename: str) -> str:
+    _, ext = os.path.splitext(filename.lower())
+    return _EXTENSION_TYPE_MAP.get(ext, "unknown")
+
 
 # Resolved once at first use; falls back to a sentinel that is never raised
 # so the except clauses below are safe even when redis isn't installed.
@@ -29,8 +58,8 @@ try:
 except ImportError:
     _RedisAuthError = type("_RedisAuthError", (Exception,), {})  # type: ignore[assignment,misc]
 
-# In-memory fallback store: {key: (text, filename)}
-_memory_store: dict[str, tuple[str, str]] = {}
+# In-memory fallback store
+_memory_store: dict[str, Any] = {}
 
 _redis_client: Any = None
 _client_lock: asyncio.Lock | None = None
@@ -111,8 +140,260 @@ async def _reset_client() -> None:
     logger.warning("Redis client reset — fresh credentials will be fetched on next request")
 
 
+async def set_documents(
+    key: str,
+    docs: list[dict],
+    ttl_hours: int | None = None,
+) -> None:
+    """Store a list of document entries under ``doc:<key>``.
+
+    Each entry should contain at minimum ``filename``, ``text``, ``type``, and
+    ``char_count``.  Falls back to in-memory dict if Redis is unavailable.
+    """
+    ttl = (ttl_hours or settings.redis_ttl_hours) * 3600
+    client = await _get_client()
+    if client is not None:
+        try:
+            payload = json.dumps(docs)
+            await client.setex(f"doc:{key}", ttl, payload)
+            return
+        except _RedisAuthError as exc:
+            logger.warning("Redis auth error on set_documents — attempting rotation recovery: %s", exc)
+            await _reset_client()
+            client = await _get_client()
+            if client is not None:
+                try:
+                    payload = json.dumps(docs)
+                    await client.setex(f"doc:{key}", ttl, payload)
+                    return
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    _memory_store[key] = docs
+
+
+async def append_document(
+    session_key: str,
+    filename: str,
+    text: str,
+    doc_type: str | None = None,
+    char_count: int | None = None,
+    metadata_fields: dict | None = None,
+    ttl_hours: int | None = None,
+) -> list[dict]:
+    """Append a document to an existing session and return metadata (no text).
+
+    Handles migration from old ``pdf:`` prefix and old ``(text, filename)``
+    in-memory tuple format to the new ``doc:`` list format.
+    """
+    ttl = (ttl_hours or settings.redis_ttl_hours) * 3600
+    resolved_type = doc_type or _infer_type_from_filename(filename)
+    resolved_char_count = char_count if char_count is not None else len(text)
+
+    entry: dict[str, Any] = {
+        "filename": filename,
+        "text": text,
+        "type": resolved_type,
+        "char_count": resolved_char_count,
+    }
+    if metadata_fields:
+        for k, v in metadata_fields.items():
+            if k not in entry:
+                entry[k] = v
+
+    docs: list[dict] = []
+
+    client = await _get_client()
+    if client is not None:
+        try:
+            docs = await _redis_append(client, session_key, entry, ttl)
+        except _RedisAuthError as exc:
+            logger.warning("Redis auth error on append_document — attempting rotation recovery: %s", exc)
+            await _reset_client()
+            client = await _get_client()
+            if client is not None:
+                try:
+                    docs = await _redis_append(client, session_key, entry, ttl)
+                except Exception:
+                    docs = _memory_append(session_key, entry)
+            else:
+                docs = _memory_append(session_key, entry)
+        except Exception:
+            docs = _memory_append(session_key, entry)
+    else:
+        docs = _memory_append(session_key, entry)
+
+    # Return metadata only (strip text)
+    return [{k: v for k, v in d.items() if k != "text"} for d in docs]
+
+
+async def _redis_append(client: Any, key: str, entry: dict, ttl: int) -> list[dict]:
+    """Load existing docs from Redis, append *entry*, store and return full list."""
+    docs: list[dict] = []
+
+    # Try new prefix first
+    raw = await client.get(f"doc:{key}")
+    if raw:
+        docs = json.loads(raw)
+    else:
+        # Fall back to old prefix
+        raw = await client.get(f"pdf:{key}")
+        if raw:
+            old = json.loads(raw)
+            if isinstance(old, dict):
+                docs = [{
+                    "filename": old.get("filename", "document.pdf"),
+                    "text": old.get("text", ""),
+                    "type": _infer_type_from_filename(old.get("filename", "document.pdf")),
+                    "char_count": len(old.get("text", "")),
+                }]
+            elif isinstance(old, list):
+                docs = old
+            # Remove old key
+            await client.delete(f"pdf:{key}")
+
+    docs.append(entry)
+    await client.setex(f"doc:{key}", ttl, json.dumps(docs))
+    return docs
+
+
+def _memory_append(key: str, entry: dict) -> list[dict]:
+    """In-memory fallback for append_document, with old-format migration."""
+    existing = _memory_store.get(key)
+    docs: list[dict] = []
+
+    if existing is not None:
+        if isinstance(existing, tuple) and len(existing) == 2:
+            old_text, old_fn = existing
+            docs = [{
+                "filename": old_fn,
+                "text": old_text,
+                "type": _infer_type_from_filename(old_fn),
+                "char_count": len(old_text),
+            }]
+        elif isinstance(existing, list):
+            docs = existing
+        elif isinstance(existing, dict):
+            docs = [{
+                "filename": existing.get("filename", "document.pdf"),
+                "text": existing.get("text", ""),
+                "type": _infer_type_from_filename(existing.get("filename", "document.pdf")),
+                "char_count": len(existing.get("text", "")),
+            }]
+
+    docs.append(entry)
+    _memory_store[key] = docs
+    return docs
+
+
+async def get_documents(session_key: str) -> DocumentSession | None:
+    """Retrieve all documents for a session as a ``DocumentSession``.
+
+    Checks ``doc:`` prefix first, falls back to ``pdf:`` for migration.
+    Handles both old dict and old tuple formats in the in-memory store.
+    """
+    client = await _get_client()
+    if client is not None:
+        try:
+            return await _redis_get_documents(client, session_key)
+        except _RedisAuthError as exc:
+            logger.warning("Redis auth error on get_documents — attempting rotation recovery: %s", exc)
+            await _reset_client()
+            client = await _get_client()
+            if client is not None:
+                try:
+                    return await _redis_get_documents(client, session_key)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    return _memory_get_documents(session_key)
+
+
+async def _redis_get_documents(client: Any, key: str) -> DocumentSession | None:
+    """Load documents from Redis, trying ``doc:`` then ``pdf:`` prefix."""
+    raw = await client.get(f"doc:{key}")
+    if raw:
+        docs = json.loads(raw)
+        return _docs_list_to_session(docs)
+
+    raw = await client.get(f"pdf:{key}")
+    if raw:
+        old = json.loads(raw)
+        if isinstance(old, dict):
+            return DocumentSession(
+                text=old.get("text", ""),
+                filenames=[old.get("filename", "document.pdf")],
+                metadata=[{
+                    "filename": old.get("filename", "document.pdf"),
+                    "type": _infer_type_from_filename(old.get("filename", "document.pdf")),
+                    "char_count": len(old.get("text", "")),
+                }],
+            )
+        if isinstance(old, list):
+            return _docs_list_to_session(old)
+
+    return None
+
+
+def _memory_get_documents(key: str) -> DocumentSession | None:
+    """Build a ``DocumentSession`` from the in-memory fallback store."""
+    existing = _memory_store.get(key)
+    if existing is None:
+        return None
+
+    if isinstance(existing, tuple) and len(existing) == 2:
+        text, fn = existing
+        return DocumentSession(
+            text=text,
+            filenames=[fn],
+            metadata=[{
+                "filename": fn,
+                "type": _infer_type_from_filename(fn),
+                "char_count": len(text),
+            }],
+        )
+
+    if isinstance(existing, list):
+        return _docs_list_to_session(existing)
+
+    if isinstance(existing, dict):
+        return DocumentSession(
+            text=existing.get("text", ""),
+            filenames=[existing.get("filename", "document.pdf")],
+            metadata=[{
+                "filename": existing.get("filename", "document.pdf"),
+                "type": _infer_type_from_filename(existing.get("filename", "document.pdf")),
+                "char_count": len(existing.get("text", "")),
+            }],
+        )
+
+    return None
+
+
+def _docs_list_to_session(docs: list[dict]) -> DocumentSession:
+    """Convert a list of doc entries into a ``DocumentSession``."""
+    texts = [d.get("text", "") for d in docs]
+    filenames = [d.get("filename", "") for d in docs]
+    metadata = [{k: v for k, v in d.items() if k != "text"} for d in docs]
+    return DocumentSession(
+        text="\n\n".join(texts),
+        filenames=filenames,
+        metadata=metadata,
+    )
+
+
+# ---- Deprecated wrappers ----
+
+
 async def set_pdf(key: str, text: str, filename: str, ttl_hours: int | None = None) -> None:
-    """Store extracted PDF text. Falls back to in-memory dict if Redis is unavailable."""
+    """Store extracted PDF text. Falls back to in-memory dict if Redis is unavailable.
+
+    .. deprecated:: Use :func:`set_documents` instead.
+    """
+    logger.warning("set_pdf is deprecated, use set_documents")
     ttl = (ttl_hours or settings.redis_ttl_hours) * 3600
     client = await _get_client()
     if client is not None:
@@ -137,7 +418,11 @@ async def set_pdf(key: str, text: str, filename: str, ttl_hours: int | None = No
 
 
 async def get_pdf(key: str) -> tuple[str, str] | None:
-    """Retrieve extracted PDF text and filename. Returns None if not found."""
+    """Retrieve extracted PDF text and filename. Returns None if not found.
+
+    .. deprecated:: Use :func:`get_documents` instead.
+    """
+    logger.warning("get_pdf is deprecated, use get_documents")
     client = await _get_client()
     if client is not None:
         try:

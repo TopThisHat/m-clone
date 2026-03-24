@@ -161,6 +161,7 @@ async def extract_image(contents: bytes, filename: str = "", mime_type: str = ""
             ],
         }],
         max_tokens=4000,
+        timeout=60,
     )
     return resp.choices[0].message.content or ""
 
@@ -211,6 +212,48 @@ def get_extension(filename: str) -> str:
     if "." not in filename:
         return ""
     return "." + filename.rsplit(".", 1)[-1].lower()
+
+
+def get_format_metadata(contents: bytes, filename: str, ext: str) -> dict:
+    """Return lightweight metadata about a document without full extraction.
+
+    Returns a dict with at least ``"type"`` and format-specific counts
+    (pages, sheets, rows) where applicable.  Resources opened for
+    inspection are always closed via ``finally`` blocks.
+    """
+    if ext == ".pdf":
+        import pdfplumber
+
+        pdf = pdfplumber.open(io.BytesIO(contents))
+        try:
+            return {"type": "pdf", "pages": len(pdf.pages)}
+        finally:
+            pdf.close()
+
+    elif ext in (".xlsx", ".xls"):
+        from openpyxl import load_workbook
+
+        wb = load_workbook(io.BytesIO(contents), data_only=True, read_only=True)
+        try:
+            return {"type": "xlsx", "sheets": len(wb.sheetnames)}
+        finally:
+            wb.close()
+
+    elif ext in (".csv", ".tsv"):
+        text = contents.decode("utf-8", errors="replace")
+        delimiter = "\t" if ext == ".tsv" else ","
+        reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+        row_count = sum(1 for row in reader if any(cell.strip() for cell in row))
+        return {"type": "csv", "rows": row_count}
+
+    elif ext == ".docx":
+        return {"type": "docx"}
+
+    elif ext in IMAGE_EXTENSIONS:
+        return {"type": "image"}
+
+    else:
+        return {"type": "unknown"}
 
 
 async def extract_text(contents: bytes, filename: str) -> str:

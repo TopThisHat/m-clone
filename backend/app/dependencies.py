@@ -10,8 +10,9 @@ from app.config import settings
 class AgentDeps:
     tavily_api_key: str
     wiki: wikipediaapi.Wikipedia
-    pdf_context: str = ""
+    doc_context: str = ""
     uploaded_filenames: list[str] = field(default_factory=list)
+    uploaded_doc_metadata: list[dict] = field(default_factory=list)
     research_plan: list[str] = field(default_factory=list)
     evaluation_count: int = 0
     tool_cache: dict = field(default_factory=dict)
@@ -42,22 +43,27 @@ _DEPTH_MAP = {"fast": "simple", "balanced": "standard", "deep": "deep"}
 
 
 def get_agent_deps(
-    pdf_context: str = "",
+    doc_context: str = "",
     uploaded_filenames: list[str] | None = None,
+    uploaded_doc_metadata: list[dict] | None = None,
     memory_context: str = "",
     depth: str = "balanced",
     user_rules: list[str] | None = None,
     team_ids: list[str] | None = None,
     include_master: bool = False,
+    # Deprecated alias — will be removed
+    pdf_context: str = "",
 ) -> AgentDeps:
+    resolved_context = doc_context or pdf_context
     return AgentDeps(
         tavily_api_key=settings.tavily_api_key,
         wiki=wikipediaapi.Wikipedia(
             language="en",
             user_agent="m-clone-research-agent/1.0",
         ),
-        pdf_context=pdf_context,
+        doc_context=resolved_context,
         uploaded_filenames=uploaded_filenames or [],
+        uploaded_doc_metadata=uploaded_doc_metadata or [],
         memory_context=memory_context,
         query_complexity=_DEPTH_MAP.get(depth, "standard"),
         user_rules=user_rules or [],

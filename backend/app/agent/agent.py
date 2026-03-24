@@ -248,7 +248,7 @@ You have access to:
 - `web_search` (Tavily) — current news, named individuals, reported deals
 - `wiki_lookup` — encyclopedic background, histories, ownership structures
 - `get_financials` (Yahoo Finance) — market data, valuations, fundamentals
-- `search_uploaded_documents` — PDFs the client has uploaded
+- `search_uploaded_documents` — documents the client has uploaded (PDF, DOCX, Excel, CSV, images)
 
 ---
 
@@ -303,8 +303,30 @@ OrchestratorEvent = TextDelta | ToolCallStart | ToolResult | FinalResult
 # ── Helper: build system messages ────────────────────────────────────────────
 
 def _build_system_content(deps: AgentDeps) -> str:
-    """Combine SYSTEM_PROMPT + user rules + current date."""
+    """Combine SYSTEM_PROMPT + uploaded document metadata + user rules + current date."""
     parts = [SYSTEM_PROMPT.strip()]
+
+    if deps.uploaded_doc_metadata:
+        lines = []
+        for m in deps.uploaded_doc_metadata:
+            desc = f"- **{m.get('filename', 'unknown')}** ({m.get('type', 'unknown')}, {m.get('char_count', 0):,} chars"
+            extras = []
+            if "pages" in m:
+                extras.append(f"{m['pages']} pages")
+            if "sheets" in m:
+                extras.append(f"{m['sheets']} sheets")
+            if "rows" in m:
+                extras.append(f"{m['rows']} rows")
+            if extras:
+                desc += ", " + ", ".join(extras)
+            desc += ")"
+            lines.append(desc)
+        parts.append(
+            "\n## Uploaded Documents\n\n"
+            "The user has uploaded the following documents for this research session. "
+            "Use `search_uploaded_documents` to search their contents.\n\n"
+            + "\n".join(lines)
+        )
 
     if deps.user_rules:
         rules_text = "\n".join(f"- {r}" for r in deps.user_rules)

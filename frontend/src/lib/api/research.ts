@@ -44,7 +44,7 @@ function generateSuggestions(markdown: string): string[] {
 
 export async function startResearch(
 	query: string,
-	pdfSessionKey?: string,
+	docSessionKey?: string,
 	msgHistory?: unknown[] | null,
 	depth?: string,
 	model?: string
@@ -82,7 +82,7 @@ export async function startResearch(
 
 	const body: Record<string, unknown> = {
 		query,
-		pdf_session_key: pdfSessionKey ?? null,
+		doc_session_key: docSessionKey ?? null,
 		depth: depth ?? 'balanced',
 		model: model ?? null,
 		rules: get(rules).map((r) => r.text)

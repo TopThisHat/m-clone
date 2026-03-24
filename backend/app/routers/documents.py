@@ -1,58 +1,138 @@
-import io
 import uuid
 
-import pdfplumber
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.auth import get_current_user
 from app.config import settings
-from app.document_parser import SUPPORTED_EXTENSIONS, get_extension, extract_text
-from app.redis_client import get_pdf, set_pdf
+from app.document_parser import (
+    SUPPORTED_EXTENSIONS,
+    extract_text,
+    get_extension,
+    get_format_metadata,
+)
+from app.redis_client import (
+    DocumentSession,
+    append_document,
+    get_documents,
+    set_documents,
+)
 from app.streams import publish_for_extraction
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
+SESSION_TEXT_CAP = 500_000
+
 
 @router.post("/upload")
-async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user)):
-    """Upload a PDF document for use in research sessions."""
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+async def upload_document(
+    file: UploadFile = File(...),
+    session_key: str | None = Query(None),
+    user=Depends(get_current_user),
+):
+    """Upload a document for use in research sessions."""
+    filename = file.filename or ""
+    ext = get_extension(filename)
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Accepted: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
+        )
 
     contents = await file.read()
     size_mb = len(contents) / (1024 * 1024)
-    if size_mb > settings.max_pdf_size_mb:
+    if size_mb > settings.max_upload_size_mb:
         raise HTTPException(
             status_code=413,
-            detail=f"File size ({size_mb:.1f}MB) exceeds the {settings.max_pdf_size_mb}MB limit.",
+            detail=f"File size ({size_mb:.1f}MB) exceeds the {settings.max_upload_size_mb}MB limit.",
         )
 
-    extracted_pages: list[str] = []
+    # Extract metadata and text in a single try/except — if metadata fails,
+    # the same library would fail on text extraction too.
     try:
-        with pdfplumber.open(io.BytesIO(contents)) as pdf:
-            for i, page in enumerate(pdf.pages):
-                text = page.extract_text()
-                if text and text.strip():
-                    extracted_pages.append(f"[Page {i + 1}]\n{text.strip()}")
+        format_meta = get_format_metadata(contents, filename, ext)
+        text = await extract_text(contents, filename)
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Failed to parse PDF: {exc}") from exc
-
-    if not extracted_pages:
         raise HTTPException(
             status_code=422,
-            detail="Could not extract any text from the PDF. It may be image-only or corrupted.",
+            detail=f"Failed to extract text from '{filename}': {exc}",
+        ) from exc
+
+    if not text or not text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Could not extract any text from the file. It may be empty or corrupted.",
         )
 
-    full_text = "\n\n".join(extracted_pages)
-    session_key = str(uuid.uuid4())
-    await set_pdf(session_key, full_text, file.filename)
+    doc_type = format_meta.get("type", "unknown")
+    truncated = False
 
-    return {
-        "session_key": session_key,
-        "filename": file.filename,
-        "pages": len(extracted_pages),
-        "char_count": len(full_text),
+    # Build per-document metadata entry (for the response and Redis)
+    doc_meta: dict = {
+        "filename": filename,
+        "type": doc_type,
+        "char_count": len(text),
     }
+    # Add format-specific fields (pages, sheets, rows)
+    for key in ("pages", "sheets", "rows"):
+        if key in format_meta:
+            doc_meta[key] = format_meta[key]
+
+    # Session handling
+    is_append = False
+    if session_key:
+        existing = await get_documents(session_key)
+        if existing and existing.filenames:
+            is_append = True
+
+    if is_append:
+        # Compute existing session char total from stored metadata
+        session_total = sum(m.get("char_count", 0) for m in existing.metadata)
+        if session_total + len(text) > SESSION_TEXT_CAP:
+            allowed = max(0, SESSION_TEXT_CAP - session_total)
+            text = text[:allowed]
+            doc_meta["char_count"] = len(text)
+            truncated = True
+
+        docs_list = await append_document(
+            session_key,
+            filename,
+            text,
+            doc_type=doc_type,
+            char_count=len(text),
+            metadata_fields={k: v for k, v in doc_meta.items()
+                             if k not in ("filename", "type", "char_count")},
+        )
+        session_total = sum(d.get("char_count", 0) for d in docs_list)
+    else:
+        # New session — generate a fresh key
+        session_key = str(uuid.uuid4())
+        await set_documents(session_key, [{
+            "filename": filename,
+            "text": text,
+            "type": doc_type,
+            "char_count": len(text),
+            **{k: v for k, v in doc_meta.items()
+               if k not in ("filename", "type", "char_count")},
+        }])
+        docs_list = [doc_meta]
+        session_total = len(text)
+
+    # Build unified response
+    response: dict = {
+        "session_key": session_key,
+        "filename": filename,
+        "char_count": doc_meta["char_count"],
+        "session_char_count": session_total,
+        "type": doc_type,
+        "truncated": truncated,
+        "documents": docs_list,
+    }
+    # Add format-specific top-level fields
+    for key in ("pages", "sheets", "rows"):
+        if key in format_meta:
+            response[key] = format_meta[key]
+
+    return response
 
 
 @router.post("/upload-to-kg")
@@ -75,11 +155,10 @@ async def upload_to_kg(
 
     contents = await file.read()
     size_mb = len(contents) / (1024 * 1024)
-    max_mb = getattr(settings, "max_pdf_size_mb", 25)
-    if size_mb > max_mb:
+    if size_mb > settings.max_upload_size_mb:
         raise HTTPException(
             status_code=413,
-            detail=f"File size ({size_mb:.1f}MB) exceeds the {max_mb}MB limit.",
+            detail=f"File size ({size_mb:.1f}MB) exceeds the {settings.max_upload_size_mb}MB limit.",
         )
 
     # Extract text from the document
@@ -115,12 +194,11 @@ async def upload_to_kg(
     }
 
 
-async def get_pdf_text(session_key: str | None) -> tuple[str, list[str]]:
-    """Retrieve extracted PDF text and filename by session key."""
+async def get_document_text(session_key: str | None) -> DocumentSession:
+    """Retrieve extracted document text by session key."""
     if not session_key:
-        return "", []
-    entry = await get_pdf(session_key)
-    if not entry:
-        return "", []
-    text, filename = entry
-    return text, [filename]
+        return DocumentSession(text="", filenames=[], metadata=[])
+    session = await get_documents(session_key)
+    if not session:
+        return DocumentSession(text="", filenames=[], metadata=[])
+    return session

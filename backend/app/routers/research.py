@@ -15,7 +15,7 @@ from app.db import db_is_super_admin, db_is_team_member, db_list_user_teams
 from app.dependencies import get_agent_deps
 from app.models.job import AsyncResearchRequest, JobStatus
 from app.models.request import ResearchRequest
-from app.routers.documents import get_pdf_text
+from app.routers.documents import get_document_text
 
 router = APIRouter(prefix="/api", tags=["research"])
 
@@ -57,7 +57,7 @@ def available_models():
 @router.post("/research")
 async def research_endpoint(body: ResearchRequest, request: Request, user=Depends(get_optional_user)):
     """Stream a research session as Server-Sent Events."""
-    pdf_text, filenames = await get_pdf_text(body.pdf_session_key)
+    doc_session = await get_document_text(body.doc_session_key)
 
     # Retrieve prior memory context
     memory_ctx = ""
@@ -80,8 +80,9 @@ async def research_endpoint(body: ResearchRequest, request: Request, user=Depend
             team_ids = [str(t["id"]) for t in teams]
 
     deps = get_agent_deps(
-        pdf_context=pdf_text,
-        uploaded_filenames=filenames,
+        doc_context=doc_session.text,
+        uploaded_filenames=doc_session.filenames,
+        uploaded_doc_metadata=doc_session.metadata,
         memory_context=memory_ctx,
         depth=body.depth,
         user_rules=body.rules,
@@ -109,7 +110,7 @@ async def _run_async_job(
     job_id: str,
     query: str,
     webhook_url: str,
-    pdf_session_key: str | None,
+    doc_session_key: str | None,
     team_ids: list[str] | None = None,
     include_master: bool = False,
 ):
@@ -122,7 +123,7 @@ async def _run_async_job(
         pass
 
     try:
-        pdf_text, filenames = await get_pdf_text(pdf_session_key)
+        doc_session = await get_document_text(doc_session_key)
         memory_ctx = ""
         try:
             from app.agent.memory import retrieve_memories
@@ -131,8 +132,9 @@ async def _run_async_job(
             pass
 
         deps = get_agent_deps(
-            pdf_context=pdf_text,
-            uploaded_filenames=filenames,
+            doc_context=doc_session.text,
+            uploaded_filenames=doc_session.filenames,
+            uploaded_doc_metadata=doc_session.metadata,
             memory_context=memory_ctx,
             team_ids=team_ids or [],
             include_master=include_master,
@@ -214,7 +216,7 @@ async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: 
         job_id,
         body.query,
         body.webhook_url,
-        body.pdf_session_key,
+        body.doc_session_key,
         team_ids,
         include_master,
     )
