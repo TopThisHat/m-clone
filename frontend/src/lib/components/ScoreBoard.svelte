@@ -41,8 +41,18 @@
 		onselect?.(next);
 	}
 
+	// Pre-index results by entity_id for O(1) lookup instead of O(n) per render
+	let resultsByEntity = $derived(
+		results.reduce((map, r) => {
+			const arr = map.get(r.entity_id);
+			if (arr) arr.push(r);
+			else map.set(r.entity_id, [r]);
+			return map;
+		}, new Map<string, Result[]>())
+	);
+
 	function entityResults(entityId: string) {
-		return results.filter((r) => r.entity_id === entityId);
+		return resultsByEntity.get(entityId) ?? [];
 	}
 
 	let cachedGwmIds = $derived(
@@ -57,7 +67,7 @@
 		return !!gwm_id && cachedGwmIds.has(gwm_id);
 	}
 
-	let maxScore = $derived(Math.max(...scores.map((s) => s.total_score), 0.01));
+	let maxScore = $derived(scores.length === 0 ? 0.01 : Math.max(...scores.map((s) => s.total_score), 0.01));
 	let attrByLabel = $derived(new Map(attributes.map((a) => [a.label, a])));
 	let totalWeight = $derived(attributes.reduce((s, a) => s + a.weight, 0) || 1);
 
@@ -109,6 +119,7 @@
 				<!-- Main clickable row -->
 				<button
 					onclick={() => toggle(score.entity_id)}
+					aria-expanded={expanded.has(score.entity_id)}
 					class="flex-1 flex items-center gap-4 pr-2 py-3 hover:bg-navy-700/40 transition-colors text-left min-w-0"
 				>
 					<div class="flex-1 min-w-0">

@@ -2,10 +2,14 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { jobsApi, type Job } from '$lib/api/jobs';
 
+	const QUEUED_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
 	let { jobId, onDone, onProgress }: { jobId: string; onDone?: (job: Job) => void; onProgress?: (job: Job) => void } = $props();
 
 	let job = $state<Job | null>(null);
 	let interval: ReturnType<typeof setInterval> | null = null;
+	let queuedSince: number | null = null;
+	let stuckWarning = $state(false);
 
 	async function poll() {
 		try {
@@ -15,9 +19,22 @@
 					clearInterval(interval);
 					interval = null;
 				}
+				queuedSince = null;
+				stuckWarning = false;
 				onDone?.(job);
 			} else if (job && job.status === 'running') {
+				queuedSince = null;
+				stuckWarning = false;
 				onProgress?.(job);
+			} else if (job && job.status === 'queued') {
+				if (queuedSince === null) queuedSince = Date.now();
+				if (Date.now() - queuedSince >= QUEUED_TIMEOUT_MS) {
+					stuckWarning = true;
+					if (interval) {
+						clearInterval(interval);
+						interval = null;
+					}
+				}
 			}
 		} catch {
 			// ignore polling errors
@@ -34,7 +51,10 @@
 	});
 
 	let pct = $derived(
-		job && job.total_pairs > 0 ? Math.round((job.completed_pairs / job.total_pairs) * 100) : 0
+		job && typeof job.total_pairs === 'number' && job.total_pairs > 0 &&
+		typeof job.completed_pairs === 'number'
+			? Math.min(100, Math.round((job.completed_pairs / job.total_pairs) * 100))
+			: 0
 	);
 </script>
 
@@ -67,6 +87,9 @@
 					style="width: {pct}%"
 				></div>
 			</div>
+		{/if}
+		{#if stuckWarning}
+			<p class="text-amber-400 text-xs mt-1">Job may be stuck — queued for over 5 minutes. Try cancelling and re-running.</p>
 		{/if}
 		{#if job.error}
 			<p class="text-red-400 text-xs">{job.error}</p>

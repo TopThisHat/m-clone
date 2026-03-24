@@ -1,9 +1,14 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
+	test: {
+		include: ['src/**/*.test.ts'],
+		environment: 'jsdom',
+		setupFiles: [],
+	},
 	css: {
 		// Disable Vite's built-in PostCSS processing so it doesn't conflict
 		// with @tailwindcss/vite (which handles CSS natively as a Vite plugin).

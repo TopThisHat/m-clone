@@ -99,6 +99,7 @@
 			revalidateJob = job;
 			activeJob = job;
 			lastResultCount = 0;
+			liveResultOffset = 0;
 			selectedEntityIds = new Set();
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to start job');
@@ -111,23 +112,43 @@
 		window.location.href = `/api/campaigns/${campaignId}/export?format=csv`;
 	}
 
+	let resultsTruncated = $state(false);
+
 	async function loadResultsForJobs(jobs: Job[]) {
+		const PAGE_SIZE = 500;
+		const MAX_RESULTS = 10000;
 		const allResults: Result[] = [];
-		for (const job of jobs.slice(0, 5)) {
-			const r = await jobsApi.getResults(job.id, { limit: 500 });
-			allResults.push(...r);
+		let truncated = false;
+
+		for (const job of jobs) {
+			let offset = 0;
+			while (true) {
+				const r = await jobsApi.getResults(job.id, { limit: PAGE_SIZE, offset });
+				allResults.push(...r);
+				if (r.length < PAGE_SIZE) break;
+				offset += PAGE_SIZE;
+				if (allResults.length >= MAX_RESULTS) {
+					truncated = true;
+					break;
+				}
+			}
+			if (truncated) break;
 		}
+
+		resultsTruncated = truncated;
 		const seen = new Map<string, Result>();
 		for (const r of allResults) seen.set(`${r.entity_id}:${r.attribute_id}`, r);
 		return [...seen.values()];
 	}
+
+	let liveResultOffset = $state(0);
 
 	async function refreshIncrementalResults() {
 		if (!activeJob) return;
 		try {
 			const [liveScores, liveResults] = await Promise.all([
 				jobsApi.getLiveScores(activeJob.id),
-				jobsApi.getResults(activeJob.id, { limit: 500 }),
+				jobsApi.getResults(activeJob.id, { limit: 500, offset: liveResultOffset }),
 			]);
 			// Merge live scores with existing finalized scores
 			const scoreMap = new Map(scores.map((s) => [s.entity_id, s]));
@@ -137,6 +158,9 @@
 			const seen = new Map(results.map((r) => [`${r.entity_id}:${r.attribute_id}`, r]));
 			for (const r of liveResults) seen.set(`${r.entity_id}:${r.attribute_id}`, r);
 			results = [...seen.values()];
+			if (liveResults.length > 0) {
+				liveResultOffset += liveResults.length;
+			}
 			lastResultCount = liveResults.length;
 		} catch {
 			// ignore incremental refresh errors
@@ -244,6 +268,12 @@
 	{/if}
 
 	{#if error}<p class="text-red-400 mb-4" role="alert">{error}</p>{/if}
+
+	{#if resultsTruncated}
+		<div class="mb-4 bg-amber-950 border border-amber-700 rounded-xl px-4 py-2.5 text-amber-300 text-sm" role="alert">
+			Results truncated — showing first 10,000 results. Export CSV for the full dataset.
+		</div>
+	{/if}
 
 	<!-- Filter bar -->
 	<div class="bg-navy-800 border border-navy-700 rounded-xl p-4 mb-4 space-y-3">

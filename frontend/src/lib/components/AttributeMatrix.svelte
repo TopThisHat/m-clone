@@ -79,7 +79,8 @@
 		if (cached) return base + 'bg-yellow-950 text-yellow-300 border-2 border-yellow-500';
 		if (!result) return 'bg-navy-700 text-slate-600';
 		if (!result.present) return base + 'bg-red-950 text-red-400 border border-red-900';
-		const conf = result.confidence ?? 0;
+		if (result.confidence === null) return base + 'bg-slate-800 text-slate-400 border border-slate-600';
+		const conf = result.confidence;
 		if (conf >= 0.8) return base + 'bg-green-900 text-green-300 border border-green-700';
 		if (conf >= 0.5) return base + 'bg-yellow-900/50 text-yellow-300 border border-yellow-700';
 		return base + 'bg-orange-950 text-orange-300 border border-orange-800';
@@ -93,14 +94,17 @@
 	}
 
 	function cellAriaLabel(entity: Entity, attr: Attribute, result: Result | undefined, cached: Knowledge | undefined): string {
+		const entityName = entity.label || entity.gwm_id || entity.id;
 		const status = cached
 			? 'cached from another campaign'
 			: !result
 				? 'not validated'
-				: result.present
-					? `present, confidence ${((result.confidence ?? 0) * 100).toFixed(0)}%`
-					: 'absent';
-		return `${entity.label}, ${attr.label}: ${status}`;
+				: result.confidence === null
+					? (result.present ? 'present, no confidence data' : 'absent, no confidence data')
+					: result.present
+						? `present, confidence ${(result.confidence * 100).toFixed(0)}%`
+						: 'absent';
+		return `${entityName}, ${attr.label}: ${status}`;
 	}
 
 	function handleClick(result: Result | undefined) {
@@ -222,8 +226,8 @@
 						class="px-3 py-2 text-slate-300 sticky left-0 bg-navy-900 font-medium"
 						role="rowheader"
 					>
-						{entity.label}
-						{#if entity.gwm_id}
+						{entity.label || entity.gwm_id || entity.id}
+						{#if entity.gwm_id && entity.label}
 							<span class="text-slate-500 text-xs font-mono ml-1">{entity.gwm_id}</span>
 						{/if}
 					</td>
