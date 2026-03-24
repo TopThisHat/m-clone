@@ -10,3 +10,4 @@ class ResearchRequest(BaseModel):
     depth: str = "balanced"   # "fast" | "balanced" | "deep"
     model: str | None = None
     rules: list[str] = []
+    team_id: str | None = None

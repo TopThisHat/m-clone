@@ -611,27 +611,67 @@ async def query_knowledge_graph(deps: AgentDeps, query: str) -> str:
     try:
         from app.db import db_query_kg
 
-        team_id = getattr(deps, "team_id", None)
-        results = await db_query_kg(query, team_id=team_id)
+        team_ids = getattr(deps, "team_ids", [])
+        include_master = getattr(deps, "include_master", False)
 
-        if not results["entities"] and not results["relationships"]:
+        if not team_ids and not include_master:
+            return "No knowledge graph available — join a team or select one in Scout to search team graphs."
+
+        # Query each team graph and merge results with deduplication
+        all_entities: dict[str, dict] = {}
+        all_rels: dict[str, dict] = {}
+        sources_used: set[str] = set()
+
+        if not team_ids and include_master:
+            # Super admin with no teams — search master only
+            r = await db_query_kg(query, team_id=None, include_master=True)
+            for e in r["entities"]:
+                all_entities[e["id"]] = e
+            for rel in r["relationships"]:
+                all_rels[rel["id"]] = rel
+            sources_used.update(r["sources_used"])
+        else:
+            for i, tid in enumerate(team_ids):
+                r = await db_query_kg(query, team_id=tid, include_master=(include_master and i == 0))
+                for e in r["entities"]:
+                    all_entities[e["id"]] = e
+                for rel in r["relationships"]:
+                    all_rels[rel["id"]] = rel
+                sources_used.update(r["sources_used"])
+
+        entities = list(all_entities.values())
+        relationships = list(all_rels.values())
+
+        if not entities and not relationships:
             return f"No knowledge graph results found for: '{query}'"
 
-        sources = ", ".join(results["sources_used"]) if results["sources_used"] else "none"
-        parts = [f"**Knowledge Graph Results** (sources: {sources})\n"]
+        sources_str = ", ".join(sources_used) if sources_used else "none"
+        parts = [f"**Knowledge Graph Results** (sources: {sources_str})\n"]
 
-        if results["entities"]:
+        if entities:
             parts.append("### Entities Found")
-            for e in results["entities"][:10]:
+            for e in entities[:10]:
                 aliases = f" (aka: {', '.join(e.get('aliases', [])[:3])})" if e.get("aliases") else ""
                 desc = f" — {e['description']}" if e.get("description") else ""
-                source_tag = f" [{e.get('graph_source', 'unknown')}]"
+                team_tag = e.get("team_id", "")
+                if e.get("graph_source") == "master":
+                    source_tag = " [master]"
+                elif team_tag:
+                    source_tag = f" [team:{str(team_tag)[:8]}]"
+                else:
+                    source_tag = f" [{e.get('graph_source', 'unknown')}]"
                 parts.append(f"- **{e['name']}** ({e.get('entity_type', 'unknown')}){aliases}{desc}{source_tag}")
 
-        if results["relationships"]:
+        if relationships:
             parts.append("\n### Relationships")
-            for r in results["relationships"][:15]:
-                source_tag = f" [{r.get('graph_source', 'unknown')}]"
+            for r in relationships[:15]:
+                team_tag = r.get("team_id", "")
+                if r.get("graph_source") == "master":
+                    source_tag = " [master]"
+                elif team_tag:
+                    source_tag = f" [team:{str(team_tag)[:8]}]"
+                else:
+                    source_tag = f" [{r.get('graph_source', 'unknown')}]"
                 conf = f" ({int(r.get('confidence', 1) * 100)}%)" if r.get("confidence", 1) < 1 else ""
                 parts.append(
                     f"- {r.get('subject_name', '?')} **{r.get('predicate', '?')}** "

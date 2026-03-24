@@ -17,6 +17,7 @@ import { activeSessionId, sessionList } from '$lib/stores/sessionStore';
 import { createSession, updateSession, listSessions } from '$lib/api/sessions';
 import type { ToolIconType } from '$lib/stores/traceStore';
 import { rules } from '$lib/stores/rulesStore';
+import { scoutTeam } from '$lib/stores/scoutTeamStore';
 
 let controller: AbortController | null = null;
 
@@ -86,6 +87,8 @@ export async function startResearch(
 		model: model ?? null,
 		rules: get(rules).map((r) => r.text)
 	};
+	const teamId = get(scoutTeam);
+	if (teamId) body.team_id = teamId;
 	if (isFollowUp) body.message_history = msgHistory;
 
 	let response: Response;

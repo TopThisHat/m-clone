@@ -33,7 +33,9 @@ class AgentDeps:
     # All clarification IDs created in this session — used for cleanup on stream disconnect
     active_clarification_ids: list = field(default_factory=list)
     # Team context for KG queries
-    team_id: str | None = None
+    team_id: str | None = None  # Deprecated: use team_ids instead
+    team_ids: list[str] = field(default_factory=list)
+    include_master: bool = False
 
 
 _DEPTH_MAP = {"fast": "simple", "balanced": "standard", "deep": "deep"}
@@ -45,6 +47,8 @@ def get_agent_deps(
     memory_context: str = "",
     depth: str = "balanced",
     user_rules: list[str] | None = None,
+    team_ids: list[str] | None = None,
+    include_master: bool = False,
 ) -> AgentDeps:
     return AgentDeps(
         tavily_api_key=settings.tavily_api_key,
@@ -57,4 +61,6 @@ def get_agent_deps(
         memory_context=memory_context,
         query_complexity=_DEPTH_MAP.get(depth, "standard"),
         user_rules=user_rules or [],
+        team_ids=team_ids or [],
+        include_master=include_master,
     )

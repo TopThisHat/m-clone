@@ -7,6 +7,7 @@ class AsyncResearchRequest(BaseModel):
     query: str
     webhook_url: str
     pdf_session_key: str | None = None
+    team_id: str | None = None
 
 
 class JobStatus(BaseModel):
