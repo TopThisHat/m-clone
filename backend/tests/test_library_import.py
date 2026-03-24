@@ -322,7 +322,8 @@ class TestImportAttributesFromLibrary:
 
         try:
             result = await db_import_attributes_from_library(test_campaign, lib_ids)
-            assert len(result) == 1
+            assert isinstance(result, dict)
+            assert len(result["inserted"]) == 1
         finally:
             async with _acquire() as conn:
                 await _cleanup_attr_lib(conn, lib_ids)
@@ -336,10 +337,10 @@ class TestImportAttributesFromLibrary:
 
         try:
             first = await db_import_attributes_from_library(test_campaign, lib_ids)
-            assert len(first) == 1
+            assert len(first["inserted"]) == 1
 
             second = await db_import_attributes_from_library(test_campaign, lib_ids)
-            assert len(second) == 0
+            assert len(second["inserted"]) == 0
 
             async with _acquire() as conn:
                 count = await _count_attributes(conn, test_campaign)
@@ -350,4 +351,44 @@ class TestImportAttributesFromLibrary:
 
     async def test_empty_lib_ids(self, test_user_sid, test_campaign):
         result = await db_import_attributes_from_library(test_campaign, [])
-        assert result == []
+        assert result == {"inserted": [], "skipped": 0, "total_requested": 0}
+
+    async def test_structured_return(self, test_user_sid, test_campaign):
+        """db_import_attributes_from_library returns structured dict."""
+        lib_ids = []
+        async with _acquire() as conn:
+            lib_ids.append(await _insert_attr_lib(conn, test_user_sid, "Metric A"))
+            lib_ids.append(await _insert_attr_lib(conn, test_user_sid, "Metric B"))
+        try:
+            result = await db_import_attributes_from_library(test_campaign, lib_ids)
+            assert "inserted" in result
+            assert "skipped" in result
+            assert "total_requested" in result
+            assert result["total_requested"] == 2
+            assert len(result["inserted"]) == 2
+            assert result["skipped"] == 0
+        finally:
+            async with _acquire() as conn:
+                await _cleanup_attr_lib(conn, lib_ids)
+
+    async def test_ownership_filter(self, test_user_sid, test_campaign):
+        """When owner_sid is passed, only matching library rows are imported."""
+        lib_ids = []
+        sid2 = f"test-user-{uuid.uuid4().hex[:8]}"
+        async with _acquire() as conn:
+            await conn.execute(
+                "INSERT INTO playbook.users (sid, display_name) VALUES ($1, $2)",
+                sid2, "Other",
+            )
+            lib_ids.append(await _insert_attr_lib(conn, test_user_sid, "My Attr"))
+            lib_ids.append(await _insert_attr_lib(conn, sid2, "Not My Attr"))
+        try:
+            result = await db_import_attributes_from_library(
+                test_campaign, lib_ids, owner_sid=test_user_sid
+            )
+            assert len(result["inserted"]) == 1
+            assert result["inserted"][0]["label"] == "My Attr"
+        finally:
+            async with _acquire() as conn:
+                await _cleanup_attr_lib(conn, lib_ids)
+                await conn.execute("DELETE FROM playbook.users WHERE sid = $1", sid2)

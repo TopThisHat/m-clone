@@ -305,12 +305,18 @@ async def db_import_entities(target_campaign_id: str, source_campaign_id: str) -
     }
 
 
-async def db_import_attributes(target_campaign_id: str, source_campaign_id: str) -> list[dict[str, Any]]:
-    """
-    Copy attributes from source campaign to target campaign, skipping label duplicates.
+async def db_import_attributes(target_campaign_id: str, source_campaign_id: str) -> dict[str, Any]:
+    """Copy attributes from source campaign to target campaign, skipping label duplicates.
+
+    Returns structured result: ``{"inserted": [...], "skipped": int, "total_requested": int}``.
+
     CTE deduplicates on label, ON CONFLICT DO NOTHING as final safety net.
     """
     async with _acquire() as conn:
+        total_requested = await conn.fetchval(
+            "SELECT COUNT(*) FROM playbook.attributes WHERE campaign_id = $1::uuid AND TRIM(COALESCE(label, '')) != ''",
+            source_campaign_id,
+        )
         rows = await conn.fetch(
             """
             WITH source AS (
@@ -331,7 +337,12 @@ async def db_import_attributes(target_campaign_id: str, source_campaign_id: str)
             """,
             source_campaign_id, target_campaign_id,
         )
-    return [_attribute_row_to_dict(r) for r in rows]
+    inserted = [_attribute_row_to_dict(r) for r in rows]
+    return {
+        "inserted": inserted,
+        "skipped": total_requested - len(inserted),
+        "total_requested": total_requested,
+    }
 
 
 # ── CSV Export ────────────────────────────────────────────────────────────────

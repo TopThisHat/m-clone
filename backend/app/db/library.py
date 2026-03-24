@@ -375,17 +375,37 @@ async def db_import_entities_from_library(
     }
 
 
-async def db_import_attributes_from_library(campaign_id: str, lib_ids: list[str]) -> list[dict[str, Any]]:
+async def db_import_attributes_from_library(
+    campaign_id: str,
+    lib_ids: list[str],
+    *,
+    owner_sid: str | None = None,
+    team_id: str | None = None,
+) -> dict[str, Any]:
     """Copy attribute_library rows into campaign attributes, skip duplicates.
 
-    Uses DISTINCT ON to deduplicate labels within the batch, and unqualified
-    ON CONFLICT DO NOTHING as a final safety net.
+    Returns structured result: ``{"inserted": [...], "skipped": int, "total_requested": int}``.
+
+    When *owner_sid* or *team_id* is provided, an ownership filter is applied
+    so users can only import from their own or their team's library.
     """
+    total_requested = len(lib_ids)
     if not lib_ids:
-        return []
+        return {"inserted": [], "skipped": 0, "total_requested": 0}
+
+    # Build optional ownership filter
+    ownership_filter = ""
+    args: list[Any] = [campaign_id, lib_ids]
+    if team_id:
+        ownership_filter = " AND team_id = $3::uuid"
+        args.append(team_id)
+    elif owner_sid:
+        ownership_filter = " AND owner_sid = $3"
+        args.append(owner_sid)
+
     async with _acquire() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             WITH source AS (
                 SELECT DISTINCT ON (LOWER(TRIM(label)))
                     TRIM(label) AS label,
@@ -394,6 +414,7 @@ async def db_import_attributes_from_library(campaign_id: str, lib_ids: list[str]
                 FROM playbook.attribute_library
                 WHERE id = ANY($2::uuid[])
                   AND TRIM(COALESCE(label, '')) != ''
+                  {ownership_filter}
                 ORDER BY LOWER(TRIM(label)), created_at
             )
             INSERT INTO playbook.attributes (campaign_id, label, description, weight)
@@ -402,6 +423,11 @@ async def db_import_attributes_from_library(campaign_id: str, lib_ids: list[str]
             ON CONFLICT DO NOTHING
             RETURNING *
             """,
-            campaign_id, lib_ids,
+            *args,
         )
-    return [_attribute_row_to_dict(r) for r in rows]
+    inserted = [_attribute_row_to_dict(r) for r in rows]
+    return {
+        "inserted": inserted,
+        "skipped": total_requested - len(inserted),
+        "total_requested": total_requested,
+    }

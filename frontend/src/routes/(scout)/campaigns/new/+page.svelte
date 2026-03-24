@@ -39,6 +39,7 @@
 	let importingEntityLib = $state(false);
 	let _libEntitiesLoaded = false;
 	let lastEntityImportCount = $state(0);
+	let entityImportError = $state('');
 	let selectAllEntitiesAcrossPages = $state(false);
 
 	// Step 3 — attributes
@@ -55,6 +56,7 @@
 	let importingAttrLib = $state(false);
 	let _libAttrsLoaded = false;
 	let lastAttrImportCount = $state(0);
+	let attrImportError = $state('');
 	let selectAllAttrsAcrossPages = $state(false);
 
 	// Templates
@@ -230,7 +232,9 @@
 			selectAllEntitiesAcrossPages = false;
 			showEntityLibrary = false;
 			lastEntityImportCount = imported.inserted.length;
-		} catch { /* ignore */ } finally {
+		} catch (err) {
+			entityImportError = err instanceof Error ? err.message : 'Failed to import entities from library';
+		} finally {
 			importingEntityLib = false;
 		}
 	}
@@ -310,7 +314,9 @@
 			selectAllAttrsAcrossPages = false;
 			showAttrLibrary = false;
 			lastAttrImportCount = imported.inserted.length;
-		} catch { /* ignore */ } finally {
+		} catch (err) {
+			attrImportError = err instanceof Error ? err.message : 'Failed to import attributes from library';
+		} finally {
 			importingAttrLib = false;
 		}
 	}
@@ -554,6 +560,14 @@
 				{/if}
 			</div>
 
+			<!-- Error banner after entity import -->
+			{#if entityImportError}
+				<div class="mt-4 bg-red-900/20 border border-red-800/40 rounded-xl px-5 py-4 flex items-center justify-between">
+					<p class="text-red-400 text-sm">{entityImportError}</p>
+					<button onclick={() => { entityImportError = ''; }} class="text-slate-500 hover:text-slate-300 text-xs ml-3">Dismiss</button>
+				</div>
+			{/if}
+
 			<!-- Success banner after entity import -->
 			{#if lastEntityImportCount > 0}
 				<div class="mt-4 bg-green-900/20 border border-green-800/40 rounded-xl px-5 py-4 flex items-center justify-between">
@@ -780,6 +794,14 @@
 					</div>
 				{/if}
 			</div>
+
+			<!-- Error banner after attribute import -->
+			{#if attrImportError}
+				<div class="mt-4 bg-red-900/20 border border-red-800/40 rounded-xl px-5 py-4 flex items-center justify-between">
+					<p class="text-red-400 text-sm">{attrImportError}</p>
+					<button onclick={() => { attrImportError = ''; }} class="text-slate-500 hover:text-slate-300 text-xs ml-3">Dismiss</button>
+				</div>
+			{/if}
 
 			<!-- Success banner after attribute import -->
 			{#if lastAttrImportCount > 0}

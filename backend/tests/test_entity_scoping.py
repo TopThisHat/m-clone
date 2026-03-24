@@ -86,18 +86,18 @@ class TestLibraryImportStructuredResult:
             result = await db_import_entities_from_library(test_campaign, lib_ids)
             assert isinstance(result, dict)
             assert "inserted" in result
-            assert "skipped_count" in result
+            assert "skipped" in result
             assert "total_requested" in result
             assert result["total_requested"] == 1
             assert len(result["inserted"]) == 1
-            assert result["skipped_count"] == 0
+            assert result["skipped"] == 0
         finally:
             async with _acquire() as conn:
                 await conn.execute("DELETE FROM playbook.entity_library WHERE id = ANY($1::uuid[])", lib_ids)
 
     async def test_empty_returns_zero(self, test_user_sid, test_campaign):
         result = await db_import_entities_from_library(test_campaign, [])
-        assert result == {"inserted": [], "skipped_count": 0, "total_requested": 0}
+        assert result == {"inserted": [], "skipped": 0, "total_requested": 0}
 
     async def test_null_gwm_id_entities_all_import(self, test_user_sid, test_campaign):
         """Multiple entities with NULL gwm_id should all import (no NOT EXISTS filter)."""
@@ -113,7 +113,7 @@ class TestLibraryImportStructuredResult:
         try:
             result = await db_import_entities_from_library(test_campaign, lib_ids)
             assert len(result["inserted"]) == 2
-            assert result["skipped_count"] == 0
+            assert result["skipped"] == 0
         finally:
             async with _acquire() as conn:
                 await conn.execute("DELETE FROM playbook.entity_library WHERE id = ANY($1::uuid[])", lib_ids)
@@ -170,7 +170,7 @@ class TestCrossCampaignImportStructuredResult:
             assert isinstance(result, dict)
             assert result["total_requested"] == 2
             assert len(result["inserted"]) == 2
-            assert result["skipped_count"] == 0
+            assert result["skipped"] == 0
         finally:
             async with _acquire() as conn:
                 await conn.execute("DELETE FROM playbook.campaigns WHERE id = $1::uuid", src_id)

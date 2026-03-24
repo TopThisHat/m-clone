@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
@@ -27,6 +26,7 @@
 			debouncedSearch = q;
 			currentPage = 0;
 		}, 300);
+		return () => clearTimeout(debounceTimer);
 	});
 
 	// Add form
@@ -101,11 +101,10 @@
 		}
 	}
 
-	onMount(load);
-
 	$effect(() => {
-		debouncedSearch;
-		currentPage;
+		// Reactive re-load when search or page changes (also handles initial load)
+		const _s = debouncedSearch;
+		const _p = currentPage;
 		load();
 	});
 
@@ -130,7 +129,12 @@
 		importResult = '';
 		try {
 			const imported = await attributesApi.importFrom(campaignId, selectedSourceId);
-			importResult = `Imported ${imported.length} new ${imported.length === 1 ? 'attribute' : 'attributes'}.`;
+			const insertCount = imported.inserted.length;
+			const skipCount = imported.skipped;
+			importResult = `Imported ${insertCount} new ${insertCount === 1 ? 'attribute' : 'attributes'}.`;
+			if (skipCount > 0) {
+				importResult += ` ${skipCount} ${skipCount === 1 ? 'attribute' : 'attributes'} skipped (already exist).`;
+			}
 			load();
 		} catch (err: unknown) {
 			importResult = `Error: ${err instanceof Error ? err.message : 'Import failed'}`;

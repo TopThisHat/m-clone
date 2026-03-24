@@ -66,7 +66,7 @@ export const attributesApi = {
 	delete: (campaignId: string, attributeId: string): Promise<null> =>
 		apiFetch(`/api/campaigns/${campaignId}/attributes/${attributeId}`, { method: 'DELETE' }),
 
-	importFrom: (campaignId: string, sourceCampaignId: string): Promise<Attribute[]> =>
+	importFrom: (campaignId: string, sourceCampaignId: string): Promise<BulkAttributeResult> =>
 		apiFetch(`/api/campaigns/${campaignId}/attributes/import`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },

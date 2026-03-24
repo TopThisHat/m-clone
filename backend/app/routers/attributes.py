@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
 from app.db import (
@@ -15,11 +15,11 @@ from app.db import (
     db_list_attributes,
     db_update_attribute,
 )
-from app.models.campaign import AttributeCreate, AttributeOut, AttributeUpdate, BulkAttributeResult, ImportBody
+from app.models.campaign import AttributeCreate, AttributeOut, AttributeUpdate, BulkAttributeResult, ImportAttributeResult, ImportBody
 
 
 class ImportLibraryBody(BaseModel):
-    ids: list[str]
+    ids: list[str] = Field(min_length=1)
 
 router = APIRouter(prefix="/api/campaigns", tags=["attributes"])
 
@@ -75,11 +75,11 @@ async def create_attribute(campaign_id: str, body: AttributeCreate, user=Depends
         raise _no_db()
 
 
-@router.post("/{campaign_id}/attributes/import-library", response_model=list[AttributeOut], status_code=201)
+@router.post("/{campaign_id}/attributes/import-library", response_model=ImportAttributeResult, status_code=201)
 async def import_attributes_from_library(campaign_id: str, body: ImportLibraryBody, user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
-        return await db_import_attributes_from_library(campaign_id, body.ids)
+        return await db_import_attributes_from_library(campaign_id, body.ids, owner_sid=user["sub"])
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -118,11 +118,11 @@ async def bulk_create_attributes(campaign_id: str, body: list[AttributeCreate], 
         return result
     except DatabaseNotConfigured:
         raise _no_db()
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Bulk insert failed: {exc}")
+    except Exception:
+        raise HTTPException(status_code=422, detail="Bulk insert failed due to a data conflict")
 
 
-@router.post("/{campaign_id}/attributes/import", response_model=list[AttributeOut], status_code=201)
+@router.post("/{campaign_id}/attributes/import", response_model=ImportAttributeResult, status_code=201)
 async def import_attributes(campaign_id: str, body: ImportBody, user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     await _get_owned_campaign(body.source_campaign_id, user["sub"])

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import asyncpg
 
 from ._pool import _acquire
+
+logger = logging.getLogger(__name__)
 
 
 def _job_vrow_to_dict(row: asyncpg.Record) -> dict[str, Any]:
@@ -230,50 +233,61 @@ async def db_insert_result(job_id: str, entity_id: str, attribute_id: str,
             report_md,
         )
         if update_knowledge:
-            # Upsert knowledge cache with team_id scoping.
-            # Uses eak_gwm_attr_team_unique index for conflict detection.
-            await conn.execute(
-                """
-                INSERT INTO playbook.entity_attribute_knowledge
-                    (gwm_id, attribute_label, present, confidence, evidence,
-                     source_job_id, source_campaign_id, source_campaign_name,
-                     entity_label, team_id, research_source, research_session_count)
-                SELECT
-                    e.gwm_id,
-                    a.label,
-                    $4,
-                    $5,
-                    $6,
-                    $1::uuid,
-                    j.campaign_id,
-                    c.name,
-                    e.label,
-                    c.team_id,
-                    'campaign',
-                    1
-                FROM playbook.entities e
-                JOIN playbook.attributes a ON a.id = $3::uuid
-                JOIN playbook.validation_jobs j ON j.id = $1::uuid
-                JOIN playbook.campaigns c ON c.id = j.campaign_id
-                WHERE e.id = $2::uuid AND e.gwm_id IS NOT NULL
-                ON CONFLICT (gwm_id, attribute_label,
-                             COALESCE(team_id, '00000000-0000-0000-0000-000000000000'::uuid))
-                DO UPDATE SET
-                    present = EXCLUDED.present,
-                    confidence = EXCLUDED.confidence,
-                    evidence = EXCLUDED.evidence,
-                    source_job_id = EXCLUDED.source_job_id,
-                    source_campaign_id = EXCLUDED.source_campaign_id,
-                    source_campaign_name = EXCLUDED.source_campaign_name,
-                    entity_label = EXCLUDED.entity_label,
-                    research_session_count = playbook.entity_attribute_knowledge.research_session_count + 1,
-                    last_updated = NOW()
-                """,
-                job_id, entity_id, attribute_id,
-                result.get("present", False),
-                result.get("confidence"),
-                result.get("evidence"),
+            # Check if entity has gwm_id before attempting knowledge upsert
+            has_gwm_id = await conn.fetchval(
+                "SELECT gwm_id IS NOT NULL FROM playbook.entities WHERE id = $1::uuid",
+                entity_id,
             )
+            if not has_gwm_id:
+                logger.warning(
+                    "db_insert_result: skipping knowledge cache upsert for entity_id=%s — NULL gwm_id",
+                    entity_id,
+                )
+            else:
+                # Upsert knowledge cache with team_id scoping.
+                # Uses eak_gwm_attr_team_unique index for conflict detection.
+                await conn.execute(
+                    """
+                    INSERT INTO playbook.entity_attribute_knowledge
+                        (gwm_id, attribute_label, present, confidence, evidence,
+                         source_job_id, source_campaign_id, source_campaign_name,
+                         entity_label, team_id, research_source, research_session_count)
+                    SELECT
+                        e.gwm_id,
+                        a.label,
+                        $4,
+                        $5,
+                        $6,
+                        $1::uuid,
+                        j.campaign_id,
+                        c.name,
+                        e.label,
+                        c.team_id,
+                        'campaign',
+                        1
+                    FROM playbook.entities e
+                    JOIN playbook.attributes a ON a.id = $3::uuid
+                    JOIN playbook.validation_jobs j ON j.id = $1::uuid
+                    JOIN playbook.campaigns c ON c.id = j.campaign_id
+                    WHERE e.id = $2::uuid AND e.gwm_id IS NOT NULL
+                    ON CONFLICT (gwm_id, attribute_label,
+                                 COALESCE(team_id, '00000000-0000-0000-0000-000000000000'::uuid))
+                    DO UPDATE SET
+                        present = EXCLUDED.present,
+                        confidence = EXCLUDED.confidence,
+                        evidence = EXCLUDED.evidence,
+                        source_job_id = EXCLUDED.source_job_id,
+                        source_campaign_id = EXCLUDED.source_campaign_id,
+                        source_campaign_name = EXCLUDED.source_campaign_name,
+                        entity_label = EXCLUDED.entity_label,
+                        research_session_count = playbook.entity_attribute_knowledge.research_session_count + 1,
+                        last_updated = NOW()
+                    """,
+                    job_id, entity_id, attribute_id,
+                    result.get("present", False),
+                    result.get("confidence"),
+                    result.get("evidence"),
+                )
 
 
 async def db_list_results(job_id: str, entity_id: str | None = None,

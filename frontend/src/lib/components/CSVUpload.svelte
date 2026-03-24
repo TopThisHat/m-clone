@@ -158,8 +158,6 @@
 		try {
 			for (let i = 0; i < entities.length; i += BATCH_SIZE) {
 				const batch = entities.slice(i, i + BATCH_SIZE);
-				// Update count before the request to show progress immediately
-				uploadedCount = i;
 				const result = onBulkCreate
 					? await onBulkCreate(batch)
 					: await entitiesApi.bulkCreate(campaignId, batch);

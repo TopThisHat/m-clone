@@ -199,3 +199,9 @@ class ImportResult(BaseModel):
     inserted: list[EntityOut]
     skipped: int
     total_requested: int
+
+
+class ImportAttributeResult(BaseModel):
+    inserted: list[AttributeOut]
+    skipped: int
+    total_requested: int
