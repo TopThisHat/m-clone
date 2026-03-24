@@ -62,9 +62,12 @@ async def init_schema() -> None:
                 status            TEXT NOT NULL DEFAULT 'queued',
                 result_markdown   TEXT NOT NULL DEFAULT '',
                 error             TEXT,
+                owner_sid         TEXT,
                 created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 completed_at      TIMESTAMPTZ
             );
+            -- backfill: add owner_sid if table already exists
+            ALTER TABLE playbook.research_jobs ADD COLUMN IF NOT EXISTS owner_sid TEXT;
 
             -- Teams
             CREATE TABLE IF NOT EXISTS playbook.teams (

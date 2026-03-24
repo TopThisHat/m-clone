@@ -170,7 +170,7 @@ async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: 
 
     job_id = str(uuid.uuid4())
     try:
-        await db_create_job(job_id, body.query, body.webhook_url)
+        await db_create_job(job_id, body.query, body.webhook_url, owner_sid=user["sub"])
     except DatabaseNotConfigured:
         raise HTTPException(status_code=503, detail="Async jobs require a database connection. Please configure DATABASE_URL.")
 
@@ -196,6 +196,8 @@ async def get_job_status(job_id: str, user=Depends(get_current_user)):
 
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("owner_sid") and job["owner_sid"] != user["sub"]:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     return JobStatus(
         job_id=str(job["id"]),

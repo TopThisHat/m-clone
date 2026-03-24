@@ -4,7 +4,7 @@
 - [x] 1.2 Add `Depends(get_current_user)` to `POST /api/research/async` in `routers/research.py:166`
 - [x] 1.3 Add `Depends(get_current_user)` to `POST /api/research/clarify/{id}` in `routers/research.py:26`
 - [x] 1.4 Add `Depends(get_current_user)` to `GET /api/research/jobs/{id}` in `routers/research.py:187`
-- [ ] 1.5 Add ownership check to async job status — user can only view their own jobs (requires DB schema change to add owner_sid to research_jobs table — deferred)
+- [x] 1.5 Add ownership check to async job status — user can only view their own jobs
 - [x] 1.6 Write test: unauthenticated research request returns 401
 
 ## 2. Session Endpoint Auth

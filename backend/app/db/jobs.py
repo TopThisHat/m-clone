@@ -16,17 +16,18 @@ def _job_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     return d
 
 
-async def db_create_job(job_id: str, query: str, webhook_url: str) -> dict[str, Any]:
+async def db_create_job(job_id: str, query: str, webhook_url: str, owner_sid: str | None = None) -> dict[str, Any]:
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO playbook.research_jobs (id, query, webhook_url, status)
-            VALUES ($1::uuid, $2, $3, 'queued')
+            INSERT INTO playbook.research_jobs (id, query, webhook_url, status, owner_sid)
+            VALUES ($1::uuid, $2, $3, 'queued', $4)
             RETURNING *
             """,
             job_id,
             query,
             webhook_url,
+            owner_sid,
         )
     return _job_row_to_dict(row)
 

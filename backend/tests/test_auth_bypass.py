@@ -79,6 +79,26 @@ class TestResearchAuth:
         resp = client.get("/api/research/jobs/00000000-0000-0000-0000-000000000000")
         assert resp.status_code == 401
 
+    def test_job_status_non_owner_returns_403(self, client):
+        """Non-owner attempting to view a job gets 403."""
+        fake_job = {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "owner_sid": "owner-user",
+            "query": "test",
+            "webhook_url": "http://example.com",
+            "status": "done",
+            "result_markdown": "",
+            "error": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "completed_at": None,
+        }
+        with patch("app.db.db_get_job", new_callable=AsyncMock, return_value=fake_job):
+            resp = client.get(
+                "/api/research/jobs/00000000-0000-0000-0000-000000000001",
+                cookies=_auth_cookie("not-the-owner"),
+            )
+            assert resp.status_code == 403
+
 
 # ===========================================================================
 # 2. Session endpoints — share/delete auth and ownership
