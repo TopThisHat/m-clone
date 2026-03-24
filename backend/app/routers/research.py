@@ -3,13 +3,13 @@ import uuid
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.agent.clarification import clarification_store
 from app.agent.streaming import stream_research
-from app.auth import get_optional_user
+from app.auth import get_current_user
 from app.config import settings
 from app.dependencies import get_agent_deps
 from app.models.job import AsyncResearchRequest, JobStatus
@@ -24,7 +24,7 @@ class ClarifyRequest(BaseModel):
 
 
 @router.post("/research/clarify/{clarification_id}")
-async def clarify_endpoint(clarification_id: str, body: ClarifyRequest):
+async def clarify_endpoint(clarification_id: str, body: ClarifyRequest, user=Depends(get_current_user)):
     """Resolve a pending clarification Future (works for both agent-level and tool-level paths)."""
     if not body.answer or not body.answer.strip():
         raise HTTPException(status_code=422, detail="answer must not be empty")
@@ -54,7 +54,7 @@ def available_models():
 
 
 @router.post("/research")
-async def research_endpoint(body: ResearchRequest, request: Request):
+async def research_endpoint(body: ResearchRequest, request: Request, user=Depends(get_current_user)):
     """Stream a research session as Server-Sent Events."""
     pdf_text, filenames = await get_pdf_text(body.pdf_session_key)
 
@@ -164,7 +164,7 @@ async def _run_async_job(job_id: str, query: str, webhook_url: str, pdf_session_
 
 
 @router.post("/research/async", status_code=202)
-async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: BackgroundTasks):
+async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: BackgroundTasks, user=Depends(get_current_user)):
     """Submit a research job asynchronously. Results POSTed to webhook_url when done."""
     from app.db import db_create_job, DatabaseNotConfigured
 
@@ -185,7 +185,7 @@ async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: 
 
 
 @router.get("/research/jobs/{job_id}", response_model=JobStatus)
-async def get_job_status(job_id: str):
+async def get_job_status(job_id: str, user=Depends(get_current_user)):
     """Get status of an async research job."""
     from app.db import db_get_job, DatabaseNotConfigured
 

@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 
 @router.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(file: UploadFile = File(...), user=Depends(get_current_user)):
     """Upload a PDF document for use in research sessions."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")

@@ -89,50 +89,62 @@ async def create_session(body: SessionCreate, user=Depends(get_optional_user)):
 
 
 @router.patch("/{session_id}", response_model=SessionFull)
-async def update_session(session_id: str, body: SessionUpdate, user=Depends(get_optional_user)):
+async def update_session(session_id: str, body: SessionUpdate, user=Depends(get_current_user)):
     try:
-        row = await db_update_session(session_id, body.model_dump(exclude_none=True))
+        session = await db_get_session(session_id)
     except DatabaseNotConfigured:
         raise _no_db()
-    if row is None:
+    if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("owner_sid") != user["sub"]:
+        raise HTTPException(status_code=403, detail="Only the session owner can update")
+    row = await db_update_session(session_id, body.model_dump(exclude_none=True))
     return row
 
 
 @router.delete("/{session_id}", status_code=204)
-async def delete_session(session_id: str, user=Depends(get_optional_user)):
+async def delete_session(session_id: str, user=Depends(get_current_user)):
     try:
-        deleted = await db_delete_session(session_id)
+        session = await db_get_session(session_id)
     except DatabaseNotConfigured:
         raise _no_db()
-    if not deleted:
+    if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("owner_sid") != user["sub"]:
+        raise HTTPException(status_code=403, detail="Only the session owner can delete")
+    await db_delete_session(session_id)
     return Response(status_code=204)
 
 
 # ── Share endpoints ───────────────────────────────────────────────────────────
 
 @router.post("/{session_id}/share")
-async def share_session(session_id: str, request: Request):
+async def share_session(session_id: str, user=Depends(get_current_user)):
     """Make a session publicly accessible via a share link."""
     try:
-        row = await db_update_session(session_id, {"is_public": True})
+        session = await db_get_session(session_id)
     except DatabaseNotConfigured:
         raise _no_db()
-    if row is None:
+    if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("owner_sid") != user["sub"]:
+        raise HTTPException(status_code=403, detail="Only the session owner can share")
+    row = await db_update_session(session_id, {"is_public": True})
     return {"share_url": f"/share/{session_id}"}
 
 
 @router.delete("/{session_id}/share", status_code=204)
-async def unshare_session(session_id: str):
+async def unshare_session(session_id: str, user=Depends(get_current_user)):
     """Revoke public access to a session."""
     try:
-        row = await db_update_session(session_id, {"is_public": False})
+        session = await db_get_session(session_id)
     except DatabaseNotConfigured:
         raise _no_db()
-    if row is None:
+    if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("owner_sid") != user["sub"]:
+        raise HTTPException(status_code=403, detail="Only the session owner can unshare")
+    await db_update_session(session_id, {"is_public": False})
     return Response(status_code=204)
 
 

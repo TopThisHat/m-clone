@@ -82,6 +82,15 @@ _a2a_app.add_routes_to_app(
 
 @app.on_event("startup")
 async def startup():
+    if (
+        settings.jwt_secret == "change-me-in-prod"
+        and not settings.dev_auth_bypass
+    ):
+        raise RuntimeError(
+            "JWT_SECRET is set to the insecure default. "
+            "Set a strong JWT_SECRET or enable DEV_AUTH_BYPASS=true for local dev."
+        )
+
     if settings.database_url or settings.aws_secret_name:
         await init_schema()
     scheduler.start()
