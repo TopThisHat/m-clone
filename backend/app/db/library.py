@@ -145,13 +145,25 @@ async def db_update_entity_library(item_id: str, owner_sid: str, **fields: Any) 
     allowed = {"label", "description", "gwm_id", "metadata"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
-        return None
+        # Return current state on no-op instead of None
+        async with _acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM playbook.entity_library WHERE id=$1::uuid AND owner_sid=$2",
+                item_id, owner_sid,
+            )
+        return _lib_row_to_dict(row) if row else None
     set_clauses = []
     values: list[Any] = []
     for i, (k, v) in enumerate(updates.items(), start=3):
         if k == "metadata":
             set_clauses.append(f"{k} = ${i}::jsonb")
             values.append(json.dumps(v))
+        elif k == "gwm_id":
+            set_clauses.append(f"{k} = NULLIF(TRIM(${i}), '')")
+            values.append(v)
+        elif k == "label":
+            set_clauses.append(f"{k} = TRIM(${i})")
+            values.append(v)
         else:
             set_clauses.append(f"{k} = ${i}")
             values.append(v)
@@ -161,12 +173,13 @@ async def db_update_entity_library(item_id: str, owner_sid: str, **fields: Any) 
     return _lib_row_to_dict(row) if row else None
 
 
-async def db_delete_entity_library(item_id: str, owner_sid: str) -> None:
+async def db_delete_entity_library(item_id: str, owner_sid: str) -> bool:
     async with _acquire() as conn:
-        await conn.execute(
+        result = await conn.execute(
             "DELETE FROM playbook.entity_library WHERE id=$1::uuid AND owner_sid=$2",
             item_id, owner_sid,
         )
+    return result.endswith("1")
 
 
 async def db_list_attribute_library(
@@ -267,39 +280,73 @@ async def db_update_attribute_library(item_id: str, owner_sid: str, **fields: An
     allowed = {"label", "description", "weight"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
-        return None
-    set_clauses = [f"{k} = ${i}" for i, k in enumerate(updates.keys(), start=3)]
+        # Return current state on no-op instead of None
+        async with _acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM playbook.attribute_library WHERE id=$1::uuid AND owner_sid=$2",
+                item_id, owner_sid,
+            )
+        return _lib_row_to_dict(row) if row else None
+    set_clauses = []
+    values: list[Any] = []
+    for i, (k, v) in enumerate(updates.items(), start=3):
+        if k == "label":
+            set_clauses.append(f"{k} = TRIM(${i})")
+        else:
+            set_clauses.append(f"{k} = ${i}")
+        values.append(v)
     sql = f"UPDATE playbook.attribute_library SET {', '.join(set_clauses)} WHERE id=$1::uuid AND owner_sid=$2 RETURNING *"
     async with _acquire() as conn:
-        row = await conn.fetchrow(sql, item_id, owner_sid, *updates.values())
+        row = await conn.fetchrow(sql, item_id, owner_sid, *values)
     return _lib_row_to_dict(row) if row else None
 
 
-async def db_delete_attribute_library(item_id: str, owner_sid: str) -> None:
+async def db_delete_attribute_library(item_id: str, owner_sid: str) -> bool:
     async with _acquire() as conn:
-        await conn.execute(
+        result = await conn.execute(
             "DELETE FROM playbook.attribute_library WHERE id=$1::uuid AND owner_sid=$2",
             item_id, owner_sid,
         )
+    return result.endswith("1")
 
 
-async def db_import_entities_from_library(campaign_id: str, lib_ids: list[str]) -> list[dict[str, Any]]:
+async def db_import_entities_from_library(
+    campaign_id: str,
+    lib_ids: list[str],
+    *,
+    owner_sid: str | None = None,
+    team_id: str | None = None,
+) -> dict[str, Any]:
     """Copy entity_library rows into campaign entities, skip duplicates.
+
+    Returns a structured result: ``{"inserted": [...], "skipped": int, "total_requested": int}``.
 
     Handles all unique-constraint edge cases:
       1. CTE deduplicates the batch on label (DISTINCT ON) so within-batch
          label collisions never reach INSERT.
-      2. NOT EXISTS filters gwm_id conflicts against rows already in the
-         target campaign.
-      3. ON CONFLICT DO NOTHING (unqualified) catches any remaining
-         violations — especially within-batch gwm_id duplicates where two
-         library rows share a gwm_id but have different labels.
+      2. ON CONFLICT DO NOTHING catches gwm_id and label collisions with
+         rows already in the target campaign.
+
+    When *owner_sid* or *team_id* is provided, an ownership filter is applied
+    so users can only import from their own or their team's library.
     """
+    total_requested = len(lib_ids)
     if not lib_ids:
-        return []
+        return {"inserted": [], "skipped": 0, "total_requested": 0}
+
+    # Build optional ownership filter
+    ownership_filter = ""
+    args: list[Any] = [campaign_id, lib_ids]
+    if team_id:
+        ownership_filter = " AND team_id = $3::uuid"
+        args.append(team_id)
+    elif owner_sid:
+        ownership_filter = " AND owner_sid = $3"
+        args.append(owner_sid)
+
     async with _acquire() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             WITH source AS (
                 SELECT DISTINCT ON (LOWER(TRIM(label)))
                     TRIM(label) AS label,
@@ -309,22 +356,23 @@ async def db_import_entities_from_library(campaign_id: str, lib_ids: list[str]) 
                 FROM playbook.entity_library
                 WHERE id = ANY($2::uuid[])
                   AND TRIM(COALESCE(label, '')) != ''
+                  {ownership_filter}
                 ORDER BY LOWER(TRIM(label)), created_at
             )
             INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
             SELECT $1::uuid, s.label, s.description, s.gwm_id, s.metadata
             FROM source s
-            WHERE s.gwm_id IS NULL OR NOT EXISTS (
-                SELECT 1 FROM playbook.entities
-                WHERE campaign_id = $1::uuid
-                  AND LOWER(TRIM(gwm_id)) = LOWER(s.gwm_id)
-            )
             ON CONFLICT DO NOTHING
             RETURNING *
             """,
-            campaign_id, lib_ids,
+            *args,
         )
-    return [_entity_row_to_dict(r) for r in rows]
+    inserted = [_entity_row_to_dict(r) for r in rows]
+    return {
+        "inserted": inserted,
+        "skipped": total_requested - len(inserted),
+        "total_requested": total_requested,
+    }
 
 
 async def db_import_attributes_from_library(campaign_id: str, lib_ids: list[str]) -> list[dict[str, Any]]:

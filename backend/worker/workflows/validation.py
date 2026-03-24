@@ -238,6 +238,7 @@ class ValidationCampaignWorkflow(BaseWorkflow):
                             "cluster_id": cluster.get("id", ""),
                             "attribute_ids": cluster_attr_ids,
                             "research_question": question,
+                            "team_id": team_id,
                         },
                         "parent_job_id": self.job_id,
                         "root_job_id": self.job_id,
@@ -468,8 +469,18 @@ class ValidationPairWorkflow(BaseWorkflow):
         from worker.config import settings as _settings
 
         gwm_id = entity.get("gwm_id")
+        team_id = p.get("team_id")
+        if not gwm_id:
+            logger.warning(
+                "validation_pair job=%s: entity %s has NULL gwm_id, skipping knowledge cache",
+                job_id, entity.get("label"),
+            )
         if gwm_id:
-            cached = await db_lookup_knowledge(gwm_id, attribute["label"], max_age_hours=_settings.knowledge_cache_ttl_hours)
+            cached = await db_lookup_knowledge(
+                gwm_id, attribute["label"],
+                team_id=team_id,
+                max_age_hours=_settings.knowledge_cache_ttl_hours,
+            )
             if cached:
                 logger.info("validation_pair job=%s: cache hit gwm_id=%s x %s", job_id, gwm_id, attribute["label"])
                 result = {

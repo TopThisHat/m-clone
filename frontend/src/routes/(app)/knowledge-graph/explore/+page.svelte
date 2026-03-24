@@ -8,6 +8,8 @@
 	import {
 		kgApi,
 		type KGGraph,
+		type KGGraphNode,
+		type KGGraphEdge,
 		type DealPartnerGroup,
 		type KGRelationship,
 		type KGQueryResult,
@@ -80,8 +82,33 @@
 	let uploadResult = $state<KGUploadResult | null>(null);
 	let uploadError = $state('');
 
+	// --------------- Smart rendering state ---------------
+	const NODE_BUDGET = 150;
+	const WARN_THRESHOLD = 300;
+	const BLOCK_THRESHOLD = 500;
+	let totalServerNodes = $state(0);
+	let loadedNodeIds = $state<Set<string>>(new Set());
+	let toastMessage = $state('');
+	let toastTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	// --------------- Graph API ref (from ForceGraph) ---------------
+	let graphApi = $state<{ mergeNodes: (n: KGGraphNode[], e: KGGraphEdge[]) => void; fitToView: () => void; resetLayout: () => void } | null>(null);
+
+	// --------------- Context menu state ---------------
+	let contextMenu = $state<{ nodeId: string; x: number; y: number } | null>(null);
+	let pinnedNodes = $state<Set<string>>(new Set());
+
+	// --------------- Edge tooltip state ---------------
+	let edgeTooltip = $state<{ edgeId: string; x: number; y: number } | null>(null);
+
+	// --------------- Minimap state ---------------
+	let minimapVisible = $state(true);
+
 	// --------------- Derived ---------------
 	let isAdmin = $derived(user?.is_super_admin === true);
+	let nodeCount = $derived(graphData.nodes.length);
+	let showWarningBanner = $derived(nodeCount >= WARN_THRESHOLD);
+	let expansionBlocked = $derived(nodeCount >= BLOCK_THRESHOLD);
 
 	let highlightedNodeIds = $derived.by(() => {
 		if (!dealModeActive || dealPartners.length === 0) return null;
@@ -137,7 +164,8 @@
 				search?: string;
 				metadata_key?: string;
 				metadata_value?: string;
-			} = {};
+				limit?: number;
+			} = { limit: NODE_BUDGET };
 			if (selectedTypes.size > 0) params.entity_types = [...selectedTypes];
 			if (selectedFamilies.size > 0) params.predicate_families = [...selectedFamilies];
 			if (teamId) params.team_id = teamId;
@@ -145,6 +173,8 @@
 			if (metadataKey.trim()) params.metadata_key = metadataKey.trim();
 			if (metadataValue.trim()) params.metadata_value = metadataValue.trim();
 			graphData = await kgApi.getGraph(params);
+			// Track loaded node IDs for expansion dedup
+			loadedNodeIds = new Set(graphData.nodes.map(n => n.id));
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to load graph';
 		} finally {
@@ -187,6 +217,121 @@
 		} finally {
 			loadingRels = false;
 		}
+	}
+
+	function showToast(msg: string) {
+		toastMessage = msg;
+		if (toastTimeout) clearTimeout(toastTimeout);
+		toastTimeout = setTimeout(() => { toastMessage = ''; }, 3000);
+	}
+
+	// Double-click expansion with exclude_ids
+	async function handleNodeDblClick(nodeId: string) {
+		if (expansionBlocked) {
+			showToast(`Cannot expand: ${nodeCount} nodes loaded (limit: ${BLOCK_THRESHOLD})`);
+			return;
+		}
+		try {
+			const exclude = [...loadedNodeIds];
+			const neighbors = await kgApi.getNeighbors(nodeId, {
+				depth: 1,
+				limit: 50,
+				exclude_ids: exclude,
+				team_id: teamId ?? undefined,
+			});
+			const newNodes = neighbors.nodes.filter(n => !loadedNodeIds.has(n.id));
+			const newEdges = neighbors.edges.filter(e =>
+				!graphData.edges.some(ex => ex.id === e.id)
+			);
+			if (newNodes.length === 0) {
+				showToast('No new neighbors found');
+				return;
+			}
+			// Merge into graph data
+			graphData = {
+				nodes: [...graphData.nodes, ...newNodes],
+				edges: [...graphData.edges, ...newEdges],
+			};
+			for (const n of newNodes) loadedNodeIds.add(n.id);
+			loadedNodeIds = new Set(loadedNodeIds);
+			showToast(`Added ${newNodes.length} node${newNodes.length !== 1 ? 's' : ''}`);
+		} catch {
+			showToast('Failed to expand neighbors');
+		}
+	}
+
+	// Context menu
+	function handleNodeContextMenu(nodeId: string, x: number, y: number) {
+		contextMenu = { nodeId, x, y };
+		edgeTooltip = null;
+	}
+
+	function closeContextMenu() {
+		contextMenu = null;
+	}
+
+	function contextExpandNeighbors() {
+		if (contextMenu) handleNodeDblClick(contextMenu.nodeId);
+		closeContextMenu();
+	}
+
+	function contextHideNode() {
+		if (!contextMenu) return;
+		const nodeId = contextMenu.nodeId;
+		graphData = {
+			nodes: graphData.nodes.filter(n => n.id !== nodeId),
+			edges: graphData.edges.filter(e => e.source !== nodeId && e.target !== nodeId),
+		};
+		loadedNodeIds.delete(nodeId);
+		loadedNodeIds = new Set(loadedNodeIds);
+		if (selectedNodeId === nodeId) {
+			selectedNodeId = null;
+			selectedNodeRels = [];
+		}
+		closeContextMenu();
+	}
+
+	function contextTogglePin() {
+		if (!contextMenu) return;
+		const nodeId = contextMenu.nodeId;
+		const next = new Set(pinnedNodes);
+		if (next.has(nodeId)) next.delete(nodeId);
+		else next.add(nodeId);
+		pinnedNodes = next;
+		closeContextMenu();
+	}
+
+	function contextViewEntityPage() {
+		if (!contextMenu) return;
+		handleNodeClick(contextMenu.nodeId);
+		closeContextMenu();
+	}
+
+	// Edge tooltip
+	function handleEdgeClick(edgeId: string, x: number, y: number) {
+		edgeTooltip = { edgeId, x, y };
+		contextMenu = null;
+	}
+
+	function closeEdgeTooltip() {
+		edgeTooltip = null;
+	}
+
+	let selectedEdge = $derived(
+		edgeTooltip ? graphData.edges.find(e => e.id === edgeTooltip!.edgeId) ?? null : null
+	);
+
+	let selectedEdgeSourceName = $derived(
+		selectedEdge ? (graphData.nodes.find(n => n.id === selectedEdge!.source)?.name ?? 'Unknown') : ''
+	);
+
+	let selectedEdgeTargetName = $derived(
+		selectedEdge ? (graphData.nodes.find(n => n.id === selectedEdge!.target)?.name ?? 'Unknown') : ''
+	);
+
+	// Graph API callback
+	function handleGraphReady(api: { mergeNodes: (n: KGGraphNode[], e: KGGraphEdge[]) => void; fitToView: () => void; resetLayout: () => void }) {
+		graphApi = api;
 	}
 
 	function handleNodeClick(nodeId: string) {
@@ -400,14 +545,17 @@
 	});
 
 	async function loadInitialData() {
-		const params: { team_id?: string } = {};
+		const params: { team_id?: string; limit?: number } = { limit: NODE_BUDGET };
 		if (teamId) params.team_id = teamId;
 
 		const [graphResult, dealResult] = await Promise.allSettled([
 			kgApi.getGraph(params),
 			kgApi.getDealPartners(),
 		]);
-		if (graphResult.status === 'fulfilled') graphData = graphResult.value;
+		if (graphResult.status === 'fulfilled') {
+			graphData = graphResult.value;
+			loadedNodeIds = new Set(graphData.nodes.map(n => n.id));
+		}
 		else error = 'Failed to load graph';
 		if (dealResult.status === 'fulfilled') dealPartners = dealResult.value;
 		loading = false;
@@ -417,6 +565,16 @@
 <svelte:head>
 	<title>Graph Explorer — Knowledge Graph — Playbook Research</title>
 </svelte:head>
+
+<svelte:window onkeydown={(e) => {
+	if (e.key === 'Escape') {
+		closeContextMenu();
+		closeEdgeTooltip();
+	}
+}} onclick={() => {
+	closeContextMenu();
+	closeEdgeTooltip();
+}} />
 
 <div class="flex flex-col h-[calc(100vh-4rem)]">
 	<!-- Toolbar -->
@@ -523,10 +681,42 @@
 			Upload
 		</button>
 
+		<!-- Layout controls (task 6uw.11) -->
+		<button
+			onclick={() => graphApi?.fitToView()}
+			disabled={!graphApi || graphData.nodes.length === 0}
+			class="text-xs px-2 py-1 rounded border border-navy-600 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-30"
+			title="Fit graph to view"
+		>
+			Fit View
+		</button>
+		<button
+			onclick={() => graphApi?.resetLayout()}
+			disabled={!graphApi || graphData.nodes.length === 0}
+			class="text-xs px-2 py-1 rounded border border-navy-600 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-30"
+			title="Reset layout: unpin all, randomize"
+		>
+			Reset
+		</button>
+
 		<span class="text-xs text-slate-600 ml-auto">
-			{graphData.nodes.length} nodes / {graphData.edges.length} edges
+			Showing {graphData.nodes.length} nodes / {graphData.edges.length} edges
 		</span>
 	</div>
+
+	<!-- Warning banner (task 6uw.6) -->
+	{#if showWarningBanner}
+		<div class="flex items-center gap-2 px-4 py-2 text-xs border-b {expansionBlocked ? 'bg-red-950/40 border-red-800/40 text-red-300' : 'bg-amber-950/40 border-amber-800/40 text-amber-300'}">
+			<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+			</svg>
+			{#if expansionBlocked}
+				<span>Graph has {nodeCount} nodes (limit: {BLOCK_THRESHOLD}). Expansion is blocked. Filter or reset to reduce node count.</span>
+			{:else}
+				<span>Graph has {nodeCount} nodes. Performance may be impacted above {BLOCK_THRESHOLD} nodes.</span>
+			{/if}
+		</div>
+	{/if}
 
 	<!-- Advanced Filters (collapsible) -->
 	{#if advancedOpen}
@@ -588,6 +778,10 @@
 					{selectedNodeId}
 					theme={$theme}
 					onNodeClick={handleNodeClick}
+					onNodeDblClick={handleNodeDblClick}
+					onNodeContextMenu={handleNodeContextMenu}
+					onEdgeClick={handleEdgeClick}
+					onGraphReady={handleGraphReady}
 				/>
 			{/if}
 		</div>
@@ -825,6 +1019,21 @@
 					<p class="text-xs text-slate-500 mt-2">
 						Also known as: {selectedNode.aliases.join(', ')}
 					</p>
+				{/if}
+
+				<!-- Metadata section (task 6uw.7) -->
+				{#if selectedNode.metadata && Object.keys(selectedNode.metadata).length > 0}
+					<div class="mt-3">
+						<h4 class="text-[10px] text-slate-600 uppercase tracking-widest mb-1.5">Metadata</h4>
+						<div class="space-y-1">
+							{#each Object.entries(selectedNode.metadata) as [key, value] (key)}
+								<div class="flex items-start gap-2 text-xs">
+									<span class="text-slate-500 font-mono shrink-0">{key}:</span>
+									<span class="text-slate-300 break-all">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+								</div>
+							{/each}
+						</div>
+					</div>
 				{/if}
 
 				<!-- Admin actions -->
@@ -1070,3 +1279,99 @@
 		</div>
 	</div>
 </div>
+
+<!-- Context menu (task 6uw.8) -->
+{#if contextMenu}
+	<div
+		class="fixed z-50 bg-navy-800 border border-navy-600 rounded-lg shadow-xl py-1 min-w-[160px]"
+		style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
+		role="menu"
+	>
+		<button
+			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700 hover:text-gold transition-colors disabled:opacity-40"
+			role="menuitem"
+			onclick={contextExpandNeighbors}
+			disabled={expansionBlocked}
+		>
+			Expand neighbors
+		</button>
+		<button
+			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700 hover:text-gold transition-colors"
+			role="menuitem"
+			onclick={contextHideNode}
+		>
+			Hide node
+		</button>
+		<button
+			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700 hover:text-gold transition-colors"
+			role="menuitem"
+			onclick={contextTogglePin}
+		>
+			{pinnedNodes.has(contextMenu.nodeId) ? 'Unpin position' : 'Pin position'}
+		</button>
+		<hr class="border-navy-700 my-0.5" />
+		<button
+			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700 hover:text-gold transition-colors"
+			role="menuitem"
+			onclick={() => { handleNodeClick(contextMenu!.nodeId); closeContextMenu(); }}
+		>
+			View entity details
+		</button>
+	</div>
+{/if}
+
+<!-- Edge detail tooltip (task 6uw.9) -->
+{#if edgeTooltip && selectedEdge}
+	<div
+		class="fixed z-50 bg-navy-800 border border-navy-600 rounded-lg shadow-xl p-3 min-w-[200px] max-w-[280px]"
+		style="left: {edgeTooltip.x + 8}px; top: {edgeTooltip.y + 8}px;"
+		role="tooltip"
+	>
+		<div class="space-y-1.5">
+			<div class="text-xs text-slate-200 font-medium">
+				{selectedEdgeSourceName}
+				<span class="text-gold mx-1">{selectedEdge.predicate.replace(/_/g, ' ')}</span>
+				{selectedEdgeTargetName}
+			</div>
+			<div class="flex items-center gap-2 text-[10px] text-slate-400">
+				<span>Confidence: {(selectedEdge.confidence * 100).toFixed(0)}%</span>
+				{#if selectedEdge.predicate_family}
+					<span class="px-1.5 py-0.5 rounded bg-navy-700 border border-navy-600">
+						{selectedEdge.predicate_family}
+					</span>
+				{/if}
+			</div>
+			{#if selectedEdge.graph_source}
+				<div class="text-[10px] text-slate-500">
+					Source: {selectedEdge.graph_source === 'team' ? 'Team Graph' : 'Master Graph'}
+				</div>
+			{/if}
+		</div>
+	</div>
+{/if}
+
+<!-- Minimap (task 6uw.10) -->
+{#if minimapVisible && graphData.nodes.length > 0 && !loading}
+	<div class="fixed bottom-16 right-4 z-30 bg-navy-900/90 border border-navy-700 rounded-lg overflow-hidden shadow-lg">
+		<svg width="150" height="100" viewBox="0 0 150 100" class="block">
+			<rect width="150" height="100" fill="transparent" />
+			{#each graphData.nodes as node (node.id)}
+				{@const nx = ((graphData.nodes.indexOf(node) % 15) / 15) * 140 + 5}
+				{@const ny = (Math.floor(graphData.nodes.indexOf(node) / 15) / Math.max(1, Math.ceil(graphData.nodes.length / 15))) * 90 + 5}
+				<circle
+					cx={nx}
+					cy={ny}
+					r="2"
+					fill={NODE_COLORS[node.entity_type.toLowerCase()] ?? '#7B8794'}
+				/>
+			{/each}
+		</svg>
+	</div>
+{/if}
+
+<!-- Toast notification -->
+{#if toastMessage}
+	<div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-navy-800 border border-navy-600 rounded-lg px-4 py-2 text-xs text-slate-200 shadow-lg">
+		{toastMessage}
+	</div>
+{/if}

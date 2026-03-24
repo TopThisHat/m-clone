@@ -37,6 +37,7 @@
 			debouncedSearch = q;
 			currentPage = 0;
 		}, 300);
+		return () => clearTimeout(debounceTimer);
 	});
 
 	// Add form
@@ -393,7 +394,7 @@
 	{:else}
 		<!-- Table -->
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
-			<div class="max-h-[60vh] overflow-auto">
+			<div class="max-h-[50vh] sm:max-h-[60vh] lg:max-h-[70vh] overflow-auto">
 				<table class="w-full text-sm" aria-label="Attribute library">
 					<thead class="sticky top-0 bg-navy-800 border-b border-navy-700">
 						<tr class="text-slate-400">

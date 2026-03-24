@@ -37,8 +37,9 @@ async def db_create_entity(campaign_id: str, label: str, description: str | None
 async def db_bulk_create_entities(campaign_id: str, entities: list[dict[str, Any]]) -> dict[str, Any]:
     """Insert entities, skipping duplicates on both label and gwm_id.
 
-    Uses a CTE to pre-filter gwm_id conflicts (since ON CONFLICT can only
-    target one unique index) and ON CONFLICT for the label unique index.
+    ON CONFLICT DO NOTHING catches both the label unique index and the
+    gwm_id unique index, correctly handling NULL gwm_id values (which are
+    always distinct in PostgreSQL partial unique indexes).
     """
     async with _acquire() as conn:
         rows = await conn.fetch(
@@ -54,12 +55,6 @@ async def db_bulk_create_entities(campaign_id: str, entities: list[dict[str, Any
             INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
             SELECT $1::uuid, i.label, i.description, i.gwm_id, i.metadata
             FROM incoming i
-            WHERE i.gwm_id IS NULL
-               OR NOT EXISTS (
-                   SELECT 1 FROM playbook.entities
-                   WHERE campaign_id = $1::uuid
-                     AND LOWER(TRIM(gwm_id)) = LOWER(i.gwm_id)
-               )
             ON CONFLICT DO NOTHING
             RETURNING *
             """,
@@ -125,6 +120,12 @@ async def db_update_entity(entity_id: str, campaign_id: str, **kwargs: Any) -> d
         if k == "metadata":
             set_parts.append(f"{k} = ${i}::jsonb")
             values.append(json.dumps(v))
+        elif k == "gwm_id":
+            set_parts.append(f"{k} = NULLIF(TRIM(${i}), '')")
+            values.append(v)
+        elif k == "label":
+            set_parts.append(f"{k} = TRIM(${i})")
+            values.append(v)
         else:
             set_parts.append(f"{k} = ${i}")
             values.append(v)

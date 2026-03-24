@@ -22,6 +22,10 @@
 		selectedNodeId = null,
 		theme = 'dark',
 		onNodeClick = () => {},
+		onNodeDblClick = () => {},
+		onNodeContextMenu = () => {},
+		onEdgeClick = () => {},
+		onGraphReady = () => {},
 	}: {
 		nodes: KGGraphNode[];
 		edges: KGGraphEdge[];
@@ -31,6 +35,10 @@
 		selectedNodeId?: string | null;
 		theme?: 'light' | 'dark';
 		onNodeClick?: (nodeId: string) => void;
+		onNodeDblClick?: (nodeId: string) => void;
+		onNodeContextMenu?: (nodeId: string, x: number, y: number) => void;
+		onEdgeClick?: (edgeId: string, x: number, y: number) => void;
+		onGraphReady?: (api: { mergeNodes: typeof mergeNodes; fitToView: () => void; resetLayout: () => void }) => void;
 	} = $props();
 
 	// Theme-dependent colors
@@ -84,6 +92,17 @@
 
 	const NODE_RADIUS = 26;
 	const FONT_SIZE = 10;
+
+	// Debounce helper
+	function debounce<T extends (...args: unknown[]) => void>(fn: T, ms: number): T & { cancel: () => void } {
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		const debounced = ((...args: unknown[]) => {
+			if (timer) clearTimeout(timer);
+			timer = setTimeout(() => fn(...args), ms);
+		}) as T & { cancel: () => void };
+		debounced.cancel = () => { if (timer) clearTimeout(timer); };
+		return debounced;
+	}
 
 	// Truncate label to fit inside circle
 	function truncLabel(name: string, maxChars = 12): string {
@@ -147,6 +166,108 @@
 		if (angle > 90) angle -= 180;
 		if (angle < -90) angle += 180;
 		return { x: px, y: py, angle };
+	}
+
+	// Fit the graph into view
+	function fitToView() {
+		const refs = (containerEl as any)?.__d3refs;
+		if (!refs) return;
+		const { svgEl, zoom: zb, simNodes, width, height } = refs;
+		if (simNodes.length === 0) return;
+
+		let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+		for (const n of simNodes) {
+			if (n.x != null && n.y != null) {
+				minX = Math.min(minX, n.x);
+				maxX = Math.max(maxX, n.x);
+				minY = Math.min(minY, n.y);
+				maxY = Math.max(maxY, n.y);
+			}
+		}
+		if (!isFinite(minX)) return;
+
+		const padding = NODE_RADIUS * 3;
+		const bw = maxX - minX + padding * 2;
+		const bh = maxY - minY + padding * 2;
+		const scale = Math.min(width / bw, height / bh, 2);
+		const cx = (minX + maxX) / 2;
+		const cy = (minY + maxY) / 2;
+
+		const transform = d3.zoomIdentity
+			.translate(width / 2, height / 2)
+			.scale(scale)
+			.translate(-cx, -cy);
+		svgEl.transition().duration(500).call(zb.transform, transform);
+	}
+
+	// Reset layout: unpin all nodes, randomize positions, restart simulation
+	function resetLayout() {
+		const refs = (containerEl as any)?.__d3refs;
+		if (!refs || !simulation) return;
+		const { simNodes, width, height } = refs;
+		for (const n of simNodes) {
+			n.fx = null;
+			n.fy = null;
+			n.x = width / 2 + (Math.random() - 0.5) * width * 0.6;
+			n.y = height / 2 + (Math.random() - 0.5) * height * 0.6;
+		}
+		simulation.alpha(1).restart();
+	}
+
+	// Incremental merge: update simulation data without full rebuild
+	function mergeNodes(newNodes: KGGraphNode[], newEdges: KGGraphEdge[]) {
+		const refs = (containerEl as any)?.__d3refs;
+		if (!refs || !simulation) {
+			buildGraph();
+			return;
+		}
+
+		const { simNodes, simEdges } = refs;
+		const existingNodeIds = new Set(simNodes.map((n: SimNode) => n.id));
+		const addedNodeIds = new Set<string>();
+
+		// Add new nodes, keeping existing positions
+		for (const n of newNodes) {
+			if (!existingNodeIds.has(n.id)) {
+				const simNode: SimNode = { ...n, x: undefined, y: undefined };
+				simNodes.push(simNode);
+				addedNodeIds.add(n.id);
+			}
+		}
+
+		// Add new edges
+		const existingEdgeIds = new Set(simEdges.map((e: SimEdge) => e.id));
+		const nodeMap = new Map(simNodes.map((n: SimNode) => [n.id, n]));
+		for (const e of newEdges) {
+			if (!existingEdgeIds.has(e.id) && nodeMap.has(e.source) && nodeMap.has(e.target)) {
+				simEdges.push({ ...e });
+			}
+		}
+
+		// Update simulation with merged data
+		simulation.nodes(simNodes);
+		const linkForce = simulation.force('link') as d3.ForceLink<SimNode, SimEdge>;
+		if (linkForce) linkForce.links(simEdges);
+		simulation.alpha(0.3).restart();
+
+		// Rebuild visuals
+		buildGraph();
+
+		// Pulse animation for newly added nodes
+		if (addedNodeIds.size > 0) {
+			const newRefs = (containerEl as any)?.__d3refs;
+			if (newRefs) {
+				newRefs.nodeGs
+					.filter((d: SimNode) => addedNodeIds.has(d.id))
+					.select('.node-circle')
+					.transition()
+					.duration(600)
+					.attr('r', NODE_RADIUS + 8)
+					.transition()
+					.duration(400)
+					.attr('r', NODE_RADIUS);
+			}
+		}
 	}
 
 	function buildGraph() {
@@ -224,7 +345,11 @@
 			.attr('fill', 'none')
 			.attr('stroke', themeColors.edgeStroke)
 			.attr('stroke-width', 2)
-			.attr('marker-end', 'url(#neo-arrow)');
+			.attr('marker-end', 'url(#neo-arrow)')
+			.attr('cursor', 'pointer')
+			.on('click', (event, d) => {
+				onEdgeClick(d.id, event.clientX, event.clientY);
+			});
 
 		// ── Edge labels (always visible, pill background) ──
 		const edgeLabelGroup = g.append('g').attr('class', 'edge-labels');
@@ -261,7 +386,12 @@
 			.data(simNodes, (d) => d.id)
 			.join('g')
 			.attr('cursor', 'pointer')
-			.on('click', (_event, d) => onNodeClick(d.id));
+			.on('click', (_event, d) => onNodeClick(d.id))
+			.on('dblclick', (_event, d) => onNodeDblClick(d.id))
+			.on('contextmenu', (event, d) => {
+				event.preventDefault();
+				onNodeContextMenu(d.id, event.clientX, event.clientY);
+			});
 
 		// Hover ring (hidden by default)
 		nodeGs
@@ -403,6 +533,9 @@
 		// Apply initial highlight/selection state
 		applyHighlighting();
 		applySelection();
+
+		// Notify parent that graph API is ready
+		onGraphReady({ mergeNodes, fitToView, resetLayout });
 	}
 
 	function applyHighlighting() {
@@ -505,9 +638,13 @@
 	});
 
 	onMount(() => {
-		const observer = new ResizeObserver(() => buildGraph());
+		const debouncedBuild = debounce(() => buildGraph(), 300);
+		const observer = new ResizeObserver(() => debouncedBuild());
 		observer.observe(containerEl);
-		return () => observer.disconnect();
+		return () => {
+			observer.disconnect();
+			debouncedBuild.cancel();
+		};
 	});
 
 	onDestroy(() => {

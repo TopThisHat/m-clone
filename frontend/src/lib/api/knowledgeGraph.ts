@@ -208,6 +208,18 @@ export const kgApi = {
 		return apiFetch(`/api/kg/query?${params}`);
 	},
 
+	getNeighbors: (
+		entityId: string,
+		params: { depth?: number; limit?: number; exclude_ids?: string[]; team_id?: string } = {}
+	): Promise<KGGraph> => {
+		const q = new URLSearchParams();
+		if (params.depth !== undefined) q.set('depth', String(params.depth));
+		if (params.limit !== undefined) q.set('limit', String(params.limit));
+		if (params.exclude_ids?.length) q.set('exclude_ids', params.exclude_ids.join(','));
+		if (params.team_id) q.set('team_id', params.team_id);
+		return apiFetch(`/api/kg/entities/${entityId}/neighbors?${q}`);
+	},
+
 	// Super admin: view any team's graph
 	adminGetTeamGraph: (teamId: string, params: {
 		entity_types?: string[];

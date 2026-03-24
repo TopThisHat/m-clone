@@ -158,7 +158,7 @@
 	</div>
 
 	<!-- Session list -->
-	<div class="flex-1 overflow-y-auto px-2 pb-4 space-y-0.5">
+	<div class="flex-1 min-h-0 overflow-y-auto px-2 pb-4 space-y-0.5">
 		{#each $sessionList as session (session.id)}
 			{@const isActive = $activeSessionId === session.id}
 			<div

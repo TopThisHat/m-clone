@@ -160,6 +160,7 @@ from .knowledge_graph import (
     db_upsert_relationship,
     db_list_kg_entities,
     db_get_kg_entity,
+    db_get_kg_relationship,
     db_get_entity_relationships,
     db_search_kg,
     db_get_kg_stats,
@@ -171,6 +172,7 @@ from .knowledge_graph import (
     db_update_kg_relationship,
     db_delete_kg_relationship,
     db_query_kg,
+    db_get_neighbors,
 )
 
 # ── Templates ─────────────────────────────────────────────────────────────────

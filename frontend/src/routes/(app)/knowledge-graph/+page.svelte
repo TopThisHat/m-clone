@@ -8,6 +8,7 @@
 		type KGStats,
 	} from '$lib/api/knowledgeGraph';
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
+	import Pagination from '$lib/components/Pagination.svelte';
 
 	let entities = $state<KGEntity[]>([]);
 	let stats = $state<KGStats | null>(null);
@@ -18,7 +19,7 @@
 	let searchQuery = $state('');
 	let typeFilter = $state('');
 	let currentPage = $state(0);
-	const pageSize = 50;
+	let pageSize = $state(50);
 
 	// Expanded entity relationships
 	let expandedId = $state<string | null>(null);
@@ -237,26 +238,14 @@
 		</div>
 
 		<!-- Pagination -->
-		{#if totalPages > 1}
-			<div class="flex items-center justify-center gap-2 mt-6">
-				<button
-					onclick={() => goToPage(currentPage - 1)}
-					disabled={currentPage === 0}
-					class="text-xs px-3 py-1.5 rounded border border-navy-600 text-slate-400 hover:text-gold disabled:opacity-30 transition-colors"
-				>
-					Previous
-				</button>
-				<span class="text-xs text-slate-500">
-					Page {currentPage + 1} of {totalPages} ({total} entities)
-				</span>
-				<button
-					onclick={() => goToPage(currentPage + 1)}
-					disabled={currentPage >= totalPages - 1}
-					class="text-xs px-3 py-1.5 rounded border border-navy-600 text-slate-400 hover:text-gold disabled:opacity-30 transition-colors"
-				>
-					Next
-				</button>
-			</div>
-		{/if}
+		<div class="mt-4 bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
+			<Pagination
+				{total}
+				{pageSize}
+				{currentPage}
+				onPageChange={(p) => goToPage(p)}
+				onPageSizeChange={(size) => { pageSize = size; goToPage(0); }}
+			/>
+		</div>
 	{/if}
 </div>

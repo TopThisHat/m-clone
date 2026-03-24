@@ -55,7 +55,7 @@
 	</div>
 
 	<!-- Rules list -->
-	<div class="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+	<div class="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-2">
 		{#if $rules.length === 0}
 			<div class="text-center py-12">
 				<p class="text-slate-600 text-sm">No rules yet.</p>

@@ -258,7 +258,8 @@
 		libraryResult = '';
 		try {
 			const imported = await attributesApi.importFromLibrary(campaignId, [...librarySelected]);
-			libraryResult = `Imported ${imported.length} ${imported.length === 1 ? 'attribute' : 'attributes'}.`;
+			const count = imported.inserted.length;
+			libraryResult = `Imported ${count} ${count === 1 ? 'attribute' : 'attributes'}.${imported.skipped > 0 ? ` ${imported.skipped} skipped.` : ''}`;
 			librarySelected = new Set();
 			load();
 		} catch (err: unknown) {

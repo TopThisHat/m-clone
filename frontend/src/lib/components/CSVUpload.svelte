@@ -108,7 +108,7 @@
 			// Auto-detect common column names
 			labelCol = headers.find((h) => /^(label|name|entity|company|person|org)/i.test(h)) ?? headers[0] ?? '';
 			descCol = headers.find((h) => /^(desc|description|bio|notes)/i.test(h)) ?? '';
-			gwmIdCol = headers.find((h) => /^(gwm_id|gwm|id)/i.test(h)) ?? '';
+			gwmIdCol = headers.find((h) => /^(gwm_id|gwm[-_]?id|gwm)$/i.test(h)) ?? '';
 
 			stage = 'mapping';
 		} catch (err: unknown) {
@@ -158,6 +158,8 @@
 		try {
 			for (let i = 0; i < entities.length; i += BATCH_SIZE) {
 				const batch = entities.slice(i, i + BATCH_SIZE);
+				// Update count before the request to show progress immediately
+				uploadedCount = i;
 				const result = onBulkCreate
 					? await onBulkCreate(batch)
 					: await entitiesApi.bulkCreate(campaignId, batch);

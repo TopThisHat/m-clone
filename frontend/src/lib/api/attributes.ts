@@ -73,7 +73,7 @@ export const attributesApi = {
 			body: JSON.stringify({ source_campaign_id: sourceCampaignId }),
 		}),
 
-	importFromLibrary: (campaignId: string, ids: string[]): Promise<Attribute[]> =>
+	importFromLibrary: (campaignId: string, ids: string[]): Promise<BulkAttributeResult> =>
 		apiFetch(`/api/campaigns/${campaignId}/attributes/import-library`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },

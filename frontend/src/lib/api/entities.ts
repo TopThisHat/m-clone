@@ -66,14 +66,14 @@ export const entitiesApi = {
 	delete: (campaignId: string, entityId: string): Promise<null> =>
 		apiFetch(`/api/campaigns/${campaignId}/entities/${entityId}`, { method: 'DELETE' }),
 
-	importFrom: (campaignId: string, sourceCampaignId: string): Promise<Entity[]> =>
+	importFrom: (campaignId: string, sourceCampaignId: string): Promise<BulkEntityResult> =>
 		apiFetch(`/api/campaigns/${campaignId}/entities/import`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ source_campaign_id: sourceCampaignId }),
 		}),
 
-	importFromLibrary: (campaignId: string, ids: string[]): Promise<Entity[]> =>
+	importFromLibrary: (campaignId: string, ids: string[]): Promise<BulkEntityResult> =>
 		apiFetch(`/api/campaigns/${campaignId}/entities/import-library`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },

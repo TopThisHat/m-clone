@@ -15,8 +15,10 @@ from app.db import (
     db_get_entity_relationships,
     db_get_kg_entity,
     db_get_kg_graph,
+    db_get_kg_relationship,
     db_get_kg_stats,
     db_get_member_role,
+    db_get_neighbors,
     db_is_super_admin,
     db_is_team_member,
     db_list_kg_conflicts,
@@ -132,10 +134,39 @@ async def get_entity(entity_id: str, user=Depends(get_current_user)):
 async def get_entity_relationships(
     entity_id: str,
     direction: str = Query(default="both"),
+    team_id: str | None = Query(default=None),
     user=Depends(get_current_user),
 ):
     try:
-        return await db_get_entity_relationships(entity_id, direction)
+        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        return await db_get_entity_relationships(
+            entity_id, direction,
+            team_id=resolved_team, include_master=include_master,
+        )
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/entities/{entity_id}/neighbors")
+async def get_entity_neighbors(
+    entity_id: str,
+    depth: int = Query(default=1, ge=1, le=3),
+    limit: int = Query(default=50, ge=1, le=200),
+    exclude_ids: str | None = Query(default=None, description="Comma-separated UUIDs to exclude"),
+    team_id: str | None = Query(default=None),
+    user=Depends(get_current_user),
+):
+    try:
+        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        exclude = [eid.strip() for eid in exclude_ids.split(",")] if exclude_ids else []
+        return await db_get_neighbors(
+            entity_id,
+            depth=depth,
+            limit=limit,
+            exclude_ids=exclude,
+            team_id=resolved_team,
+            include_master=include_master,
+        )
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -192,9 +223,15 @@ async def get_graph(
 
 
 @router.get("/deal-partners")
-async def get_deal_partners(user=Depends(get_current_user)):
+async def get_deal_partners(
+    team_id: str | None = Query(default=None),
+    user=Depends(get_current_user),
+):
     try:
-        return await db_get_deal_partners()
+        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        return await db_get_deal_partners(
+            team_id=resolved_team, include_master=include_master,
+        )
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -203,10 +240,15 @@ async def get_deal_partners(user=Depends(get_current_user)):
 async def list_conflicts(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0),
+    team_id: str | None = Query(default=None),
     user=Depends(get_current_user),
 ):
     try:
-        return await db_list_kg_conflicts(limit=limit, offset=offset)
+        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        return await db_list_kg_conflicts(
+            limit=limit, offset=offset,
+            team_id=resolved_team, include_master=include_master,
+        )
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -271,16 +313,10 @@ async def update_relationship(
     user=Depends(get_current_user),
 ):
     try:
-        # Need to check team ownership via the relationship's entities
-        # For simplicity, require super_admin or team admin for any relationship edit
-        sid = user["sub"]
-        is_sa = await db_is_super_admin(sid)
-        if not is_sa:
-            # Check user has admin on at least one team
-            teams = await db_list_user_teams(sid)
-            has_admin = any(_can(t.get("role"), "admin") for t in teams)
-            if not has_admin:
-                raise HTTPException(status_code=403, detail="Admin or owner role required")
+        rel = await db_get_kg_relationship(rel_id)
+        if not rel:
+            raise HTTPException(status_code=404, detail="Relationship not found")
+        await _require_kg_edit(user, rel.get("team_id"))
         patch = body.model_dump(exclude_none=True)
         updated = await db_update_kg_relationship(rel_id, patch)
         if not updated:
@@ -293,13 +329,10 @@ async def update_relationship(
 @router.delete("/relationships/{rel_id}")
 async def delete_relationship(rel_id: str, user=Depends(get_current_user)):
     try:
-        sid = user["sub"]
-        is_sa = await db_is_super_admin(sid)
-        if not is_sa:
-            teams = await db_list_user_teams(sid)
-            has_admin = any(_can(t.get("role"), "admin") for t in teams)
-            if not has_admin:
-                raise HTTPException(status_code=403, detail="Admin or owner role required")
+        rel = await db_get_kg_relationship(rel_id)
+        if not rel:
+            raise HTTPException(status_code=404, detail="Relationship not found")
+        await _require_kg_edit(user, rel.get("team_id"))
         deleted = await db_delete_kg_relationship(rel_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Relationship not found")

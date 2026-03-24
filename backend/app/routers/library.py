@@ -6,6 +6,7 @@ from typing import Any
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
+    db_is_team_member,
     db_list_entity_library,
     db_create_entity_library,
     db_bulk_create_entity_library,
@@ -26,6 +27,13 @@ def _no_db() -> HTTPException:
         status_code=503,
         detail="A database connection is required for this action. Please configure DATABASE_URL.",
     )
+
+
+async def _assert_team_access(team_id: str | None, user_sid: str) -> None:
+    """Raise 403 if team_id is provided and user is not a member."""
+    if team_id:
+        if not await db_is_team_member(team_id, user_sid):
+            raise HTTPException(status_code=403, detail="Forbidden")
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -80,6 +88,7 @@ async def list_library_entities(
     sort_dir: str = Query(default="asc"),
     user=Depends(get_current_user),
 ):
+    await _assert_team_access(team_id, user["sub"])
     try:
         return await db_list_entity_library(
             user["sub"], team_id, limit=limit, offset=offset, search=search, sort_by=sort_by, sort_dir=sort_dir
@@ -90,6 +99,7 @@ async def list_library_entities(
 
 @router.post("/entities", status_code=201)
 async def create_library_entity(body: LibraryEntityCreate, user=Depends(get_current_user)):
+    await _assert_team_access(body.team_id, user["sub"])
     try:
         return await db_create_entity_library(
             owner_sid=user["sub"],
@@ -105,6 +115,7 @@ async def create_library_entity(body: LibraryEntityCreate, user=Depends(get_curr
 
 @router.post("/entities/bulk", status_code=201)
 async def bulk_create_library_entities(body: BulkLibraryEntityBody, user=Depends(get_current_user)):
+    await _assert_team_access(body.team_id, user["sub"])
     items = [i.model_dump(exclude={"team_id"}) for i in body.items]
     try:
         return await db_bulk_create_entity_library(user["sub"], body.team_id, items)
@@ -126,9 +137,11 @@ async def update_library_entity(item_id: str, body: LibraryEntityUpdate, user=De
 @router.delete("/entities/{item_id}", status_code=204)
 async def delete_library_entity(item_id: str, user=Depends(get_current_user)):
     try:
-        await db_delete_entity_library(item_id, user["sub"])
+        deleted = await db_delete_entity_library(item_id, user["sub"])
     except DatabaseNotConfigured:
         raise _no_db()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Entity not found")
     return Response(status_code=204)
 
 
@@ -144,6 +157,7 @@ async def list_library_attributes(
     sort_dir: str = Query(default="asc"),
     user=Depends(get_current_user),
 ):
+    await _assert_team_access(team_id, user["sub"])
     try:
         return await db_list_attribute_library(
             user["sub"], team_id, limit=limit, offset=offset, search=search, sort_by=sort_by, sort_dir=sort_dir
@@ -154,6 +168,7 @@ async def list_library_attributes(
 
 @router.post("/attributes", status_code=201)
 async def create_library_attribute(body: LibraryAttributeCreate, user=Depends(get_current_user)):
+    await _assert_team_access(body.team_id, user["sub"])
     try:
         return await db_create_attribute_library(
             owner_sid=user["sub"],
@@ -168,6 +183,7 @@ async def create_library_attribute(body: LibraryAttributeCreate, user=Depends(ge
 
 @router.post("/attributes/bulk", status_code=201)
 async def bulk_create_library_attributes(body: BulkLibraryAttributeBody, user=Depends(get_current_user)):
+    await _assert_team_access(body.team_id, user["sub"])
     items = [i.model_dump(exclude={"team_id"}) for i in body.items]
     try:
         return await db_bulk_create_attribute_library(user["sub"], body.team_id, items)
@@ -189,7 +205,9 @@ async def update_library_attribute(item_id: str, body: LibraryAttributeUpdate, u
 @router.delete("/attributes/{item_id}", status_code=204)
 async def delete_library_attribute(item_id: str, user=Depends(get_current_user)):
     try:
-        await db_delete_attribute_library(item_id, user["sub"])
+        deleted = await db_delete_attribute_library(item_id, user["sub"])
     except DatabaseNotConfigured:
         raise _no_db()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Attribute not found")
     return Response(status_code=204)

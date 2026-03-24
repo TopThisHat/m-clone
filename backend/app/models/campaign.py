@@ -193,3 +193,9 @@ class BulkEntityResult(BaseModel):
 class BulkAttributeResult(BaseModel):
     inserted: list[AttributeOut]
     skipped: int
+
+
+class ImportResult(BaseModel):
+    inserted: list[EntityOut]
+    skipped: int
+    total_requested: int

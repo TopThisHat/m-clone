@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from app.auth import get_current_user
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.db import (
     DatabaseNotConfigured,
@@ -16,11 +16,11 @@ from app.db import (
     db_list_entities,
     db_update_entity,
 )
-from app.models.campaign import BulkEntityResult, EntityCreate, EntityOut, EntityUpdate, ImportBody
+from app.models.campaign import BulkEntityResult, EntityCreate, EntityOut, EntityUpdate, ImportBody, ImportResult
 
 
 class ImportLibraryBody(BaseModel):
-    ids: list[str]
+    ids: list[str] = Field(min_length=1)
 
 router = APIRouter(prefix="/api/campaigns", tags=["entities"])
 
@@ -104,11 +104,11 @@ async def bulk_create_entities(campaign_id: str, body: list[EntityCreate], user=
         return result
     except DatabaseNotConfigured:
         raise _no_db()
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Bulk insert failed: {exc}")
+    except Exception:
+        raise HTTPException(status_code=422, detail="Bulk insert failed due to a data conflict")
 
 
-@router.post("/{campaign_id}/entities/import", response_model=list[EntityOut], status_code=201)
+@router.post("/{campaign_id}/entities/import", response_model=ImportResult, status_code=201)
 async def import_entities(campaign_id: str, body: ImportBody, user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     await _get_owned_campaign(body.source_campaign_id, user["sub"])
@@ -121,11 +121,11 @@ async def import_entities(campaign_id: str, body: ImportBody, user=Depends(get_c
         raise _no_db()
 
 
-@router.post("/{campaign_id}/entities/import-library", response_model=list[EntityOut], status_code=201)
+@router.post("/{campaign_id}/entities/import-library", response_model=ImportResult, status_code=201)
 async def import_entities_from_library(campaign_id: str, body: ImportLibraryBody, user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
-        return await db_import_entities_from_library(campaign_id, body.ids)
+        return await db_import_entities_from_library(campaign_id, body.ids, owner_sid=user["sub"])
     except DatabaseNotConfigured:
         raise _no_db()
 

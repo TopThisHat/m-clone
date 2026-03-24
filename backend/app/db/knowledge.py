@@ -40,6 +40,9 @@ async def db_lookup_knowledge(
     When *team_id* is ``None`` (default) the legacy behaviour is preserved:
       rows older than *max_age_hours* are ignored (backward compat).
     """
+    if not gwm_id or not gwm_id.strip():
+        logger.warning("db_lookup_knowledge: called with NULL/empty gwm_id, returning None")
+        return None
     async with _acquire() as conn:
         if team_id is not None:
             # ── staleness-aware, team-scoped lookup ──────────────────────
@@ -123,8 +126,17 @@ async def db_lookup_knowledge_batch(
     """
     if not pairs:
         return {}
-    gwm_ids = [g for g, _ in pairs]
-    attr_labels = [a for _, a in pairs]
+    # Filter out pairs with NULL/empty gwm_id
+    valid_pairs = [(g, a) for g, a in pairs if g and g.strip()]
+    if not valid_pairs:
+        return {}
+    if len(valid_pairs) < len(pairs):
+        logger.warning(
+            "db_lookup_knowledge_batch: filtered %d pairs with NULL/empty gwm_id",
+            len(pairs) - len(valid_pairs),
+        )
+    gwm_ids = [g for g, _ in valid_pairs]
+    attr_labels = [a for _, a in valid_pairs]
     if len(gwm_ids) != len(attr_labels):
         logger.error(
             "db_lookup_knowledge_batch: mismatched arrays (%d gwm_ids vs %d labels) — skipping",
@@ -193,8 +205,13 @@ async def db_check_staleness_batch(
     if not pairs:
         return {}
 
-    gwm_ids = [g for g, _ in pairs]
-    attr_labels = [a for _, a in pairs]
+    # Filter out pairs with NULL/empty gwm_id
+    valid_pairs = [(g, a) for g, a in pairs if g and g.strip()]
+    if not valid_pairs:
+        return {}
+
+    gwm_ids = [g for g, _ in valid_pairs]
+    attr_labels = [a for _, a in valid_pairs]
 
     async with _acquire() as conn:
         if team_id is not None:

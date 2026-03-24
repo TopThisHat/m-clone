@@ -139,14 +139,15 @@ async def db_clone_campaign(source_id: str, owner_sid: str) -> dict[str, Any]:
             source = await conn.fetchrow("SELECT * FROM playbook.campaigns WHERE id = $1::uuid", source_id)
             new_row = await conn.fetchrow(
                 """
-                INSERT INTO playbook.campaigns (owner_sid, name, description, schedule)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO playbook.campaigns (owner_sid, name, description, schedule, team_id)
+                VALUES ($1, $2, $3, $4, $5::uuid)
                 RETURNING *
                 """,
                 owner_sid,
                 (source["name"] or "") + " (copy)",
                 source["description"],
                 source["schedule"],
+                str(source["team_id"]) if source["team_id"] else None,
             )
             new_id = new_row["id"]
             await conn.execute(
@@ -262,13 +263,19 @@ async def db_get_campaign_stats(owner_sid: str, team_id: str | None = None) -> d
 
 # ── Scout: Cross-campaign import ───────────────────────────────────────────────
 
-async def db_import_entities(target_campaign_id: str, source_campaign_id: str) -> list[dict[str, Any]]:
-    """
-    Copy entities from source campaign to target campaign, skipping duplicates.
-    CTE deduplicates on label, NOT EXISTS filters existing gwm_id conflicts,
-    ON CONFLICT DO NOTHING catches any remaining violations.
+async def db_import_entities(target_campaign_id: str, source_campaign_id: str) -> dict[str, Any]:
+    """Copy entities from source campaign to target campaign, skipping duplicates.
+
+    Returns structured result: ``{"inserted": [...], "skipped": int, "total_requested": int}``.
+
+    CTE deduplicates on label, ON CONFLICT DO NOTHING catches gwm_id and
+    label collisions with rows already in the target campaign.
     """
     async with _acquire() as conn:
+        total_requested = await conn.fetchval(
+            "SELECT COUNT(*) FROM playbook.entities WHERE campaign_id = $1::uuid AND TRIM(COALESCE(label, '')) != ''",
+            source_campaign_id,
+        )
         rows = await conn.fetch(
             """
             WITH source AS (
@@ -285,17 +292,17 @@ async def db_import_entities(target_campaign_id: str, source_campaign_id: str) -
             INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
             SELECT $2::uuid, s.label, s.description, s.gwm_id, s.metadata
             FROM source s
-            WHERE s.gwm_id IS NULL OR NOT EXISTS (
-                SELECT 1 FROM playbook.entities tgt
-                WHERE tgt.campaign_id = $2::uuid
-                  AND LOWER(TRIM(tgt.gwm_id)) = LOWER(s.gwm_id)
-            )
             ON CONFLICT DO NOTHING
             RETURNING *
             """,
             source_campaign_id, target_campaign_id,
         )
-    return [_entity_row_to_dict(r) for r in rows]
+    inserted = [_entity_row_to_dict(r) for r in rows]
+    return {
+        "inserted": inserted,
+        "skipped": total_requested - len(inserted),
+        "total_requested": total_requested,
+    }
 
 
 async def db_import_attributes(target_campaign_id: str, source_campaign_id: str) -> list[dict[str, Any]]:

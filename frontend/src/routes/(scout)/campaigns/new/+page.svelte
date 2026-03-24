@@ -225,11 +225,11 @@
 			}
 			if (ids.length === 0) return;
 			const imported = await entitiesApi.importFromLibrary(campaign.id, ids);
-			entityCount += imported.length;
+			entityCount += imported.inserted.length;
 			libraryEntitySelectedIds = new SvelteSet();
 			selectAllEntitiesAcrossPages = false;
 			showEntityLibrary = false;
-			lastEntityImportCount = imported.length;
+			lastEntityImportCount = imported.inserted.length;
 		} catch { /* ignore */ } finally {
 			importingEntityLib = false;
 		}
@@ -305,11 +305,11 @@
 			}
 			if (ids.length === 0) return;
 			const imported = await attributesApi.importFromLibrary(campaign.id, ids);
-			attrCount += imported.length;
+			attrCount += imported.inserted.length;
 			libraryAttrSelectedIds = new SvelteSet();
 			selectAllAttrsAcrossPages = false;
 			showAttrLibrary = false;
-			lastAttrImportCount = imported.length;
+			lastAttrImportCount = imported.inserted.length;
 		} catch { /* ignore */ } finally {
 			importingAttrLib = false;
 		}

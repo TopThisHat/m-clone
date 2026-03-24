@@ -244,6 +244,15 @@ async def db_update_kg_relationship(
     return _kg_rel_to_dict(row) if row else None
 
 
+async def db_get_kg_relationship(rel_id: str) -> dict[str, Any] | None:
+    """Fetch a single relationship by ID."""
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM playbook.kg_relationships WHERE id = $1::uuid", rel_id
+        )
+    return _kg_rel_to_dict(row) if row else None
+
+
 async def db_delete_kg_relationship(rel_id: str) -> bool:
     """Delete a relationship."""
     async with _acquire() as conn:
@@ -417,15 +426,31 @@ async def db_get_kg_entity(entity_id: str) -> dict[str, Any] | None:
 
 
 async def db_get_entity_relationships(
-    entity_id: str, direction: str = "both"
+    entity_id: str,
+    direction: str = "both",
+    team_id: str | None = None,
+    include_master: bool = False,
 ) -> list[dict[str, Any]]:
     conditions = []
+    args: list[Any] = [entity_id]
     if direction == "outgoing":
         conditions.append("r.subject_id = $1::uuid")
     elif direction == "incoming":
         conditions.append("r.object_id = $1::uuid")
     else:
         conditions.append("(r.subject_id = $1::uuid OR r.object_id = $1::uuid)")
+    conditions.append("r.is_active = TRUE")
+    if team_id:
+        idx = len(args) + 1
+        if include_master:
+            conditions.append(f"(r.team_id = ${idx}::uuid OR r.team_id IS NULL)")
+        else:
+            conditions.append(f"r.team_id = ${idx}::uuid")
+        args.append(team_id)
+    elif not include_master:
+        # No team and not super admin — restrict to nothing
+        conditions.append("FALSE")
+    where = " AND ".join(conditions)
     async with _acquire() as conn:
         rows = await conn.fetch(
             f"""
@@ -435,10 +460,10 @@ async def db_get_entity_relationships(
             FROM playbook.kg_relationships r
             JOIN playbook.kg_entities s ON s.id = r.subject_id
             JOIN playbook.kg_entities o ON o.id = r.object_id
-            WHERE {conditions[0]} AND r.is_active = TRUE
+            WHERE {where}
             ORDER BY r.created_at DESC
             """,
-            entity_id,
+            *args,
         )
     return [_kg_rel_to_dict(r) for r in rows]
 
@@ -526,16 +551,40 @@ async def db_get_kg_stats(team_id: str | None = None, include_master: bool = Fal
     return dict(row) if row else {"total_entities": 0, "total_relationships": 0, "total_conflicts": 0, "entity_types": 0}
 
 
-async def db_list_kg_conflicts(limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+async def db_list_kg_conflicts(
+    limit: int = 50,
+    offset: int = 0,
+    team_id: str | None = None,
+    include_master: bool = False,
+) -> list[dict[str, Any]]:
+    conditions: list[str] = []
+    args: list[Any] = []
+    idx = 0
+    if team_id:
+        idx += 1
+        if include_master:
+            conditions.append(f"(nr.team_id = ${idx}::uuid OR nr.team_id IS NULL)")
+        else:
+            conditions.append(f"nr.team_id = ${idx}::uuid")
+        args.append(team_id)
+    elif not include_master:
+        conditions.append("FALSE")
+    where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+    idx += 1
+    args.append(limit)
+    idx += 1
+    args.append(offset)
     async with _acquire() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             SELECT c.*, c.subject_name, c.object_name
             FROM playbook.kg_relationship_conflicts c
+            JOIN playbook.kg_relationships nr ON nr.id = c.new_relationship_id
+            {where}
             ORDER BY c.detected_at DESC
-            LIMIT $1 OFFSET $2
+            LIMIT ${idx - 1} OFFSET ${idx}
             """,
-            limit, offset,
+            *args,
         )
     result = []
     for r in rows:
@@ -608,6 +657,9 @@ async def db_get_kg_graph(
     idx += 1
     args.append(limit)
     async with _acquire() as conn:
+        # When a limit is applied, prioritize relationships involving the
+        # most-connected entities so the graph visualization shows the most
+        # important nodes first.
         rows = await conn.fetch(
             f"""
             SELECT r.id, r.subject_id, r.object_id, r.predicate, r.predicate_family, r.confidence, r.team_id,
@@ -618,8 +670,22 @@ async def db_get_kg_graph(
             FROM playbook.kg_relationships r
             JOIN playbook.kg_entities s ON s.id = r.subject_id
             JOIN playbook.kg_entities o ON o.id = r.object_id
+            LEFT JOIN (
+                SELECT entity_id, COUNT(*) AS cnt FROM (
+                    SELECT subject_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
+                    UNION ALL
+                    SELECT object_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
+                ) sub GROUP BY entity_id
+            ) src ON src.entity_id = r.subject_id
+            LEFT JOIN (
+                SELECT entity_id, COUNT(*) AS cnt FROM (
+                    SELECT subject_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
+                    UNION ALL
+                    SELECT object_id AS entity_id FROM playbook.kg_relationships WHERE is_active = TRUE
+                ) sub GROUP BY entity_id
+            ) trc ON trc.entity_id = r.object_id
             WHERE {where}
-            ORDER BY r.created_at DESC
+            ORDER BY GREATEST(COALESCE(src.cnt, 0), COALESCE(trc.cnt, 0)) DESC, r.created_at DESC
             LIMIT ${idx}
             """,
             *args,
@@ -657,11 +723,24 @@ async def db_get_kg_graph(
     return {"nodes": list(node_map.values()), "edges": edges}
 
 
-async def db_get_deal_partners() -> list[dict[str, Any]]:
+async def db_get_deal_partners(
+    team_id: str | None = None,
+    include_master: bool = False,
+) -> list[dict[str, Any]]:
     """Find pairs of persons connected to the same entity via transaction relationships."""
+    team_cond = ""
+    args: list[Any] = []
+    if team_id:
+        if include_master:
+            team_cond = " AND (r.team_id = $1::uuid OR r.team_id IS NULL)"
+        else:
+            team_cond = " AND r.team_id = $1::uuid"
+        args.append(team_id)
+    elif not include_master:
+        team_cond = " AND FALSE"
     async with _acquire() as conn:
         rows = await conn.fetch(
-            """
+            f"""
             WITH person_deals AS (
                 SELECT r.subject_id AS person_id, pe.name AS person_name,
                        r.object_id AS deal_entity_id, de.name AS deal_entity_name,
@@ -670,6 +749,7 @@ async def db_get_deal_partners() -> list[dict[str, Any]]:
                 JOIN playbook.kg_entities pe ON pe.id = r.subject_id AND pe.entity_type = 'person'
                 JOIN playbook.kg_entities de ON de.id = r.object_id
                 WHERE r.predicate_family = 'transaction' AND r.is_active = TRUE
+                {team_cond}
             )
             SELECT a.person_id AS person1_id, a.person_name AS person1_name,
                    b.person_id AS person2_id, b.person_name AS person2_name,
@@ -678,7 +758,8 @@ async def db_get_deal_partners() -> list[dict[str, Any]]:
             FROM person_deals a
             JOIN person_deals b ON a.deal_entity_id = b.deal_entity_id AND a.person_id < b.person_id
             ORDER BY a.person_name, b.person_name
-            """
+            """,
+            *args,
         )
     groups: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -801,3 +882,119 @@ async def db_query_kg(
                 results["relationships"].append(d)
 
     return results
+
+
+# ── Neighborhood expansion ────────────────────────────────────────────────
+
+async def db_get_neighbors(
+    entity_id: str,
+    *,
+    depth: int = 1,
+    limit: int = 50,
+    exclude_ids: list[str] | None = None,
+    team_id: str | None = None,
+    include_master: bool = False,
+) -> dict[str, Any]:
+    """Return neighboring nodes and edges for progressive graph expansion.
+
+    Uses a recursive CTE to traverse relationships up to *depth* hops.
+    Returns ``{"nodes": [...], "edges": [...]}``.
+    """
+    depth = max(1, min(depth, 3))  # Clamp to 1-3
+    limit = max(1, min(limit, 200))
+
+    exclude = exclude_ids or []
+
+    # Build team scope condition
+    team_cond = ""
+    args: list[Any] = [entity_id, depth, limit, exclude]
+    if team_id:
+        if include_master:
+            team_cond = "AND (r.team_id = $5::uuid OR r.team_id IS NULL)"
+        else:
+            team_cond = "AND r.team_id = $5::uuid"
+        args.append(team_id)
+    elif not include_master:
+        team_cond = "AND FALSE"
+
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            f"""
+            WITH RECURSIVE neighbors AS (
+                -- Base case: direct relationships from the seed entity
+                SELECT r.id AS rel_id,
+                       r.subject_id, r.object_id,
+                       r.predicate, r.predicate_family, r.confidence, r.team_id,
+                       CASE WHEN r.subject_id = $1::uuid THEN r.object_id ELSE r.subject_id END AS neighbor_id,
+                       1 AS hop
+                FROM playbook.kg_relationships r
+                WHERE r.is_active = TRUE
+                  AND (r.subject_id = $1::uuid OR r.object_id = $1::uuid)
+                  {team_cond}
+
+                UNION ALL
+
+                -- Recursive case: follow edges from discovered neighbors
+                SELECT r.id,
+                       r.subject_id, r.object_id,
+                       r.predicate, r.predicate_family, r.confidence, r.team_id,
+                       CASE WHEN r.subject_id = n.neighbor_id THEN r.object_id ELSE r.subject_id END,
+                       n.hop + 1
+                FROM playbook.kg_relationships r
+                JOIN neighbors n ON (r.subject_id = n.neighbor_id OR r.object_id = n.neighbor_id)
+                WHERE r.is_active = TRUE
+                  AND n.hop < $2
+                  AND r.id != n.rel_id
+                  {team_cond}
+            )
+            SELECT DISTINCT ON (n.rel_id)
+                n.rel_id, n.subject_id, n.object_id,
+                n.predicate, n.predicate_family, n.confidence, n.team_id,
+                n.hop,
+                s.name AS subject_name, s.entity_type AS subject_type,
+                s.aliases AS subject_aliases, s.description AS subject_description,
+                s.metadata AS subject_metadata,
+                o.name AS object_name, o.entity_type AS object_type,
+                o.aliases AS object_aliases, o.description AS object_description,
+                o.metadata AS object_metadata
+            FROM neighbors n
+            JOIN playbook.kg_entities s ON s.id = n.subject_id
+            JOIN playbook.kg_entities o ON o.id = n.object_id
+            WHERE n.neighbor_id != ALL($4::uuid[])
+            ORDER BY n.rel_id, n.hop
+            LIMIT $3
+            """,
+            *args,
+        )
+
+    node_map: dict[str, dict[str, Any]] = {}
+    edges: list[dict[str, Any]] = []
+    for r in rows:
+        sid = str(r["subject_id"])
+        oid = str(r["object_id"])
+        if sid not in node_map:
+            node_map[sid] = {
+                "id": sid, "name": r["subject_name"], "entity_type": r["subject_type"],
+                "aliases": list(r["subject_aliases"]) if isinstance(r["subject_aliases"], list) else [],
+                "description": r["subject_description"] or "",
+                "metadata": r["subject_metadata"] if isinstance(r["subject_metadata"], dict) else {},
+            }
+        if oid not in node_map:
+            node_map[oid] = {
+                "id": oid, "name": r["object_name"], "entity_type": r["object_type"],
+                "aliases": list(r["object_aliases"]) if isinstance(r["object_aliases"], list) else [],
+                "description": r["object_description"] or "",
+                "metadata": r["object_metadata"] if isinstance(r["object_metadata"], dict) else {},
+            }
+        edge_source = "team" if r["team_id"] else "master"
+        edges.append({
+            "id": str(r["rel_id"]),
+            "source": sid,
+            "target": oid,
+            "predicate": r["predicate"],
+            "predicate_family": r["predicate_family"],
+            "confidence": float(r["confidence"]),
+            "graph_source": edge_source,
+            "hop": r["hop"],
+        })
+    return {"nodes": list(node_map.values()), "edges": edges}

@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { entitiesApi, type Entity } from '$lib/api/entities';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
@@ -30,6 +29,7 @@
 			debouncedSearch = q;
 			currentPage = 0;
 		}, 300);
+		return () => clearTimeout(debounceTimer);
 	});
 
 	// Add form state
@@ -78,12 +78,10 @@
 		}
 	}
 
-	onMount(load);
-
 	$effect(() => {
-		// Re-load when search or page changes (skip initial mount)
-		debouncedSearch;
-		currentPage;
+		// Reactive re-load when search or page changes (also handles initial load)
+		const _s = debouncedSearch;
+		const _p = currentPage;
 		load();
 	});
 
@@ -107,8 +105,13 @@
 		importing = true;
 		importResult = '';
 		try {
-			const imported = await entitiesApi.importFrom(campaignId, selectedSourceId);
-			importResult = `Imported ${imported.length} new ${imported.length === 1 ? 'entity' : 'entities'}.`;
+			const result = await entitiesApi.importFrom(campaignId, selectedSourceId);
+			const insertCount = result.inserted.length;
+			const skipCount = result.skipped;
+			importResult = `Imported ${insertCount} new ${insertCount === 1 ? 'entity' : 'entities'}.`;
+			if (skipCount > 0) {
+				importResult += ` ${skipCount} ${skipCount === 1 ? 'entity' : 'entities'} skipped (already exist).`;
+			}
 			load();
 		} catch (err: unknown) {
 			importResult = `Error: ${err instanceof Error ? err.message : 'Import failed'}`;
@@ -258,8 +261,13 @@
 		libraryImporting = true;
 		libraryResult = '';
 		try {
-			const imported = await entitiesApi.importFromLibrary(campaignId, [...librarySelected]);
-			libraryResult = `Imported ${imported.length} ${imported.length === 1 ? 'entity' : 'entities'}.`;
+			const result = await entitiesApi.importFromLibrary(campaignId, [...librarySelected]);
+			const insertCount = result.inserted.length;
+			const skipCount = result.skipped;
+			libraryResult = `Imported ${insertCount} ${insertCount === 1 ? 'entity' : 'entities'}.`;
+			if (skipCount > 0) {
+				libraryResult += ` ${skipCount} skipped (already exist).`;
+			}
 			librarySelected = new Set();
 			load();
 		} catch (err: unknown) {
