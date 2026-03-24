@@ -773,5 +773,27 @@ async def init_schema() -> None:
                 END $$
             """)
 
+            # ── Dead letter table for failed entity extractions ────────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.failed_extraction_tasks (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    session_id      TEXT NOT NULL,
+                    msg_id          TEXT NOT NULL,
+                    attempt_count   INT NOT NULL DEFAULT 0,
+                    last_error      TEXT,
+                    team_id         TEXT,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS failed_extraction_session_msg_idx
+                    ON failed_extraction_tasks(session_id, msg_id)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS failed_extraction_session_idx
+                    ON failed_extraction_tasks(session_id)
+            """)
+
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")

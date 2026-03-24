@@ -73,10 +73,14 @@ async def close_redis() -> None:
 # ---------------------------------------------------------------------------
 
 async def create_consumer_group(stream: str, group: str) -> None:
-    """Create a consumer group idempotently (ignores BUSYGROUP)."""
+    """Create a consumer group idempotently (ignores BUSYGROUP).
+
+    Uses id="0" so that any messages published before the group was created
+    are still delivered to consumers (id="$" would silently skip them).
+    """
     try:
         r = await get_redis()
-        await r.xgroup_create(stream, group, id="$", mkstream=True)
+        await r.xgroup_create(stream, group, id="0", mkstream=True)
         logger.info("Created consumer group '%s' on stream '%s'", group, stream)
     except Exception as exc:
         if "BUSYGROUP" in str(exc):

@@ -272,32 +272,54 @@ async def _process_message(
 
 
 _MAX_EXTRACTION_RETRIES = 3
-_RETRY_KEY_TTL = 3600  # 1 hour
 
 
 async def _get_extraction_retry_count(session_id: str, msg_id: str) -> int:
-    """Get the retry count for an extraction message from Redis."""
+    """Get the retry count for an extraction message from PostgreSQL."""
     try:
-        from app.streams import get_redis
-        r = await get_redis()
-        key = f"extraction_retries:{session_id}:{msg_id}"
-        count = await r.get(key)
-        return int(count) if count else 0
+        pool = await _get_extraction_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT attempt_count FROM playbook.failed_extraction_tasks
+                WHERE session_id = $1 AND msg_id = $2
+                """,
+                session_id, msg_id,
+            )
+            return row["attempt_count"] if row else 0
     except Exception:
         return 0
 
 
-async def _increment_extraction_retry(session_id: str, msg_id: str) -> int:
-    """Increment and return the retry count for an extraction message."""
+async def _increment_extraction_retry(
+    session_id: str, msg_id: str, error: str, team_id: str | None = None,
+) -> int:
+    """Increment and return the retry count, persisted in PostgreSQL."""
     try:
-        from app.streams import get_redis
-        r = await get_redis()
-        key = f"extraction_retries:{session_id}:{msg_id}"
-        count = await r.incr(key)
-        await r.expire(key, _RETRY_KEY_TTL)
-        return count
-    except Exception:
+        pool = await _get_extraction_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO playbook.failed_extraction_tasks
+                    (session_id, msg_id, attempt_count, last_error, team_id)
+                VALUES ($1, $2, 1, $3, $4)
+                ON CONFLICT (session_id, msg_id) DO UPDATE
+                    SET attempt_count = failed_extraction_tasks.attempt_count + 1,
+                        last_error = EXCLUDED.last_error,
+                        updated_at = NOW()
+                RETURNING attempt_count
+                """,
+                session_id, msg_id, error, team_id,
+            )
+            return row["attempt_count"] if row else 0
+    except Exception as exc:
+        logger.warning("Failed to persist extraction retry for session=%s: %s", session_id, exc)
         return 0
+
+
+async def _get_extraction_pool():
+    from app.db import get_pool
+    return await get_pool()
 
 
 async def run_extraction_worker() -> None:
@@ -335,7 +357,9 @@ async def run_extraction_worker() -> None:
                 # ACK only on success
                 await ack_message(msg_id)
             except Exception as exc:
-                retry_count = await _increment_extraction_retry(session_id, msg_id)
+                retry_count = await _increment_extraction_retry(
+                    session_id, msg_id, str(exc), team_id=team_id,
+                )
                 if retry_count >= _MAX_EXTRACTION_RETRIES:
                     logger.error(
                         "Extraction permanently failed for session=%s msg=%s after %d retries: %s",

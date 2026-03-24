@@ -307,50 +307,64 @@ async def finalize_validation_job(validation_job_id: str, root_queue_job_id: str
     pool = await _get_pool()
 
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            WITH counts AS (
-                SELECT
-                    COUNT(*) FILTER (WHERE status = 'dead') AS dead_count,
-                    COUNT(*) FILTER (WHERE status = 'done') AS done_count,
-                    COUNT(*) AS total
-                FROM playbook.job_queue
-                WHERE root_job_id = $1::uuid
-            ),
-            upd AS (
-                UPDATE playbook.validation_jobs
-                SET
-                    status = CASE
-                        WHEN (SELECT dead_count = total AND total > 0 FROM counts) THEN 'failed'
-                        ELSE 'done'
-                    END,
-                    error = CASE
-                        WHEN (SELECT dead_count = total AND total > 0 FROM counts)
-                            THEN 'All ' || (SELECT dead_count FROM counts)::text || ' pair job(s) exhausted retries'
-                        WHEN (SELECT dead_count > 0 FROM counts)
-                            THEN (SELECT dead_count FROM counts)::text
-                                 || ' of ' || (SELECT total FROM counts)::text || ' pair(s) failed'
-                        ELSE NULL
-                    END,
-                    completed_at = NOW()
-                WHERE id = $2::uuid
-                  AND status = 'running'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM playbook.job_queue
-                      WHERE root_job_id = $1::uuid
-                        AND status NOT IN ('done', 'dead')
-                  )
-                RETURNING id
+        async with conn.transaction():
+            # Row-level lock to prevent concurrent finalization
+            locked = await conn.fetchrow(
+                """
+                SELECT id FROM playbook.validation_jobs
+                WHERE id = $1::uuid AND status = 'running'
+                FOR UPDATE SKIP LOCKED
+                """,
+                validation_job_id,
             )
-            SELECT
-                (SELECT id        FROM upd)    AS updated_id,
-                (SELECT dead_count FROM counts) AS dead_count,
-                (SELECT done_count FROM counts) AS done_count,
-                (SELECT total      FROM counts) AS total
-            """,
-            root_queue_job_id,
-            validation_job_id,
-        )
+            if not locked:
+                logger.debug("Validation job %s already finalized or locked by another process", validation_job_id)
+                return
+
+            row = await conn.fetchrow(
+                """
+                WITH counts AS (
+                    SELECT
+                        COUNT(*) FILTER (WHERE status = 'dead') AS dead_count,
+                        COUNT(*) FILTER (WHERE status = 'done') AS done_count,
+                        COUNT(*) AS total
+                    FROM playbook.job_queue
+                    WHERE root_job_id = $1::uuid
+                ),
+                upd AS (
+                    UPDATE playbook.validation_jobs
+                    SET
+                        status = CASE
+                            WHEN (SELECT dead_count = total AND total > 0 FROM counts) THEN 'failed'
+                            ELSE 'done'
+                        END,
+                        error = CASE
+                            WHEN (SELECT dead_count = total AND total > 0 FROM counts)
+                                THEN 'All ' || (SELECT dead_count FROM counts)::text || ' pair job(s) exhausted retries'
+                            WHEN (SELECT dead_count > 0 FROM counts)
+                                THEN (SELECT dead_count FROM counts)::text
+                                     || ' of ' || (SELECT total FROM counts)::text || ' pair(s) failed'
+                            ELSE NULL
+                        END,
+                        completed_at = NOW()
+                    WHERE id = $2::uuid
+                      AND status = 'running'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM playbook.job_queue
+                          WHERE root_job_id = $1::uuid
+                            AND status NOT IN ('done', 'dead')
+                      )
+                    RETURNING id
+                )
+                SELECT
+                    (SELECT id        FROM upd)    AS updated_id,
+                    (SELECT dead_count FROM counts) AS dead_count,
+                    (SELECT done_count FROM counts) AS done_count,
+                    (SELECT total      FROM counts) AS total
+                """,
+                root_queue_job_id,
+                validation_job_id,
+            )
 
     updated_id = row["updated_id"] if row else None
     dead_count = (row["dead_count"] or 0) if row else 0

@@ -150,7 +150,7 @@ class Dispatcher:
         from app.db import get_pool
         while not self._shutdown.is_set():
             try:
-                await asyncio.sleep(60)
+                await asyncio.sleep(15)
                 pool = await get_pool()
                 async with pool.acquire() as conn:
                     stuck = await conn.fetch(
@@ -225,7 +225,25 @@ class Dispatcher:
                         metrics.inc("jobs_dispatched")
                     except Exception as exc:
                         logger.error("Failed to publish job %s to %s: %s", job["id"], stream, exc)
-                        # Job stays 'claimed' in PG; reclaim loop will reset it
+                        # Rollback job to 'pending' so it can be re-dequeued
+                        try:
+                            from app.db import get_pool
+                            pool = await get_pool()
+                            async with pool.acquire() as conn:
+                                await conn.execute(
+                                    """
+                                    UPDATE playbook.job_queue
+                                    SET status = 'pending', worker_id = NULL,
+                                        heartbeat_at = NULL, claimed_at = NULL
+                                    WHERE id = $1::uuid AND status = 'claimed'
+                                    """,
+                                    str(job["id"]),
+                                )
+                            logger.info("Rolled back job %s to pending after publish failure", job["id"])
+                        except Exception as rollback_exc:
+                            logger.error("Rollback failed for job %s: %s", job["id"], rollback_exc)
+                        from job_runner import metrics
+                        metrics.inc("publish_failures")
 
                 if jobs:
                     continue  # immediately try for more
