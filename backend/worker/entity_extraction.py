@@ -50,6 +50,7 @@ class ExtractionResult(BaseModel):
 async def extract_entities_and_relationships(
     report_md: str,
     is_document: bool = False,
+    max_chars: int | None = 12_000,
 ) -> ExtractionResult:
     """
     Call GPT-4o-mini to extract named entities and relationships from text.
@@ -106,7 +107,7 @@ Use canonical, full names for entities. Use "sports_team" type for sports franch
 people with the same name (e.g. "CEO of Goldman Sachs", "NFL quarterback").
 {document_instructions}
 Text to extract from:
-{report_md[:12000]}"""
+{report_md[:max_chars] if max_chars else report_md}"""
 
     try:
         from app.openai_factory import get_openai_client
@@ -164,6 +165,101 @@ async def _relationship_already_exists(
     return False
 
 
+_BATCH_SEMAPHORE_LIMIT = 5
+_BATCH_MAX_RETRIES = 2
+
+
+def _merge_results(results: list[ExtractionResult]) -> ExtractionResult:
+    """Merge multiple extraction results into a single result."""
+    merged_entities: list[ExtractedEntity] = []
+    merged_rels: list[ExtractedRelationship] = []
+    for r in results:
+        merged_entities.extend(r.entities)
+        merged_rels.extend(r.relationships)
+    return ExtractionResult(entities=merged_entities, relationships=merged_rels)
+
+
+async def _extract_document_batched(report_md: str) -> ExtractionResult:
+    """Extract entities from a document using batched concurrent calls.
+
+    - With page markers: split by pages → batch_page_texts → extract per batch.
+    - Without page markers: RecursiveChunker(chunk_size=3500) → batch → extract.
+
+    Each batch is error-isolated: failures log the page range and return empty
+    results without blocking other batches. Rate-limit (429) errors are retried
+    with exponential backoff up to _BATCH_MAX_RETRIES times.
+    """
+    from app.document_chunking import batch_page_texts, has_page_markers, split_by_pages
+
+    if has_page_markers(report_md):
+        pages = split_by_pages(report_md)
+    else:
+        # No page markers: split into ~3500-char paragraph groups to preserve
+        # entity context across paragraph boundaries
+        from chonkie import RecursiveChunker
+        rc = RecursiveChunker(tokenizer="character", chunk_size=3500)
+        chunks = rc.chunk(report_md)
+        pages = [(i + 1, c.text) for i, c in enumerate(chunks)]
+
+    batches = batch_page_texts(pages, target_chars=10_000)
+    if not batches:
+        return ExtractionResult()
+
+    # Build page-range labels for error logging
+    page_nums = [p[0] for p in pages]
+    batch_labels: list[str] = []
+    idx = 0
+    for batch_text in batches:
+        batch_pages: list[int] = []
+        chars = 0
+        while idx < len(pages) and chars < len(batch_text):
+            batch_pages.append(page_nums[idx])
+            chars += len(pages[idx][1])
+            idx += 1
+        if batch_pages:
+            batch_labels.append(f"pages {batch_pages[0]}-{batch_pages[-1]}")
+        else:
+            batch_labels.append("unknown pages")
+
+    sem = asyncio.Semaphore(_BATCH_SEMAPHORE_LIMIT)
+
+    async def _extract_batch(batch_idx: int, batch_text: str) -> ExtractionResult:
+        label = batch_labels[batch_idx]
+        for attempt in range(_BATCH_MAX_RETRIES + 1):
+            try:
+                async with sem:
+                    return await extract_entities_and_relationships(
+                        batch_text, is_document=True, max_chars=None,
+                    )
+            except Exception as exc:
+                is_rate_limit = "429" in str(exc) or "rate" in str(exc).lower()
+                if is_rate_limit and attempt < _BATCH_MAX_RETRIES:
+                    delay = 2 ** (attempt + 1)
+                    logger.warning(
+                        "Rate limit on batch %d (%s), retrying in %ds (attempt %d/%d): %s",
+                        batch_idx, label, delay, attempt + 1, _BATCH_MAX_RETRIES, exc,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error(
+                    "Batch %d (%s) failed after %d attempt(s): %s",
+                    batch_idx, label, attempt + 1, exc,
+                )
+                return ExtractionResult()
+        return ExtractionResult()
+
+    results = await asyncio.gather(*[_extract_batch(i, b) for i, b in enumerate(batches)])
+
+    successful = sum(1 for r in results if r.entities or r.relationships)
+    if successful < len(batches):
+        logger.warning(
+            "Batched extraction: %d/%d batches returned results",
+            successful, len(batches),
+        )
+
+    return _merge_results(list(results))
+
+
 # ── Consumer loop ──────────────────────────────────────────────────────────────
 
 async def _process_message(
@@ -174,13 +270,24 @@ async def _process_message(
 ) -> dict[str, int]:
     """Process one extraction message: extract, normalize, deduplicate, and store.
 
+    For document mode (is_document=True):
+    - If text has page markers: split by pages, batch via batch_page_texts,
+      then extract per batch with concurrency (semaphore=5).
+    - If no page markers: RecursiveChunker(chunk_size=3500) for paragraph
+      groups, then batch and extract.
+    For non-document mode: single extract call with report_md[:12000].
+
     Returns counts: {"entities": N, "relationships": N, "skipped_duplicates": N}
     """
     from app.db import db_find_or_create_entity, db_upsert_relationship
     from app.db._pool import _acquire
     from app.predicate_normalization import normalize_predicate
 
-    result = await extract_entities_and_relationships(report_md, is_document=is_document)
+    if is_document:
+        result = await _extract_document_batched(report_md)
+    else:
+        result = await extract_entities_and_relationships(report_md, is_document=False)
+
     if not result.entities and not result.relationships:
         logger.debug("Extraction for session_id=%s yielded no results", session_id)
         return {"entities": 0, "relationships": 0, "skipped_duplicates": 0}

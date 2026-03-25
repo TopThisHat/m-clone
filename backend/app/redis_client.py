@@ -42,6 +42,7 @@ _EXTENSION_TYPE_MAP: dict[str, str] = {
 @dataclass
 class DocumentSession:
     text: str
+    texts: list[str] = field(default_factory=list)
     filenames: list[str] = field(default_factory=list)
     metadata: list[dict] = field(default_factory=list)
 
@@ -323,13 +324,15 @@ async def _redis_get_documents(client: Any, key: str) -> DocumentSession | None:
     if raw:
         old = json.loads(raw)
         if isinstance(old, dict):
+            old_text = old.get("text", "")
             return DocumentSession(
-                text=old.get("text", ""),
+                text=old_text,
+                texts=[old_text],
                 filenames=[old.get("filename", "document.pdf")],
                 metadata=[{
                     "filename": old.get("filename", "document.pdf"),
                     "type": _infer_type_from_filename(old.get("filename", "document.pdf")),
-                    "char_count": len(old.get("text", "")),
+                    "char_count": len(old_text),
                 }],
             )
         if isinstance(old, list):
@@ -348,6 +351,7 @@ def _memory_get_documents(key: str) -> DocumentSession | None:
         text, fn = existing
         return DocumentSession(
             text=text,
+            texts=[text],
             filenames=[fn],
             metadata=[{
                 "filename": fn,
@@ -360,13 +364,15 @@ def _memory_get_documents(key: str) -> DocumentSession | None:
         return _docs_list_to_session(existing)
 
     if isinstance(existing, dict):
+        old_text = existing.get("text", "")
         return DocumentSession(
-            text=existing.get("text", ""),
+            text=old_text,
+            texts=[old_text],
             filenames=[existing.get("filename", "document.pdf")],
             metadata=[{
                 "filename": existing.get("filename", "document.pdf"),
                 "type": _infer_type_from_filename(existing.get("filename", "document.pdf")),
-                "char_count": len(existing.get("text", "")),
+                "char_count": len(old_text),
             }],
         )
 
@@ -380,6 +386,7 @@ def _docs_list_to_session(docs: list[dict]) -> DocumentSession:
     metadata = [{k: v for k, v in d.items() if k != "text"} for d in docs]
     return DocumentSession(
         text="\n\n".join(texts),
+        texts=texts,
         filenames=filenames,
         metadata=metadata,
     )

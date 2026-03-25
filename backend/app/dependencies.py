@@ -11,6 +11,7 @@ class AgentDeps:
     tavily_api_key: str
     wiki: wikipediaapi.Wikipedia
     doc_context: str = ""
+    doc_texts: list[str] = field(default_factory=list)
     uploaded_filenames: list[str] = field(default_factory=list)
     uploaded_doc_metadata: list[dict] = field(default_factory=list)
     research_plan: list[str] = field(default_factory=list)
@@ -44,6 +45,7 @@ _DEPTH_MAP = {"fast": "simple", "balanced": "standard", "deep": "deep"}
 
 def get_agent_deps(
     doc_context: str = "",
+    doc_texts: list[str] | None = None,
     uploaded_filenames: list[str] | None = None,
     uploaded_doc_metadata: list[dict] | None = None,
     memory_context: str = "",
@@ -62,6 +64,7 @@ def get_agent_deps(
             user_agent="m-clone-research-agent/1.0",
         ),
         doc_context=resolved_context,
+        doc_texts=doc_texts or [],
         uploaded_filenames=uploaded_filenames or [],
         uploaded_doc_metadata=uploaded_doc_metadata or [],
         memory_context=memory_context,

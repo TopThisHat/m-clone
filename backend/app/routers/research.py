@@ -81,6 +81,7 @@ async def research_endpoint(body: ResearchRequest, request: Request, user=Depend
 
     deps = get_agent_deps(
         doc_context=doc_session.text,
+        doc_texts=doc_session.texts,
         uploaded_filenames=doc_session.filenames,
         uploaded_doc_metadata=doc_session.metadata,
         memory_context=memory_ctx,
@@ -133,6 +134,7 @@ async def _run_async_job(
 
         deps = get_agent_deps(
             doc_context=doc_session.text,
+            doc_texts=doc_session.texts,
             uploaded_filenames=doc_session.filenames,
             uploaded_doc_metadata=doc_session.metadata,
             memory_context=memory_ctx,

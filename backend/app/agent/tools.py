@@ -569,9 +569,58 @@ async def sec_edgar_search(
     },
 )
 async def search_uploaded_documents(deps: AgentDeps, query: str) -> str:
-    if not deps.doc_context:
+    _RESPONSE_CAP = 15_000
+
+    if not deps.doc_context and not deps.doc_texts:
         return "No documents have been uploaded for this research session."
 
+    # Try chunk-based search when doc_texts is available
+    if deps.doc_texts and deps.uploaded_doc_metadata:
+        cache_key = "chunked_docs"
+        if cache_key in deps.tool_cache:
+            chunk_dicts = deps.tool_cache[cache_key]
+        else:
+            from app.document_chunking import chunk_session
+            chunk_dicts = chunk_session(deps.doc_texts, deps.uploaded_doc_metadata)
+            deps.tool_cache[cache_key] = chunk_dicts
+
+        if not chunk_dicts:
+            return f"No relevant passages found in uploaded documents for: '{query}'"
+
+        chunk_texts = [c["text"] for c in chunk_dicts]
+
+        # Short-circuit: if <=3 chunks, return them all
+        if len(chunk_texts) <= 3:
+            formatted = []
+            for c in chunk_dicts:
+                label = _chunk_label(c)
+                formatted.append(f"{label}\n{c['text']}")
+            result = "\n\n---\n\n".join(formatted)
+            return result[:_RESPONSE_CAP]
+
+        # BM25 search over chunks
+        bm25_key = "chunked_bm25"
+        if bm25_key in deps.tool_cache:
+            bm25 = deps.tool_cache[bm25_key]
+        else:
+            bm25 = BM25Okapi([t.lower().split() for t in chunk_texts])
+            deps.tool_cache[bm25_key] = bm25
+
+        scores = bm25.get_scores(query.lower().split())
+        top_indices = sorted(range(len(chunk_texts)), key=lambda i: scores[i], reverse=True)[:5]
+        relevant = [(chunk_dicts[i], scores[i]) for i in top_indices if scores[i] > 0]
+
+        if not relevant:
+            return f"No relevant passages found in uploaded documents for: '{query}'"
+
+        formatted = []
+        for c, _score in relevant:
+            label = _chunk_label(c)
+            formatted.append(f"{label}\n{c['text']}")
+        result = "\n\n---\n\n".join(formatted)
+        return result[:_RESPONSE_CAP]
+
+    # Fallback: old doc_context.split approach
     chunks = [c.strip() for c in deps.doc_context.split("\n\n") if c.strip()]
     if not chunks:
         return f"No relevant passages found in uploaded documents for: '{query}'"
@@ -586,7 +635,18 @@ async def search_uploaded_documents(deps: AgentDeps, query: str) -> str:
 
     result = "\n\n---\n\n".join(relevant)
     filenames = ", ".join(deps.uploaded_filenames) if deps.uploaded_filenames else "uploaded document"
-    return f"**From {filenames}:**\n\n{result}"
+    return f"**From {filenames}:**\n\n{result}"[:_RESPONSE_CAP]
+
+
+def _chunk_label(chunk: dict) -> str:
+    """Build a human-readable attribution label for a chunk."""
+    filename = chunk.get("filename", "document")
+    page = chunk.get("page")
+    if isinstance(page, int) and page > 0:
+        return f"**[{filename}, Page {page}]**"
+    if isinstance(page, str):
+        return f"**[{filename}, {page}]**"
+    return f"**[{filename}]**"
 
 
 @_register(
