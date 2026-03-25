@@ -854,6 +854,26 @@ async def init_schema() -> None:
                     ON entity_external_ids(system, external_id)
             """)
 
+            # ── User Preferences (JSONB) ──────────────────────────────────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.user_preferences (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_sid    TEXT NOT NULL REFERENCES users(sid) ON DELETE CASCADE,
+                    campaign_id UUID REFERENCES campaigns(id) ON DELETE CASCADE,
+                    preferences JSONB NOT NULL DEFAULT '{}',
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS user_preferences_user_campaign_unique
+                    ON user_preferences (user_sid, COALESCE(campaign_id, '00000000-0000-0000-0000-000000000000'::uuid))
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS user_preferences_user_idx
+                    ON user_preferences(user_sid)
+            """)
+
             # ── Attribute management: type, category, numeric bounds, options ──
             await conn.execute("""
                 ALTER TABLE playbook.attributes
@@ -884,6 +904,94 @@ async def init_schema() -> None:
             await conn.execute("""
                 ALTER TABLE playbook.entity_scores
                     ADD COLUMN IF NOT EXISTS score_stale BOOLEAN NOT NULL DEFAULT FALSE
+            """)
+
+            # ── Comparison view function (Section C) ─────────────────────
+            # Returns attribute-as-rows, entities-as-columns data for
+            # the comparison view. Accepts 2-5 entity UUIDs.
+            await conn.execute("""
+                CREATE OR REPLACE FUNCTION playbook.comparison_view(
+                    p_campaign_id  uuid,
+                    p_entity_ids   uuid[]
+                )
+                RETURNS TABLE (
+                    section          text,
+                    attribute_id     uuid,
+                    attribute_label  text,
+                    attribute_type   text,
+                    category         text,
+                    weight           float,
+                    entity_values    jsonb
+                ) AS $$
+                BEGIN
+                    IF array_length(p_entity_ids, 1) < 2
+                       OR array_length(p_entity_ids, 1) > 5 THEN
+                        RAISE EXCEPTION
+                            'Comparison requires 2-5 entities, got %',
+                            array_length(p_entity_ids, 1);
+                    END IF;
+
+                    RETURN QUERY
+
+                    -- Row 0: Score pseudo-row
+                    SELECT
+                        'score'::text           AS section,
+                        NULL::uuid              AS attribute_id,
+                        'Scout Score'::text     AS attribute_label,
+                        NULL::text              AS attribute_type,
+                        NULL::text              AS category,
+                        NULL::float             AS weight,
+                        jsonb_object_agg(
+                            es.entity_id::text,
+                            jsonb_build_object(
+                                'total_score', es.total_score,
+                                'attributes_present', es.attributes_present,
+                                'attributes_checked', es.attributes_checked,
+                                'entity_label', e.label
+                            )
+                        )                       AS entity_values
+                    FROM playbook.entity_scores es
+                    JOIN playbook.entities e ON e.id = es.entity_id
+                    WHERE es.campaign_id = p_campaign_id
+                      AND es.entity_id = ANY(p_entity_ids)
+
+                    UNION ALL
+
+                    -- Rows 1..N: one row per attribute
+                    SELECT
+                        'attribute'::text       AS section,
+                        a.id                    AS attribute_id,
+                        a.label                 AS attribute_label,
+                        a.attribute_type        AS attribute_type,
+                        a.category              AS category,
+                        a.weight                AS weight,
+                        jsonb_object_agg(
+                            eid::text,
+                            COALESCE(
+                                (SELECT jsonb_build_object(
+                                    'present', r.present,
+                                    'confidence', r.confidence,
+                                    'evidence', r.evidence
+                                )
+                                FROM playbook.validation_results r
+                                JOIN playbook.validation_jobs vj ON vj.id = r.job_id
+                                WHERE vj.campaign_id = p_campaign_id
+                                  AND vj.status = 'done'
+                                  AND r.entity_id = eid
+                                  AND r.attribute_id = a.id
+                                ORDER BY r.created_at DESC
+                                LIMIT 1),
+                                'null'::jsonb
+                            )
+                        )                       AS entity_values
+                    FROM playbook.attributes a
+                    CROSS JOIN unnest(p_entity_ids) AS eid
+                    WHERE a.campaign_id = p_campaign_id
+                    GROUP BY a.id, a.label, a.attribute_type, a.category, a.weight
+
+                    ORDER BY section DESC, category NULLS LAST, attribute_label;
+                END;
+                $$ LANGUAGE plpgsql STABLE
             """)
 
         finally:

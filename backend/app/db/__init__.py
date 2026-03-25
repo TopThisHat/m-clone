@@ -105,6 +105,9 @@ from .campaigns import (
     db_get_campaign_status_audit,
 )
 
+# ── Comparison ───────────────────────────────────────────────────────────────
+from .comparison import db_compare_entities
+
 # ── Entities ──────────────────────────────────────────────────────────────────
 from .entities import (
     DuplicateLabelError,
@@ -230,6 +233,12 @@ from .clusters import (
     db_get_clusters,
     db_save_clusters,
     db_delete_clusters,
+)
+
+# ── Preferences ──────────────────────────────────────────────────────────────
+from .preferences import (
+    db_get_preferences,
+    db_upsert_preferences,
 )
 
 # ── Research Jobs / Job Queue ─────────────────────────────────────────────────
