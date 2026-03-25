@@ -8,6 +8,7 @@ from app.db import (
     db_bulk_create_attributes,
     db_create_attribute,
     db_delete_attribute,
+    db_get_attribute,
     db_get_campaign,
     db_import_attributes,
     db_import_attributes_from_library,
@@ -15,7 +16,14 @@ from app.db import (
     db_list_attributes,
     db_update_attribute,
 )
-from app.models.campaign import AttributeCreate, AttributeOut, AttributeUpdate, BulkAttributeResult, ImportAttributeResult, ImportBody
+from app.models.campaign import (
+    AttributeCreate,
+    AttributeOut,
+    AttributeUpdate,
+    BulkAttributeResult,
+    ImportAttributeResult,
+    ImportBody,
+)
 
 
 class ImportLibraryBody(BaseModel):
@@ -53,10 +61,13 @@ async def list_attributes(
     limit: int = Query(default=50, ge=0, le=10000),
     offset: int = Query(default=0, ge=0),
     search: str | None = Query(default=None),
+    category: str | None = Query(default=None),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
-        return await db_list_attributes(campaign_id, limit=limit, offset=offset, search=search)
+        return await db_list_attributes(
+            campaign_id, limit=limit, offset=offset, search=search, category=category,
+        )
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -70,16 +81,35 @@ async def create_attribute(campaign_id: str, body: AttributeCreate, user=Depends
             label=body.label,
             description=body.description,
             weight=body.weight,
+            attribute_type=body.attribute_type.value,
+            category=body.category,
+            numeric_min=body.numeric_min,
+            numeric_max=body.numeric_max,
+            options=body.options,
         )
     except DatabaseNotConfigured:
         raise _no_db()
 
 
-@router.post("/{campaign_id}/attributes/import-library", response_model=ImportAttributeResult, status_code=201)
-async def import_attributes_from_library(campaign_id: str, body: ImportLibraryBody, user=Depends(get_current_user)):
+@router.get("/{campaign_id}/attributes/{attribute_id}", response_model=AttributeOut)
+async def get_attribute(campaign_id: str, attribute_id: str, user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
-        return await db_import_attributes_from_library(campaign_id, body.ids, owner_sid=user["sub"])
+        attr = await db_get_attribute(attribute_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not attr or attr.get("campaign_id") != campaign_id:
+        raise HTTPException(status_code=404, detail="Attribute not found")
+    return attr
+
+
+@router.post("/{campaign_id}/attributes/import-library", response_model=ImportAttributeResult, status_code=201)
+async def import_attributes_from_library(campaign_id: str, body: ImportLibraryBody, user=Depends(get_current_user)):
+    campaign = await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_import_attributes_from_library(
+            campaign_id, body.ids, owner_sid=user["sub"], team_id=campaign.get("team_id"),
+        )
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -88,7 +118,25 @@ async def import_attributes_from_library(campaign_id: str, body: ImportLibraryBo
 async def update_attribute(campaign_id: str, attribute_id: str, body: AttributeUpdate,
                            user=Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
+
+    # Prohibit attribute_type changes on existing attributes
+    if body.attribute_type is not None:
+        try:
+            existing = await db_get_attribute(attribute_id)
+        except DatabaseNotConfigured:
+            raise _no_db()
+        if not existing or existing.get("campaign_id") != campaign_id:
+            raise HTTPException(status_code=404, detail="Attribute not found")
+        if existing.get("attribute_type", "text") != body.attribute_type.value:
+            raise HTTPException(
+                status_code=400,
+                detail="Changing attribute type is not allowed. Delete and recreate the attribute instead.",
+            )
+
     patch = body.model_dump(exclude_none=True)
+    # Convert enum to its string value for the DB layer
+    if "attribute_type" in patch:
+        patch["attribute_type"] = patch["attribute_type"].value
     try:
         updated = await db_update_attribute(attribute_id, campaign_id, patch)
     except DatabaseNotConfigured:
@@ -112,6 +160,10 @@ async def bulk_create_attributes(campaign_id: str, body: list[AttributeCreate], 
             seen.add(key)
             deduped.append(a.model_dump())
     skipped_in_request = len(body) - len(deduped)
+    # Convert enum values to strings for the JSONB insert
+    for attr_dict in deduped:
+        if "attribute_type" in attr_dict and hasattr(attr_dict["attribute_type"], "value"):
+            attr_dict["attribute_type"] = attr_dict["attribute_type"].value
     try:
         result = await db_bulk_create_attributes(campaign_id, deduped)
         result["skipped"] = result.get("skipped", 0) + skipped_in_request
