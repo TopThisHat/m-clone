@@ -121,6 +121,10 @@ Text to extract from:
         raw = json.loads(resp.choices[0].message.content)
         return ExtractionResult.model_validate(raw)
     except Exception as exc:
+        # Re-raise rate-limit errors so callers (e.g. _extract_batch) can retry
+        exc_str = str(exc).lower()
+        if "429" in str(exc) or "rate" in exc_str:
+            raise
         logger.error("extract_entities_and_relationships failed: %s", exc)
         return ExtractionResult()
 
