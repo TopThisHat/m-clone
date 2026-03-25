@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import asyncpg
+from fastapi import HTTPException
 
 from ._pool import _acquire
+from app.models.campaign import CampaignStatus, VALID_STATUS_TRANSITIONS
+
+logger = logging.getLogger(__name__)
 
 
 def _campaign_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
@@ -94,7 +99,14 @@ async def db_list_campaigns(owner_sid: str, team_id: str | None = None) -> list[
 
 async def db_get_campaign(campaign_id: str) -> dict[str, Any] | None:
     async with _acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM playbook.campaigns WHERE id = $1::uuid", campaign_id)
+        row = await conn.fetchrow(
+            f"""
+            {_CAMPAIGN_COUNTS_SQL}
+            FROM playbook.campaigns c
+            WHERE c.id = $1::uuid
+            """,
+            campaign_id,
+        )
     return _campaign_row_to_dict(row) if row else None
 
 
@@ -279,7 +291,7 @@ async def db_import_entities(target_campaign_id: str, source_campaign_id: str) -
         rows = await conn.fetch(
             """
             WITH source AS (
-                SELECT DISTINCT ON (LOWER(TRIM(label)))
+                SELECT
                     TRIM(label) AS label,
                     description,
                     NULLIF(TRIM(gwm_id), '') AS gwm_id,
@@ -287,7 +299,6 @@ async def db_import_entities(target_campaign_id: str, source_campaign_id: str) -
                 FROM playbook.entities
                 WHERE campaign_id = $1::uuid
                   AND TRIM(COALESCE(label, '')) != ''
-                ORDER BY LOWER(TRIM(label)), created_at
             )
             INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
             SELECT $2::uuid, s.label, s.description, s.gwm_id, s.metadata
@@ -310,7 +321,8 @@ async def db_import_attributes(target_campaign_id: str, source_campaign_id: str)
 
     Returns structured result: ``{"inserted": [...], "skipped": int, "total_requested": int}``.
 
-    CTE deduplicates on label, ON CONFLICT DO NOTHING as final safety net.
+    Deduplication relies on ON CONFLICT DO NOTHING against the target
+    campaign's unique indexes (label). No CTE-level dedup is performed.
     """
     async with _acquire() as conn:
         total_requested = await conn.fetchval(
@@ -320,14 +332,13 @@ async def db_import_attributes(target_campaign_id: str, source_campaign_id: str)
         rows = await conn.fetch(
             """
             WITH source AS (
-                SELECT DISTINCT ON (LOWER(TRIM(label)))
+                SELECT
                     TRIM(label) AS label,
                     description,
                     weight
                 FROM playbook.attributes
                 WHERE campaign_id = $1::uuid
                   AND TRIM(COALESCE(label, '')) != ''
-                ORDER BY LOWER(TRIM(label)), created_at
             )
             INSERT INTO playbook.attributes (campaign_id, label, description, weight)
             SELECT $2::uuid, s.label, s.description, s.weight
@@ -374,3 +385,98 @@ async def db_export_campaign_results(campaign_id: str) -> list[dict[str, Any]]:
             campaign_id,
         )
     return [dict(r) for r in rows]
+
+
+# ── Campaign Lifecycle ────────────────────────────────────────────────────────
+
+async def db_transition_campaign_status(
+    campaign_id: str,
+    new_status: CampaignStatus,
+    user_sid: str,
+) -> dict[str, Any]:
+    """Transition a campaign's status with validation and audit logging.
+
+    Validates the transition against VALID_STATUS_TRANSITIONS, writes an
+    audit record, and returns the updated campaign dict.
+
+    Raises:
+        HTTPException(404): campaign not found
+        HTTPException(400): invalid transition
+    """
+    async with _acquire() as conn:
+        async with conn.transaction():
+            # Lock the row to prevent concurrent transitions
+            row = await conn.fetchrow(
+                "SELECT id, status FROM playbook.campaigns WHERE id = $1::uuid FOR UPDATE",
+                campaign_id,
+            )
+            if not row:
+                raise HTTPException(status_code=404, detail="Campaign not found")
+
+            old_status_str: str = row["status"]
+            try:
+                old_status = CampaignStatus(old_status_str)
+            except ValueError:
+                # Existing row has a status that predates the enum; treat as draft
+                old_status = CampaignStatus.draft
+
+            allowed = VALID_STATUS_TRANSITIONS.get(old_status, set())
+            if new_status not in allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Invalid status transition: {old_status.value} -> {new_status.value}. "
+                        f"Allowed transitions from '{old_status.value}': "
+                        f"{sorted(s.value for s in allowed) if allowed else 'none'}"
+                    ),
+                )
+
+            # Update the campaign status
+            updated_row = await conn.fetchrow(
+                """
+                UPDATE playbook.campaigns
+                SET status = $1, updated_at = NOW()
+                WHERE id = $2::uuid
+                RETURNING *
+                """,
+                new_status.value, campaign_id,
+            )
+
+            # Write audit log
+            await conn.execute(
+                """
+                INSERT INTO playbook.campaign_status_audit
+                    (campaign_id, old_status, new_status, changed_by_sid)
+                VALUES ($1::uuid, $2, $3, $4)
+                """,
+                campaign_id, old_status.value, new_status.value, user_sid,
+            )
+
+    logger.info(
+        "Campaign %s status: %s -> %s (by %s)",
+        campaign_id, old_status.value, new_status.value, user_sid,
+    )
+    return _campaign_row_to_dict(updated_row)
+
+
+async def db_get_campaign_status_audit(campaign_id: str) -> list[dict[str, Any]]:
+    """Return the status audit trail for a campaign, newest first."""
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, campaign_id, old_status, new_status, changed_by_sid, changed_at
+            FROM playbook.campaign_status_audit
+            WHERE campaign_id = $1::uuid
+            ORDER BY changed_at DESC
+            """,
+            campaign_id,
+        )
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["id"] = str(d["id"])
+        d["campaign_id"] = str(d["campaign_id"])
+        if d.get("changed_at"):
+            d["changed_at"] = d["changed_at"].isoformat()
+        result.append(d)
+    return result

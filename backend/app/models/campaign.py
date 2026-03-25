@@ -1,7 +1,32 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
 from pydantic import BaseModel
+
+
+# ── Campaign Status ────────────────────────────────────────────────────────────
+
+class CampaignStatus(str, Enum):
+    """Lifecycle status for campaigns."""
+    draft = "draft"
+    active = "active"
+    completed = "completed"
+    archived = "archived"
+
+
+# Valid status transitions: {from_status: {allowed_to_statuses}}
+VALID_STATUS_TRANSITIONS: dict[CampaignStatus, set[CampaignStatus]] = {
+    CampaignStatus.draft: {CampaignStatus.active},
+    CampaignStatus.active: {CampaignStatus.completed, CampaignStatus.archived},
+    CampaignStatus.completed: {CampaignStatus.archived},
+    CampaignStatus.archived: set(),
+}
+
+
+class CampaignStatusUpdate(BaseModel):
+    """Request body for PATCH /api/campaigns/{id}/status."""
+    status: CampaignStatus
 
 
 # ── Campaign ───────────────────────────────────────────────────────────────────
@@ -28,6 +53,7 @@ class CampaignOut(BaseModel):
     description: str | None = None
     schedule: str | None = None
     is_active: bool = True
+    status: CampaignStatus = CampaignStatus.draft
     last_run_at: str | None = None
     next_run_at: str | None = None
     last_completed_at: str | None = None
@@ -87,18 +113,54 @@ class EntityOut(BaseModel):
     created_at: str
 
 
+class MetadataUpdate(BaseModel):
+    """Request body for PUT /metadata: set one or more key/value pairs."""
+    metadata: dict[str, Any]
+
+
+class ExternalIdUpdate(BaseModel):
+    """Request body for PUT /external-ids: set an external ID for a system."""
+    system: str
+    external_id: str
+
+
+class ExternalIdOut(BaseModel):
+    entity_id: str
+    system: str
+    external_id: str
+    created_at: str
+
+
 # ── Attribute ──────────────────────────────────────────────────────────────────
+
+class AttributeType(str, Enum):
+    """Supported attribute value types."""
+    text = "text"
+    numeric = "numeric"
+    boolean = "boolean"
+    select = "select"
+
 
 class AttributeCreate(BaseModel):
     label: str
     description: str | None = None
     weight: float = 1.0
+    attribute_type: AttributeType = AttributeType.text
+    category: str | None = None
+    numeric_min: float | None = None
+    numeric_max: float | None = None
+    options: list[str] | None = None
 
 
 class AttributeUpdate(BaseModel):
     label: str | None = None
     description: str | None = None
     weight: float | None = None
+    attribute_type: AttributeType | None = None  # validated at router level
+    category: str | None = None
+    numeric_min: float | None = None
+    numeric_max: float | None = None
+    options: list[str] | None = None
 
 
 class AttributeOut(BaseModel):
@@ -107,6 +169,11 @@ class AttributeOut(BaseModel):
     label: str
     description: str | None = None
     weight: float = 1.0
+    attribute_type: AttributeType = AttributeType.text
+    category: str | None = None
+    numeric_min: float | None = None
+    numeric_max: float | None = None
+    options: list[str] | None = None
     created_at: str
 
 

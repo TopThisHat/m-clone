@@ -216,6 +216,15 @@ from .programs import (
     db_delete_program,
 )
 
+# ── Scores ───────────────────────────────────────────────────────────────────
+from .scores import (
+    db_recalculate_scores,
+    db_mark_scores_stale,
+    db_mark_scores_fresh,
+    db_get_score,
+    db_list_campaign_scores,
+)
+
 # ── Clusters ─────────────────────────────────────────────────────────────────
 from .clusters import (
     db_get_clusters,

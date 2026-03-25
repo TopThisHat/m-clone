@@ -880,5 +880,11 @@ async def init_schema() -> None:
                     ON attributes(campaign_id, category) WHERE category IS NOT NULL
             """)
 
+            # ── Score staleness tracking ──────────────────────────────────
+            await conn.execute("""
+                ALTER TABLE playbook.entity_scores
+                    ADD COLUMN IF NOT EXISTS score_stale BOOLEAN NOT NULL DEFAULT FALSE
+            """)
+
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")

@@ -11,9 +11,16 @@ from app.db import (
     db_get_campaign_stats,
     db_is_team_member,
     db_list_campaigns,
+    db_transition_campaign_status,
     db_update_campaign,
 )
-from app.models.campaign import CampaignCreate, CampaignOut, CampaignStatsOut, CampaignUpdate
+from app.models.campaign import (
+    CampaignCreate,
+    CampaignOut,
+    CampaignStatsOut,
+    CampaignStatusUpdate,
+    CampaignUpdate,
+)
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 
@@ -104,6 +111,35 @@ async def update_campaign(campaign_id: str, body: CampaignUpdate, user=Depends(g
     await _assert_campaign_access(campaign, user["sub"])
     patch = body.model_dump(exclude_none=True)
     updated = await db_update_campaign(campaign_id, patch)
+    return updated
+
+
+@router.patch("/{campaign_id}/status", response_model=CampaignOut)
+async def transition_campaign_status(
+    campaign_id: str,
+    body: CampaignStatusUpdate,
+    user=Depends(get_current_user),
+):
+    """Transition a campaign's lifecycle status.
+
+    Valid transitions:
+      draft -> active
+      active -> completed | archived
+      completed -> archived
+    """
+    try:
+        campaign = await db_get_campaign(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not campaign:
+        raise _not_found()
+    await _assert_campaign_access(campaign, user["sub"])
+    # db_transition_campaign_status raises HTTPException(400) for invalid transitions
+    updated = await db_transition_campaign_status(
+        campaign_id=campaign_id,
+        new_status=body.status,
+        user_sid=user["sub"],
+    )
     return updated
 
 
