@@ -29,6 +29,7 @@ export interface ChatMessage {
 	conflictWarnings?: string[];
 	sources?: ChatSource[];
 	clarification?: ClarificationData;
+	attachments?: { filename: string; type: string }[];
 }
 
 export interface ChartPayload {
@@ -62,3 +63,6 @@ export const reportHtml = derived(reportMarkdown, ($md) =>
 
 // Shared comment state so HighlightableReport can read what CommentThread loaded
 export const sessionComments = writable<Comment[]>([]);
+
+// Document upload session key — shared across ChatInput, research.ts, etc.
+export const docSessionKey = writable<string | undefined>(undefined);

@@ -14,6 +14,7 @@ class SessionCreate(BaseModel):
     trace_steps: list[Any] = []
     owner_sid: str | None = None
     visibility: str = "private"
+    doc_session_key: str | None = None
 
 
 class SessionUpdate(BaseModel):
@@ -24,6 +25,7 @@ class SessionUpdate(BaseModel):
     is_public: bool | None = None
     usage_tokens: int | None = None
     visibility: str | None = None
+    doc_session_key: str | None = None
 
 
 class SessionSummary(BaseModel):
@@ -42,3 +44,4 @@ class SessionFull(SessionSummary):
     report_markdown: str
     message_history: list[Any]
     trace_steps: list[Any]
+    doc_session_key: str | None = None

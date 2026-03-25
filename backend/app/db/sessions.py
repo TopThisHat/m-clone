@@ -92,8 +92,8 @@ async def db_create_session(data: dict[str, Any]) -> dict[str, Any]:
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO playbook.sessions (title, query, report_markdown, message_history, trace_steps, owner_sid, visibility)
-            VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)
+            INSERT INTO playbook.sessions (title, query, report_markdown, message_history, trace_steps, owner_sid, visibility, doc_session_key)
+            VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8)
             RETURNING *, COALESCE(is_public, FALSE) AS is_public,
                          COALESCE(usage_tokens, 0) AS usage_tokens,
                          COALESCE(visibility, 'private') AS visibility
@@ -105,12 +105,13 @@ async def db_create_session(data: dict[str, Any]) -> dict[str, Any]:
             json.dumps(data.get("trace_steps", [])),
             data.get("owner_sid"),
             data.get("visibility", "private"),
+            data.get("doc_session_key"),
         )
     return _row_to_dict(row)
 
 
 async def db_update_session(session_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
-    allowed = {"title", "report_markdown", "message_history", "trace_steps", "is_public", "usage_tokens", "visibility", "owner_sid", "parent_session_id"}
+    allowed = {"title", "report_markdown", "message_history", "trace_steps", "is_public", "usage_tokens", "visibility", "owner_sid", "parent_session_id", "doc_session_key"}
     fields = {k: v for k, v in patch.items() if k in allowed}
     if not fields:
         return await db_get_session(session_id)

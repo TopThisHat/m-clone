@@ -13,6 +13,7 @@ export interface SessionCreate {
 	report_markdown?: string;
 	message_history?: unknown[];
 	trace_steps?: unknown[];
+	doc_session_key?: string | null;
 }
 
 export interface SessionUpdate {
@@ -22,6 +23,7 @@ export interface SessionUpdate {
 	trace_steps?: unknown[];
 	is_public?: boolean;
 	usage_tokens?: number;
+	doc_session_key?: string | null;
 }
 
 export interface PresenceViewer {

@@ -10,7 +10,8 @@ import {
 	chartData,
 	conflictWarnings,
 	memoryContext,
-	pendingClarification
+	pendingClarification,
+	docSessionKey
 } from '$lib/stores/reportStore';
 import type { ChartPayload, ChatSource, ClarificationData } from '$lib/stores/reportStore';
 import { activeSessionId, sessionList } from '$lib/stores/sessionStore';
@@ -44,13 +45,16 @@ function generateSuggestions(markdown: string): string[] {
 
 export async function startResearch(
 	query: string,
-	docSessionKey?: string,
 	msgHistory?: unknown[] | null,
 	depth?: string,
-	model?: string
+	model?: string,
+	attachments?: { filename: string; type: string }[]
 ): Promise<void> {
 	const isFollowUp = !!msgHistory;
 	const originalQuery = query;
+
+	// Read docSessionKey from the shared store (single source of truth)
+	const capturedDocKey = get(docSessionKey);
 
 	if (controller) controller.abort();
 	controller = new AbortController();
@@ -72,7 +76,10 @@ export async function startResearch(
 		chartData.set([]);
 	}
 
-	chatMessages.update((msgs) => [...msgs, { id: userMsgId, role: 'user', content: originalQuery }]);
+	chatMessages.update((msgs) => [
+		...msgs,
+		{ id: userMsgId, role: 'user', content: originalQuery, attachments }
+	]);
 	chatMessages.update((msgs) => [
 		...msgs,
 		{ id: asstMsgId, role: 'assistant', content: '', isStreaming: true }
@@ -82,7 +89,7 @@ export async function startResearch(
 
 	const body: Record<string, unknown> = {
 		query,
-		doc_session_key: docSessionKey ?? null,
+		doc_session_key: capturedDocKey ?? null,
 		depth: depth ?? 'balanced',
 		model: model ?? null,
 		rules: get(rules).map((r) => r.text)
@@ -151,6 +158,10 @@ export async function startResearch(
 			}
 		}
 
+		// Stream completed successfully — clear the doc session key so it isn't re-sent.
+		// Compare-and-swap: only clear if it hasn't been replaced by a new upload during streaming.
+		if (capturedDocKey && get(docSessionKey) === capturedDocKey) docSessionKey.set(undefined);
+
 		if (finalReportData) {
 			const currentId = get(activeSessionId);
 			const report = get(reportMarkdown);
@@ -160,7 +171,8 @@ export async function startResearch(
 					await updateSession(currentId, {
 						report_markdown: report,
 						message_history: finalReportData.messages as unknown[],
-						trace_steps: steps
+						trace_steps: steps,
+						doc_session_key: capturedDocKey ?? null
 					});
 				} else {
 					const s = await createSession({
@@ -168,7 +180,8 @@ export async function startResearch(
 						query: originalQuery,
 						report_markdown: report,
 						message_history: finalReportData.messages as unknown[],
-						trace_steps: steps
+						trace_steps: steps,
+						doc_session_key: capturedDocKey ?? null
 					});
 					activeSessionId.set(s.id);
 				}
@@ -206,7 +219,8 @@ export async function retryResearch(): Promise<void> {
 	chatMessages.update((m) => m.slice(0, lastUserIdx));
 	errorMessage.set(null);
 
-	await startResearch(lastQuery, undefined, history);
+	// docSessionKey is read from the shared store inside startResearch
+	await startResearch(lastQuery, history);
 }
 
 // ── SSE event handler ────────────────────────────────────────────────────────

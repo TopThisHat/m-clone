@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { traceStore } from '$lib/stores/traceStore';
-	import { chatMessages, reportMarkdown, errorMessage, messageHistory, chartData } from '$lib/stores/reportStore';
+	import { chatMessages, reportMarkdown, errorMessage, messageHistory, chartData, docSessionKey } from '$lib/stores/reportStore';
 	import { activeSessionId, sessionList, newResearch } from '$lib/stores/sessionStore';
 	import { listSessions, getSession, deleteSession, updateSession } from '$lib/api/sessions';
 	import { isStreaming } from '$lib/stores/reportStore';
@@ -93,6 +93,7 @@
 			messageHistory.set(s.message_history);
 			traceStore.restore(steps);
 			errorMessage.set(null);
+			docSessionKey.set(s.doc_session_key ?? undefined);
 			activeSessionId.set(id);
 			chatMessages.set([
 				{ id: crypto.randomUUID(), role: 'user', content: s.query },

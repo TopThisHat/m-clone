@@ -7,12 +7,12 @@
 		ACCEPT_STRING,
 		type UploadFileStatus
 	} from '$lib/api/documents';
-	import { isStreaming, errorMessage, messageHistory, chatMessages } from '$lib/stores/reportStore';
+	import { get } from 'svelte/store';
+	import { isStreaming, errorMessage, messageHistory, chatMessages, docSessionKey } from '$lib/stores/reportStore';
 	import { activeSessionId } from '$lib/stores/sessionStore';
 
 	let query = $state('');
 	let documents = $state<UploadFileStatus[]>([]);
-	let docSessionKey = $state<string | undefined>(undefined);
 	let fileInput = $state<HTMLInputElement | undefined>();
 	let textareaEl = $state<HTMLTextAreaElement | undefined>();
 
@@ -35,13 +35,13 @@
 		}
 	});
 
-	// 9.4: Reset when activeSessionId becomes null (new research)
+	// Reset local display state on any session transition (null, A→B, new research)
 	// Intentional imperative reset — not derivable, these states have independent lifecycles
+	// docSessionKey is NOT cleared here — that's handled by newResearch() and startResearch()
 	$effect(() => {
-		if ($activeSessionId === null) {
-			documents = [];
-			docSessionKey = undefined;
-		}
+		$activeSessionId; // track any change
+		documents = [];
+		if (fileInput) fileInput.value = '';
 	});
 
 	const uploading = $derived(documents.some((d) => d.status === 'uploading' || d.status === 'pending'));
@@ -80,11 +80,11 @@
 			const idx = documents.length - 1;
 
 			try {
-				const result = docSessionKey
-					? await uploadDocumentToSession(file, docSessionKey)
+				const result = $docSessionKey
+					? await uploadDocumentToSession(file, $docSessionKey)
 					: await uploadDocument(file);
 
-				docSessionKey = result.session_key;
+				docSessionKey.set(result.session_key);
 				documents = documents.map((d, j) =>
 					j === idx ? { ...d, status: 'success' as const, result } : d
 				);
@@ -102,7 +102,12 @@
 	function removeDocument(index: number) {
 		documents = documents.filter((_, i) => i !== index);
 		if (documents.length === 0) {
-			docSessionKey = undefined;
+			if (fileInput) fileInput.value = '';
+			// Only clear the doc session store if no messages have been sent yet.
+			// Once messages exist, session docs persist in Redis — chip removal is visual-only.
+			if (get(chatMessages).length === 0) {
+				docSessionKey.set(undefined);
+			}
 		}
 	}
 
@@ -112,20 +117,25 @@
 		if (!q || $isStreaming || uploading) return;
 
 		const history = $messageHistory;
-		const capturedDocKey = docSessionKey;
+
+		// Capture attachment metadata from successfully-uploaded documents before clearing UI
+		const attachments = documents
+			.filter((d) => d.status === 'success')
+			.map((d) => ({ filename: d.filename, type: getTypeLabel(d.filename) }));
 
 		query = '';
 		resetTextarea();
 		errorMessage.set(null);
 
-		if (capturedDocKey) {
-			docSessionKey = undefined;
+		if ($docSessionKey) {
 			documents = [];
 			if (fileInput) fileInput.value = '';
+			// docSessionKey is NOT cleared here — startResearch reads it from the store
+			// and clears it after capturing the value
 		}
 
 		try {
-			await startResearch(q, capturedDocKey, history, depth, selectedModel);
+			await startResearch(q, history, depth, selectedModel, attachments.length ? attachments : undefined);
 		} catch (err) {
 			if (err instanceof Error && err.name === 'AbortError') return;
 			errorMessage.set(err instanceof Error ? err.message : 'An error occurred');

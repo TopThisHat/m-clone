@@ -773,6 +773,12 @@ async def init_schema() -> None:
                 END $$
             """)
 
+            # ── Persist doc_session_key on sessions ──────────────────────
+            await conn.execute("""
+                ALTER TABLE playbook.sessions
+                    ADD COLUMN IF NOT EXISTS doc_session_key TEXT
+            """)
+
             # ── Dead letter table for failed entity extractions ────────────
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS playbook.failed_extraction_tasks (

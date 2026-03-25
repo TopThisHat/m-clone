@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { chatMessages, reportMarkdown, errorMessage, messageHistory, sessionComments } from '$lib/stores/reportStore';
+import { chatMessages, reportMarkdown, errorMessage, messageHistory, sessionComments, docSessionKey } from '$lib/stores/reportStore';
 import { traceStore } from '$lib/stores/traceStore';
 
 export interface SessionSummary {
@@ -12,6 +12,7 @@ export interface SessionSummary {
 	usage_tokens?: number;
 	owner_sid?: string | null;
 	visibility?: string;
+	doc_session_key?: string | null;
 }
 
 export const activeSessionId = writable<string | null>(null);
@@ -25,4 +26,5 @@ export function newResearch() {
 	errorMessage.set(null);
 	activeSessionId.set(null);
 	sessionComments.set([]);
+	docSessionKey.set(undefined);
 }
