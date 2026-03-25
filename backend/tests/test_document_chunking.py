@@ -61,7 +61,7 @@ def test_chunk_file_pdf_with_pages():
 
 def test_chunk_file_pdf_large_page_splits():
     """A page exceeding chunk_size should be split into multiple chunks."""
-    big_text = "[Page 1]\n" + ("A" * 600) + " " + ("B" * 600)
+    big_text = "[Page 1]\n" + ("A" * 2500) + " " + ("B" * 2500)
     chunks = chunk_file(big_text, "big.pdf", "pdf")
     assert len(chunks) >= 2
     assert all(c["page"] == 1 for c in chunks)

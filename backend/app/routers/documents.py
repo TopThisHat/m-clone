@@ -23,6 +23,17 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 SESSION_TEXT_CAP = 500_000
 
 
+@router.get("/status")
+async def document_status(
+    session_key: str = Query(...),
+    user=Depends(get_current_user),
+):
+    """Check whether a document session key still has content in Redis."""
+    session = await get_documents(session_key)
+    alive = session is not None and bool(session.text)
+    return {"alive": alive}
+
+
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),

@@ -9,7 +9,8 @@
 		messageHistory,
 		researchPhase,
 		chartData,
-		conflictWarnings
+		conflictWarnings,
+		docContextExpired
 	} from '$lib/stores/reportStore';
 	import { startResearch, retryResearch } from '$lib/api/research';
 	import ChartCard from './ChartCard.svelte';
@@ -206,6 +207,17 @@
 				</div>
 			</div>
 		{:else}
+			{#if $docContextExpired}
+				<div class="bg-amber-900/20 border border-amber-700/40 rounded-lg px-4 py-2 flex items-start gap-2">
+					<svg class="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+					</svg>
+					<div>
+						<p class="text-xs text-amber-500 font-medium">Document context expired</p>
+						<p class="text-xs text-amber-400/80">The uploaded documents for this session are no longer available. Follow-up questions will not include document context. Re-upload to restore.</p>
+					</div>
+				</div>
+			{/if}
 			{#each $chatMessages as msg, i (msg.id)}
 				{@const isLast = i === $chatMessages.length - 1}
 
@@ -222,7 +234,7 @@
 								<div class="flex flex-wrap gap-1.5 mt-2">
 									{#each msg.attachments as att (att.filename)}
 										<span class="inline-flex items-center gap-1 bg-navy-600 text-xs text-slate-300 rounded-full px-2 py-0.5">
-											<svg class="w-3 h-3 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<svg class="w-3 h-3 text-slate-400 flex-shrink-0" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
 											</svg>
 											<span class="truncate max-w-[120px]">{att.filename}</span>

@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { traceStore } from '$lib/stores/traceStore';
-	import { chatMessages, reportMarkdown, errorMessage, messageHistory, chartData, docSessionKey } from '$lib/stores/reportStore';
+	import { chatMessages, reportMarkdown, errorMessage, messageHistory, chartData, docSessionKey, docContextExpired } from '$lib/stores/reportStore';
+	import { checkDocSessionAlive } from '$lib/api/documents';
 	import { activeSessionId, sessionList, newResearch } from '$lib/stores/sessionStore';
 	import { listSessions, getSession, deleteSession, updateSession } from '$lib/api/sessions';
 	import { isStreaming } from '$lib/stores/reportStore';
@@ -104,6 +105,14 @@
 				.filter((step) => step.chart)
 				.map((step) => step.chart as unknown as ChartPayload);
 			chartData.set(charts);
+
+			// Check if document context is still alive in Redis
+			if (s.doc_session_key) {
+				const alive = await checkDocSessionAlive(s.doc_session_key);
+				docContextExpired.set(!alive);
+			} else {
+				docContextExpired.set(false);
+			}
 		} catch {
 			// silently ignore
 		}
@@ -198,8 +207,13 @@
 					</span>
 				{/if}
 
-				<span class="text-[10px] text-slate-600">
+				<span class="text-[10px] text-slate-600 flex items-center gap-1">
 					{relativeTime(session.updated_at)}
+					{#if session.doc_session_key}
+						<svg class="w-3 h-3 text-slate-500 inline-block" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+						</svg>
+					{/if}
 				</span>
 
 				<!-- Delete button -->

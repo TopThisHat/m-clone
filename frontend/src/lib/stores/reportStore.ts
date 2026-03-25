@@ -66,3 +66,6 @@ export const sessionComments = writable<Comment[]>([]);
 
 // Document upload session key — shared across ChatInput, research.ts, etc.
 export const docSessionKey = writable<string | undefined>(undefined);
+
+// True when a restored session had a doc key but the Redis content has expired.
+export const docContextExpired = writable<boolean>(false);

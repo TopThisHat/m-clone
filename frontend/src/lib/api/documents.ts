@@ -104,6 +104,16 @@ export async function uploadDocumentToSession(file: File, sessionKey: string): P
 	return res.json();
 }
 
+export async function checkDocSessionAlive(sessionKey: string): Promise<boolean> {
+	const res = await fetch(
+		`/api/documents/status?session_key=${encodeURIComponent(sessionKey)}`,
+		{ credentials: 'include' }
+	);
+	if (!res.ok) return false;
+	const data = await res.json();
+	return data.alive ?? false;
+}
+
 export async function uploadToKG(file: File, teamId?: string): Promise<KGUploadResult> {
 	const form = new FormData();
 	form.append('file', file);

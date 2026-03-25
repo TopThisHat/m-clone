@@ -321,11 +321,9 @@ async def db_import_entities_from_library(
 
     Returns a structured result: ``{"inserted": [...], "skipped": int, "total_requested": int}``.
 
-    Handles all unique-constraint edge cases:
-      1. CTE deduplicates the batch on label (DISTINCT ON) so within-batch
-         label collisions never reach INSERT.
-      2. ON CONFLICT DO NOTHING catches gwm_id and label collisions with
-         rows already in the target campaign.
+    Deduplication relies on ON CONFLICT DO NOTHING against the target
+    campaign's unique indexes (label, gwm_id). No CTE-level dedup is
+    performed — the database constraints handle all collision cases.
 
     When *owner_sid* or *team_id* is provided, an ownership filter is applied
     so users can only import from their own or their team's library.
@@ -348,7 +346,7 @@ async def db_import_entities_from_library(
         rows = await conn.fetch(
             f"""
             WITH source AS (
-                SELECT DISTINCT ON (LOWER(TRIM(label)))
+                SELECT
                     TRIM(label) AS label,
                     description,
                     NULLIF(TRIM(gwm_id), '') AS gwm_id,
@@ -357,7 +355,6 @@ async def db_import_entities_from_library(
                 WHERE id = ANY($2::uuid[])
                   AND TRIM(COALESCE(label, '')) != ''
                   {ownership_filter}
-                ORDER BY LOWER(TRIM(label)), created_at
             )
             INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
             SELECT $1::uuid, s.label, s.description, s.gwm_id, s.metadata
