@@ -101,16 +101,25 @@ from .campaigns import (
     db_import_entities,
     db_import_attributes,
     db_export_campaign_results,
+    db_transition_campaign_status,
+    db_get_campaign_status_audit,
 )
 
 # ── Entities ──────────────────────────────────────────────────────────────────
 from .entities import (
+    DuplicateLabelError,
     db_create_entity,
     db_bulk_create_entities,
     db_list_entities,
     db_get_entity,
     db_delete_entity,
     db_update_entity,
+    db_get_entity_metadata,
+    db_set_entity_metadata,
+    db_delete_entity_metadata,
+    db_set_external_id,
+    db_get_external_ids,
+    db_delete_external_id,
 )
 
 # ── Attributes ────────────────────────────────────────────────────────────────
@@ -196,6 +205,15 @@ from .library import (
     db_delete_attribute_library,
     db_import_entities_from_library,
     db_import_attributes_from_library,
+)
+
+# ── Programs ─────────────────────────────────────────────────────────────────
+from .programs import (
+    db_create_program,
+    db_list_programs,
+    db_get_program,
+    db_update_program,
+    db_delete_program,
 )
 
 # ── Clusters ─────────────────────────────────────────────────────────────────

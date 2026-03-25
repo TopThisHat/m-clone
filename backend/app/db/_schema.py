@@ -176,6 +176,16 @@ async def init_schema() -> None:
                 updated_at  TIMESTAMPTZ DEFAULT NOW()
             );
 
+            CREATE TABLE IF NOT EXISTS playbook.programs (
+                id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                owner_sid   TEXT NOT NULL,
+                team_id     UUID REFERENCES teams(id) ON DELETE SET NULL,
+                name        TEXT NOT NULL,
+                description TEXT,
+                created_at  TIMESTAMPTZ DEFAULT NOW(),
+                updated_at  TIMESTAMPTZ DEFAULT NOW()
+            );
+
             CREATE TABLE IF NOT EXISTS playbook.entities (
                 id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 campaign_id UUID REFERENCES campaigns(id) ON DELETE CASCADE,
@@ -625,6 +635,34 @@ async def init_schema() -> None:
                     ON entity_attribute_knowledge(team_id) WHERE team_id IS NOT NULL
             """)
 
+            # ── Campaign lifecycle status ──────────────────────────────────
+            await conn.execute("""
+                DO $$ BEGIN
+                    CREATE TYPE playbook.campaign_status AS ENUM ('draft', 'active', 'completed', 'archived');
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END $$
+            """)
+            await conn.execute("""
+                ALTER TABLE playbook.campaigns
+                    ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft'
+            """)
+
+            # ── Campaign status audit log ─────────────────────────────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.campaign_status_audit (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    campaign_id     UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+                    old_status      TEXT NOT NULL,
+                    new_status      TEXT NOT NULL,
+                    changed_by_sid  TEXT NOT NULL,
+                    changed_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS campaign_status_audit_campaign_idx
+                    ON campaign_status_audit(campaign_id, changed_at DESC)
+            """)
+
             # ── Staleness metadata on knowledge cache ─────────────────────
             await conn.execute("""
                 ALTER TABLE playbook.entity_attribute_knowledge
@@ -799,6 +837,47 @@ async def init_schema() -> None:
             await conn.execute("""
                 CREATE INDEX IF NOT EXISTS failed_extraction_session_idx
                     ON failed_extraction_tasks(session_id)
+            """)
+
+            # ── External IDs junction table (GWM_ID and other systems) ──────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.entity_external_ids (
+                    entity_id   UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                    system      TEXT NOT NULL,
+                    external_id TEXT NOT NULL,
+                    created_at  TIMESTAMPTZ DEFAULT NOW(),
+                    PRIMARY KEY (entity_id, system)
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS entity_external_ids_system_idx
+                    ON entity_external_ids(system, external_id)
+            """)
+
+            # ── Attribute management: type, category, numeric bounds, options ──
+            await conn.execute("""
+                ALTER TABLE playbook.attributes
+                    ADD COLUMN IF NOT EXISTS attribute_type TEXT NOT NULL DEFAULT 'text'
+            """)
+            await conn.execute("""
+                ALTER TABLE playbook.attributes
+                    ADD COLUMN IF NOT EXISTS category TEXT
+            """)
+            await conn.execute("""
+                ALTER TABLE playbook.attributes
+                    ADD COLUMN IF NOT EXISTS numeric_min FLOAT
+            """)
+            await conn.execute("""
+                ALTER TABLE playbook.attributes
+                    ADD COLUMN IF NOT EXISTS numeric_max FLOAT
+            """)
+            await conn.execute("""
+                ALTER TABLE playbook.attributes
+                    ADD COLUMN IF NOT EXISTS options JSONB
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS attributes_category_idx
+                    ON attributes(campaign_id, category) WHERE category IS NOT NULL
             """)
 
         finally:
