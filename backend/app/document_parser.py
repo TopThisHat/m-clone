@@ -14,18 +14,31 @@ import base64
 import csv
 import io
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Maximum file size accepted before extraction (100 MB)
+_MAX_FILE_SIZE = 100 * 1024 * 1024
+# Maximum pages processed per PDF
+_MAX_PDF_PAGES = 500
+# Maximum sheets processed per Excel workbook
+_MAX_EXCEL_SHEETS = 50
+# Maximum rows processed per sheet
+_MAX_EXCEL_ROWS = 100_000
+# Maximum image size for GPT-4o vision (20 MB)
+_MAX_IMAGE_SIZE = 20 * 1024 * 1024
 
 
 def extract_pdf(contents: bytes) -> str:
     """Extract text and tables from a PDF, preserving table structure."""
+    if len(contents) > _MAX_FILE_SIZE:
+        raise ValueError(f"PDF too large ({len(contents) // 1024 // 1024} MB). Maximum is {_MAX_FILE_SIZE // 1024 // 1024} MB.")
+
     import pdfplumber
 
     pages: list[str] = []
     with pdfplumber.open(io.BytesIO(contents)) as pdf:
-        for i, page in enumerate(pdf.pages):
+        for i, page in enumerate(pdf.pages[:_MAX_PDF_PAGES]):
             parts: list[str] = []
 
             # Extract tables first so we can format them as markdown
@@ -88,15 +101,20 @@ def extract_docx(contents: bytes) -> str:
 
 def extract_excel(contents: bytes, filename: str = "") -> str:
     """Extract all sheets from an Excel workbook as markdown tables."""
+    if len(contents) > _MAX_FILE_SIZE:
+        raise ValueError(f"Excel file too large ({len(contents) // 1024 // 1024} MB). Maximum is {_MAX_FILE_SIZE // 1024 // 1024} MB.")
+
     from openpyxl import load_workbook
 
     wb = load_workbook(io.BytesIO(contents), data_only=True, read_only=True)
     parts: list[str] = []
 
-    for sheet_name in wb.sheetnames:
+    for sheet_name in wb.sheetnames[:_MAX_EXCEL_SHEETS]:
         ws = wb[sheet_name]
         rows: list[list[str]] = []
-        for row in ws.iter_rows(values_only=True):
+        for row_num, row in enumerate(ws.iter_rows(values_only=True)):
+            if row_num >= _MAX_EXCEL_ROWS:
+                break
             cells = [str(cell) if cell is not None else "" for cell in row]
             if any(c.strip() for c in cells):
                 rows.append(cells)
@@ -129,6 +147,9 @@ def extract_csv(contents: bytes, filename: str = "") -> str:
 
 async def extract_image(contents: bytes, filename: str = "", mime_type: str = "") -> str:
     """Extract text from an image using GPT-4o vision."""
+    if len(contents) > _MAX_IMAGE_SIZE:
+        raise ValueError(f"Image too large ({len(contents) // 1024 // 1024} MB). Maximum is {_MAX_IMAGE_SIZE // 1024 // 1024} MB.")
+
     from app.openai_factory import get_openai_client
 
     if not mime_type:

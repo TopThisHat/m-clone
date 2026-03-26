@@ -136,7 +136,8 @@ async def db_bulk_create_entity_library(owner_sid: str, team_id: str | None,
         rows = await conn.fetch(
             f"""
             INSERT INTO playbook.entity_library (owner_sid, team_id, label, description, gwm_id, metadata)
-            SELECT $1,
+            SELECT DISTINCT ON (LOWER(TRIM(e->>'label')))
+                   $1,
                    $2::uuid,
                    TRIM(e->>'label'),
                    NULLIF(TRIM(e->>'description'), ''),
@@ -270,7 +271,8 @@ async def db_bulk_create_attribute_library(owner_sid: str, team_id: str | None,
         rows = await conn.fetch(
             f"""
             INSERT INTO playbook.attribute_library (owner_sid, team_id, label, description, weight)
-            SELECT $1,
+            SELECT DISTINCT ON (LOWER(TRIM(e->>'label')))
+                   $1,
                    $2::uuid,
                    TRIM(e->>'label'),
                    NULLIF(TRIM(e->>'description'), ''),
@@ -354,27 +356,29 @@ async def db_import_entities_from_library(
         args.append(owner_sid)
 
     async with _acquire() as conn:
-        rows = await conn.fetch(
-            f"""
-            WITH source AS (
-                SELECT
-                    TRIM(label) AS label,
-                    description,
-                    NULLIF(TRIM(gwm_id), '') AS gwm_id,
-                    metadata
-                FROM playbook.entity_library
-                WHERE id = ANY($2::uuid[])
-                  AND TRIM(COALESCE(label, '')) != ''
-                  {ownership_filter}
+        async with conn.transaction():
+            rows = await conn.fetch(
+                f"""
+                WITH source AS (
+                    SELECT
+                        TRIM(label) AS label,
+                        description,
+                        NULLIF(TRIM(gwm_id), '') AS gwm_id,
+                        metadata
+                    FROM playbook.entity_library
+                    WHERE id = ANY($2::uuid[])
+                      AND TRIM(COALESCE(label, '')) != ''
+                      {ownership_filter}
+                    FOR UPDATE
+                )
+                INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
+                SELECT $1::uuid, s.label, s.description, s.gwm_id, s.metadata
+                FROM source s
+                ON CONFLICT DO NOTHING
+                RETURNING *
+                """,
+                *args,
             )
-            INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
-            SELECT $1::uuid, s.label, s.description, s.gwm_id, s.metadata
-            FROM source s
-            ON CONFLICT DO NOTHING
-            RETURNING *
-            """,
-            *args,
-        )
     inserted = [_entity_row_to_dict(r) for r in rows]
     return {
         "inserted": inserted,
@@ -412,26 +416,28 @@ async def db_import_attributes_from_library(
         args.append(owner_sid)
 
     async with _acquire() as conn:
-        rows = await conn.fetch(
-            f"""
-            WITH source AS (
-                SELECT
-                    TRIM(label) AS label,
-                    description,
-                    weight
-                FROM playbook.attribute_library
-                WHERE id = ANY($2::uuid[])
-                  AND TRIM(COALESCE(label, '')) != ''
-                  {ownership_filter}
+        async with conn.transaction():
+            rows = await conn.fetch(
+                f"""
+                WITH source AS (
+                    SELECT
+                        TRIM(label) AS label,
+                        description,
+                        weight
+                    FROM playbook.attribute_library
+                    WHERE id = ANY($2::uuid[])
+                      AND TRIM(COALESCE(label, '')) != ''
+                      {ownership_filter}
+                    FOR UPDATE
+                )
+                INSERT INTO playbook.attributes (campaign_id, label, description, weight)
+                SELECT $1::uuid, s.label, s.description, s.weight
+                FROM source s
+                ON CONFLICT DO NOTHING
+                RETURNING *
+                """,
+                *args,
             )
-            INSERT INTO playbook.attributes (campaign_id, label, description, weight)
-            SELECT $1::uuid, s.label, s.description, s.weight
-            FROM source s
-            ON CONFLICT DO NOTHING
-            RETURNING *
-            """,
-            *args,
-        )
     inserted = [_attribute_row_to_dict(r) for r in rows]
     return {
         "inserted": inserted,

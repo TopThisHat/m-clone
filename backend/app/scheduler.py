@@ -110,23 +110,49 @@ async def _trigger_campaign(campaign: dict) -> None:
 
 async def _loop() -> None:
     from app.db import db_get_due_monitors, db_get_due_campaigns, DatabaseNotConfigured
+    from app.db._pool import _acquire
+
+    # Unique advisory lock key — only one instance should fire the scheduler tick.
+    _SCHEDULER_LOCK_KEY = 8675310
 
     while True:
         await asyncio.sleep(60)
         try:
-            due = await db_get_due_monitors()
-        except (DatabaseNotConfigured, Exception) as exc:
+            async with _acquire() as conn:
+                # pg_try_advisory_lock is session-scoped and non-blocking.
+                # Only one instance wins the lock; others skip this tick.
+                got_lock: bool = await conn.fetchval(
+                    "SELECT pg_try_advisory_lock($1)", _SCHEDULER_LOCK_KEY
+                )
+                if not got_lock:
+                    logger.debug("Scheduler tick skipped — another instance holds the lock")
+                    continue
+
+                try:
+                    due = await db_get_due_monitors()
+                except (DatabaseNotConfigured, Exception) as exc:
+                    logger.debug("Scheduler poll skipped: %s", exc)
+                    await conn.execute(
+                        "SELECT pg_advisory_unlock($1)", _SCHEDULER_LOCK_KEY
+                    )
+                    continue
+
+                try:
+                    due_campaigns = await db_get_due_campaigns()
+                except Exception as exc:
+                    logger.debug("Campaign scheduler poll skipped: %s", exc)
+                    due_campaigns = []
+
+                await conn.execute(
+                    "SELECT pg_advisory_unlock($1)", _SCHEDULER_LOCK_KEY
+                )
+
+        except Exception as exc:
             logger.debug("Scheduler poll skipped: %s", exc)
             continue
 
         for monitor in due:
             asyncio.create_task(_run_monitor(monitor))
-
-        try:
-            due_campaigns = await db_get_due_campaigns()
-        except Exception as exc:
-            logger.debug("Campaign scheduler poll skipped: %s", exc)
-            due_campaigns = []
 
         for campaign in due_campaigns:
             asyncio.create_task(_trigger_campaign(campaign))

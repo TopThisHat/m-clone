@@ -1311,5 +1311,107 @@ async def init_schema() -> None:
                     ON programs USING GIN(LOWER(name) gin_trgm_ops)
             """)
 
+            # ── Export matrix function (Section D) ────────────────────────
+            # Returns entity × attribute data in a flat, export-friendly
+            # format. Each row is one entity with a JSONB map of attribute
+            # values keyed by attribute UUID. Uses the current schema tables
+            # (entities.gwm_id, entity_attribute_assignments, entity_scores).
+            await conn.execute("""
+                CREATE OR REPLACE FUNCTION playbook.export_matrix(
+                    p_campaign_id    uuid,
+                    p_entity_ids     uuid[]  DEFAULT NULL,
+                    p_attribute_ids  uuid[]  DEFAULT NULL,
+                    p_sort_column    text    DEFAULT 'score',
+                    p_sort_dir       text    DEFAULT 'DESC'
+                )
+                RETURNS TABLE (
+                    entity_id        uuid,
+                    entity_label     text,
+                    gwm_id           text,
+                    scout_score      numeric,
+                    attribute_values jsonb
+                ) AS $$
+                BEGIN
+                    RETURN QUERY
+                    WITH
+                    export_attrs AS (
+                        SELECT
+                            a.id             AS attribute_id,
+                            a.label          AS attr_label,
+                            a.attribute_type AS value_type,
+                            COALESCE(ca.display_order, 0) AS display_order
+                        FROM playbook.attributes a
+                        LEFT JOIN playbook.campaign_attributes ca
+                            ON ca.attribute_id = a.id
+                           AND ca.campaign_id  = p_campaign_id
+                        WHERE a.campaign_id = p_campaign_id
+                          AND (p_attribute_ids IS NULL
+                               OR a.id = ANY(p_attribute_ids))
+                        ORDER BY COALESCE(ca.display_order, 0), a.created_at
+                    ),
+                    export_entities AS (
+                        SELECT
+                            e.id          AS entity_id,
+                            e.label       AS entity_label,
+                            e.gwm_id,
+                            COALESCE(es.total_score, 0.0)::numeric AS scout_score,
+                            e.created_at
+                        FROM playbook.entities e
+                        LEFT JOIN playbook.entity_scores es
+                            ON es.entity_id   = e.id
+                           AND es.campaign_id = p_campaign_id
+                        WHERE e.campaign_id = p_campaign_id
+                          AND (p_entity_ids IS NULL
+                               OR e.id = ANY(p_entity_ids))
+                    ),
+                    entity_attr_map AS (
+                        SELECT
+                            ee.entity_id,
+                            jsonb_object_agg(
+                                ea.attribute_id::text,
+                                jsonb_build_object(
+                                    'label', ea.attr_label,
+                                    'type',  ea.value_type,
+                                    'value', CASE ea.value_type
+                                        WHEN 'boolean'
+                                            THEN to_jsonb(eaa.value_boolean)
+                                        WHEN 'numeric'
+                                            THEN to_jsonb(eaa.value_numeric)
+                                        WHEN 'select'
+                                            THEN to_jsonb(eaa.value_select)
+                                        ELSE to_jsonb(eaa.value_text)
+                                    END
+                                ) ORDER BY ea.display_order
+                            ) AS attribute_values
+                        FROM export_entities ee
+                        CROSS JOIN export_attrs ea
+                        LEFT JOIN playbook.entity_attribute_assignments eaa
+                            ON eaa.campaign_id  = p_campaign_id
+                           AND eaa.entity_id    = ee.entity_id
+                           AND eaa.attribute_id = ea.attribute_id
+                        GROUP BY ee.entity_id
+                    )
+                    SELECT
+                        ee.entity_id,
+                        ee.entity_label,
+                        ee.gwm_id,
+                        ROUND(ee.scout_score * 100, 1) AS scout_score,
+                        COALESCE(eam.attribute_values, '{}'::jsonb)
+                    FROM export_entities ee
+                    LEFT JOIN entity_attr_map eam ON eam.entity_id = ee.entity_id
+                    ORDER BY
+                        CASE WHEN p_sort_dir = 'DESC' AND p_sort_column = 'score'
+                             THEN COALESCE(ee.scout_score, -1) END DESC NULLS LAST,
+                        CASE WHEN p_sort_dir = 'ASC'  AND p_sort_column = 'score'
+                             THEN COALESCE(ee.scout_score, -1) END ASC  NULLS LAST,
+                        CASE WHEN p_sort_dir = 'ASC'  AND p_sort_column = 'label'
+                             THEN ee.entity_label END ASC,
+                        CASE WHEN p_sort_dir = 'DESC' AND p_sort_column = 'label'
+                             THEN ee.entity_label END DESC,
+                        ee.entity_label ASC;
+                END;
+                $$ LANGUAGE plpgsql STABLE
+            """)
+
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")
