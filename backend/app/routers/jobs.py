@@ -5,7 +5,7 @@ import io
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from app.auth import get_current_user
 from app.db import (
@@ -33,6 +33,17 @@ from app.db import (
 from app.models.campaign import JobCreate, JobOut, KnowledgeOut, ResultOut, ScoreOut
 
 logger = logging.getLogger(__name__)
+
+# Characters that trigger formula execution in Excel/Sheets when they start a cell.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "|", "\t")
+
+
+def _sanitize_csv_cell(value: object) -> str:
+    """Prefix dangerous cells with a single-quote to prevent CSV formula injection."""
+    s = str(value) if value is not None else ""
+    if s and s[0] in _CSV_FORMULA_PREFIXES:
+        return f"'{s}"
+    return s
 
 router = APIRouter(tags=["jobs"])
 
@@ -226,12 +237,12 @@ async def export_campaign_results(
     ])
     for r in rows:
         writer.writerow([
-            r.get("entity_label", ""),
-            r.get("gwm_id", ""),
-            r.get("attribute_label", ""),
+            _sanitize_csv_cell(r.get("entity_label", "")),
+            _sanitize_csv_cell(r.get("gwm_id", "")),
+            _sanitize_csv_cell(r.get("attribute_label", "")),
             r.get("present", ""),
             f"{r['confidence']:.2f}" if r.get("confidence") is not None else "",
-            r.get("evidence", ""),
+            _sanitize_csv_cell(r.get("evidence", "")),
             f"{r['total_score']:.2f}" if r.get("total_score") is not None else "",
             r.get("attributes_present", ""),
             r.get("attributes_checked", ""),

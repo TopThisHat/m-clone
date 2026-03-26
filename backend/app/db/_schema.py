@@ -1073,5 +1073,191 @@ async def init_schema() -> None:
                 $$ LANGUAGE plpgsql STABLE
             """)
 
+            # ── Entity-attribute value history (audit trail) ──────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.entity_attribute_value_history (
+                    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    campaign_id    UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+                    entity_id      UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                    attribute_id   UUID NOT NULL REFERENCES attributes(id) ON DELETE CASCADE,
+                    team_id        UUID REFERENCES teams(id) ON DELETE SET NULL,
+                    old_boolean    BOOLEAN,
+                    old_numeric    FLOAT,
+                    old_text       TEXT,
+                    old_select     TEXT,
+                    new_boolean    BOOLEAN,
+                    new_numeric    FLOAT,
+                    new_text       TEXT,
+                    new_select     TEXT,
+                    changed_by     TEXT,
+                    changed_at     TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS eavh_campaign_idx
+                    ON entity_attribute_value_history(campaign_id)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS eavh_entity_idx
+                    ON entity_attribute_value_history(entity_id, campaign_id)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS eavh_team_idx
+                    ON entity_attribute_value_history(team_id)
+                    WHERE team_id IS NOT NULL
+            """)
+
+            # ── Trigger: capture assignment history on INSERT/UPDATE ───
+            await conn.execute("""
+                CREATE OR REPLACE FUNCTION playbook.capture_assignment_history()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    INSERT INTO playbook.entity_attribute_value_history (
+                        campaign_id, entity_id, attribute_id, team_id,
+                        old_boolean, old_numeric, old_text, old_select,
+                        new_boolean, new_numeric, new_text, new_select,
+                        changed_by, changed_at
+                    ) VALUES (
+                        NEW.campaign_id, NEW.entity_id, NEW.attribute_id,
+                        (SELECT team_id FROM playbook.campaigns WHERE id = NEW.campaign_id),
+                        CASE WHEN TG_OP = 'UPDATE' THEN OLD.value_boolean ELSE NULL END,
+                        CASE WHEN TG_OP = 'UPDATE' THEN OLD.value_numeric ELSE NULL END,
+                        CASE WHEN TG_OP = 'UPDATE' THEN OLD.value_text ELSE NULL END,
+                        CASE WHEN TG_OP = 'UPDATE' THEN OLD.value_select ELSE NULL END,
+                        NEW.value_boolean, NEW.value_numeric,
+                        NEW.value_text, NEW.value_select,
+                        NEW.updated_by, NOW()
+                    );
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+            """)
+            await conn.execute("""
+                DROP TRIGGER IF EXISTS trg_capture_assignment_history
+                    ON playbook.entity_attribute_assignments
+            """)
+            await conn.execute("""
+                CREATE TRIGGER trg_capture_assignment_history
+                    AFTER INSERT OR UPDATE ON playbook.entity_attribute_assignments
+                    FOR EACH ROW EXECUTE FUNCTION playbook.capture_assignment_history()
+            """)
+
+            # ── Row-Level Security policies ────────────────────────────
+            # RLS on campaigns: users see own campaigns or campaigns
+            # belonging to teams they're members of.
+            await conn.execute("""
+                ALTER TABLE playbook.campaigns ENABLE ROW LEVEL SECURITY
+            """)
+            await conn.execute("""
+                DROP POLICY IF EXISTS campaigns_team_isolation ON playbook.campaigns
+            """)
+            await conn.execute("""
+                CREATE POLICY campaigns_team_isolation ON playbook.campaigns
+                    USING (
+                        team_id IS NULL
+                        OR team_id::text = current_setting('app.current_team_id', true)
+                    )
+            """)
+
+            # RLS on entities: scoped through campaign
+            await conn.execute("""
+                ALTER TABLE playbook.entities ENABLE ROW LEVEL SECURITY
+            """)
+            await conn.execute("""
+                DROP POLICY IF EXISTS entities_team_isolation ON playbook.entities
+            """)
+            await conn.execute("""
+                CREATE POLICY entities_team_isolation ON playbook.entities
+                    USING (
+                        campaign_id IN (
+                            SELECT id FROM playbook.campaigns
+                            WHERE team_id IS NULL
+                               OR team_id::text = current_setting('app.current_team_id', true)
+                        )
+                    )
+            """)
+
+            # RLS on entity_attribute_assignments
+            await conn.execute("""
+                ALTER TABLE playbook.entity_attribute_assignments
+                    ENABLE ROW LEVEL SECURITY
+            """)
+            await conn.execute("""
+                DROP POLICY IF EXISTS eaa_team_isolation
+                    ON playbook.entity_attribute_assignments
+            """)
+            await conn.execute("""
+                CREATE POLICY eaa_team_isolation
+                    ON playbook.entity_attribute_assignments
+                    USING (
+                        campaign_id IN (
+                            SELECT id FROM playbook.campaigns
+                            WHERE team_id IS NULL
+                               OR team_id::text = current_setting('app.current_team_id', true)
+                        )
+                    )
+            """)
+
+            # RLS on entity_scores
+            await conn.execute("""
+                ALTER TABLE playbook.entity_scores ENABLE ROW LEVEL SECURITY
+            """)
+            await conn.execute("""
+                DROP POLICY IF EXISTS scores_team_isolation ON playbook.entity_scores
+            """)
+            await conn.execute("""
+                CREATE POLICY scores_team_isolation ON playbook.entity_scores
+                    USING (
+                        campaign_id IN (
+                            SELECT id FROM playbook.campaigns
+                            WHERE team_id IS NULL
+                               OR team_id::text = current_setting('app.current_team_id', true)
+                        )
+                    )
+            """)
+
+            # RLS on entity_attribute_value_history
+            await conn.execute("""
+                ALTER TABLE playbook.entity_attribute_value_history
+                    ENABLE ROW LEVEL SECURITY
+            """)
+            await conn.execute("""
+                DROP POLICY IF EXISTS eavh_team_isolation
+                    ON playbook.entity_attribute_value_history
+            """)
+            await conn.execute("""
+                CREATE POLICY eavh_team_isolation
+                    ON playbook.entity_attribute_value_history
+                    USING (
+                        team_id IS NULL
+                        OR team_id::text = current_setting('app.current_team_id', true)
+                    )
+            """)
+
+            # RLS on validation_jobs
+            await conn.execute("""
+                ALTER TABLE playbook.validation_jobs ENABLE ROW LEVEL SECURITY
+            """)
+            await conn.execute("""
+                DROP POLICY IF EXISTS vjobs_team_isolation
+                    ON playbook.validation_jobs
+            """)
+            await conn.execute("""
+                CREATE POLICY vjobs_team_isolation ON playbook.validation_jobs
+                    USING (
+                        campaign_id IN (
+                            SELECT id FROM playbook.campaigns
+                            WHERE team_id IS NULL
+                               OR team_id::text = current_setting('app.current_team_id', true)
+                        )
+                    )
+            """)
+
+            # Pool connections are superuser/owner — exempt from RLS by default.
+            # RLS is enforced when SET LOCAL app.current_team_id is set via
+            # _acquire_team(). Non-team queries use _acquire() which bypasses RLS
+            # (table owner is exempt). This is intentional: admin/system queries
+            # need full access, while user-facing team queries get isolation.
+
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")

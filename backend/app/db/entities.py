@@ -162,7 +162,9 @@ async def db_list_entities(
                 ON s.entity_id = e.id AND s.campaign_id = e.campaign_id"""
 
     _where = """WHERE e.campaign_id = $1::uuid
-                  AND ($2::text IS NULL OR e.label ILIKE '%' || $2 || '%')"""
+                  AND ($2::text IS NULL
+                       OR e.label ILIKE '%' || $2 || '%'
+                       OR e.gwm_id ILIKE '%' || $2 || '%')"""
 
     _order = f"ORDER BY {sort_col} {direction}"
 

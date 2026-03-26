@@ -448,12 +448,11 @@ async def db_transition_campaign_status(
                 )
 
             # Update the campaign status
-            updated_row = await conn.fetchrow(
+            await conn.execute(
                 """
                 UPDATE playbook.campaigns
                 SET status = $1, updated_at = NOW()
                 WHERE id = $2::uuid
-                RETURNING *
                 """,
                 new_status.value, campaign_id,
             )
@@ -466,6 +465,17 @@ async def db_transition_campaign_status(
                 VALUES ($1::uuid, $2, $3, $4)
                 """,
                 campaign_id, old_status.value, new_status.value, user_sid,
+            )
+
+            # Re-fetch with computed counts so the response matches CampaignOut
+            updated_row = await conn.fetchrow(
+                f"""
+                {_CAMPAIGN_COUNTS_SQL}
+                FROM playbook.campaigns c
+                {_CAMPAIGN_JOINS_SQL}
+                WHERE c.id = $1::uuid
+                """,
+                campaign_id,
             )
 
     logger.info(

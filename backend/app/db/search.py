@@ -75,12 +75,14 @@ async def db_search_all(
         if campaign_ids:
             entities = await conn.fetch(
                 """
-                SELECT e.id, e.campaign_id, e.label, e.description, e.created_at,
+                SELECT e.id, e.campaign_id, e.label, e.description,
+                       e.gwm_id, e.created_at,
                        c.name AS campaign_name
                 FROM playbook.entities e
                 JOIN playbook.campaigns c ON e.campaign_id = c.id
                 WHERE e.campaign_id = ANY($1::uuid[])
-                  AND (e.label ILIKE $2 OR e.description ILIKE $2)
+                  AND (e.label ILIKE $2 OR e.description ILIKE $2
+                       OR e.gwm_id ILIKE $2)
                 ORDER BY e.created_at DESC
                 LIMIT $3
                 """,

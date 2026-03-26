@@ -212,22 +212,11 @@ class TestDbMarkScoresFresh:
 class TestDbRecalculateScoresFlow:
 
     @pytest.mark.asyncio
-    async def test_recalc_marks_stale_then_fresh_on_success(self):
-        """The flow must be: mark stale -> recalculate -> mark fresh."""
+    async def test_recalc_atomic_stale_and_recompute(self):
+        """Stale marking and recomputation happen in a single transaction."""
         from app.db import scores
 
         campaign_id = str(uuid4())
-        call_order: list[str] = []
-
-        async def _mock_mark_stale(cid, eid=None):
-            call_order.append("stale")
-            return 2
-
-        async def _mock_mark_fresh(cid, eid=None):
-            call_order.append("fresh")
-            return 2
-
-        # Mock the transaction to return score rows
         now = datetime.datetime.now(datetime.timezone.utc)
         fake_row = {
             "entity_id": uuid4(),
@@ -240,9 +229,9 @@ class TestDbRecalculateScoresFlow:
         }
 
         mock_conn = AsyncMock()
+        mock_conn.execute = AsyncMock(return_value="UPDATE 2")
         mock_conn.fetch = AsyncMock(return_value=[fake_row])
 
-        # Mock transaction context manager
         mock_txn = AsyncMock()
         mock_txn.__aenter__ = AsyncMock(return_value=mock_txn)
         mock_txn.__aexit__ = AsyncMock(return_value=False)
@@ -252,35 +241,26 @@ class TestDbRecalculateScoresFlow:
         mock_cm.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-        with (
-            patch.object(scores, "db_mark_scores_stale", side_effect=_mock_mark_stale),
-            patch.object(scores, "db_mark_scores_fresh", side_effect=_mock_mark_fresh),
-            patch.object(scores, "_acquire", return_value=mock_cm),
-        ):
+        with patch.object(scores, "_acquire", return_value=mock_cm):
             result = await scores.db_recalculate_scores(campaign_id)
-            assert call_order == ["stale", "fresh"]
             assert len(result) == 1
+            # Stale marking via conn.execute inside the transaction
+            stale_sql = mock_conn.execute.call_args[0][0]
+            assert "score_stale = TRUE" in stale_sql
+            # Recomputation via conn.fetch
+            assert mock_conn.fetch.called
+            # All within one transaction (single acquire, single transaction)
+            mock_conn.transaction.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_recalc_stays_stale_on_failure(self):
-        """If recalculation raises, scores must remain stale."""
+    async def test_recalc_rolls_back_on_failure(self):
+        """If recomputation raises, the entire transaction rolls back."""
         from app.db import scores
 
         campaign_id = str(uuid4())
-        stale_called = False
-        fresh_called = False
-
-        async def _mock_mark_stale(cid, eid=None):
-            nonlocal stale_called
-            stale_called = True
-            return 1
-
-        async def _mock_mark_fresh(cid, eid=None):
-            nonlocal fresh_called
-            fresh_called = True
-            return 1
 
         mock_conn = AsyncMock()
+        mock_conn.execute = AsyncMock(return_value="UPDATE 1")
         mock_conn.fetch = AsyncMock(side_effect=RuntimeError("DB exploded"))
 
         mock_txn = AsyncMock()
@@ -292,28 +272,23 @@ class TestDbRecalculateScoresFlow:
         mock_cm.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-        with (
-            patch.object(scores, "db_mark_scores_stale", side_effect=_mock_mark_stale),
-            patch.object(scores, "db_mark_scores_fresh", side_effect=_mock_mark_fresh),
-            patch.object(scores, "_acquire", return_value=mock_cm),
-        ):
+        with patch.object(scores, "_acquire", return_value=mock_cm):
             with pytest.raises(RuntimeError, match="DB exploded"):
                 await scores.db_recalculate_scores(campaign_id)
-            assert stale_called is True
-            assert fresh_called is False
+            # Stale was executed (before fetch blew up)
+            assert mock_conn.execute.called
+            # Transaction context manager handles rollback
 
     @pytest.mark.asyncio
     async def test_recalc_with_entity_filter(self):
-        """When entity_id is provided, it appears in the SQL args."""
+        """When entity_id is provided, it appears in both stale and fetch args."""
         from app.db import scores
 
         campaign_id = str(uuid4())
         entity_id = str(uuid4())
 
-        async def _mock_mark(cid, eid=None):
-            return 1
-
         mock_conn = AsyncMock()
+        mock_conn.execute = AsyncMock(return_value="UPDATE 1")
         mock_conn.fetch = AsyncMock(return_value=[])
 
         mock_txn = AsyncMock()
@@ -325,16 +300,15 @@ class TestDbRecalculateScoresFlow:
         mock_cm.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-        with (
-            patch.object(scores, "db_mark_scores_stale", side_effect=_mock_mark),
-            patch.object(scores, "db_mark_scores_fresh", side_effect=_mock_mark),
-            patch.object(scores, "_acquire", return_value=mock_cm),
-        ):
+        with patch.object(scores, "_acquire", return_value=mock_cm):
             await scores.db_recalculate_scores(campaign_id, entity_id)
-            # conn.fetch called with both campaign_id and entity_id
-            call_args = mock_conn.fetch.call_args[0]
-            assert campaign_id in call_args
-            assert entity_id in call_args
+            # Stale SQL includes entity_id
+            stale_args = mock_conn.execute.call_args[0]
+            assert entity_id in stale_args
+            # Fetch SQL includes entity_id
+            fetch_args = mock_conn.fetch.call_args[0]
+            assert campaign_id in fetch_args
+            assert entity_id in fetch_args
 
 
 # ---------------------------------------------------------------------------
