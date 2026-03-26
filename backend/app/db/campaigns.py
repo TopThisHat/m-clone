@@ -412,22 +412,42 @@ async def db_transition_campaign_status(
 ) -> dict[str, Any]:
     """Transition a campaign's status with validation and audit logging.
 
-    Validates the transition against VALID_STATUS_TRANSITIONS, writes an
-    audit record, and returns the updated campaign dict.
+    The access check, state read, and write are all performed inside a single
+    serialisable transaction with a FOR UPDATE lock to eliminate the TOCTOU gap
+    between the ownership check and the status update.
 
     Raises:
+        HTTPException(403): caller does not own or belong to this campaign
         HTTPException(404): campaign not found
         HTTPException(400): invalid transition
     """
     async with _acquire() as conn:
         async with conn.transaction():
-            # Lock the row to prevent concurrent transitions
+            # Lock the row to prevent concurrent transitions and to read the
+            # authoritative ownership/status atomically.
             row = await conn.fetchrow(
-                "SELECT id, status FROM playbook.campaigns WHERE id = $1::uuid FOR UPDATE",
+                """
+                SELECT id, status, owner_sid, team_id
+                FROM playbook.campaigns
+                WHERE id = $1::uuid
+                FOR UPDATE
+                """,
                 campaign_id,
             )
             if not row:
                 raise HTTPException(status_code=404, detail="Campaign not found")
+
+            # Access check inside the lock — eliminates TOCTOU race.
+            team_id = row["team_id"]
+            if team_id is not None:
+                is_member = await conn.fetchval(
+                    "SELECT 1 FROM playbook.team_members WHERE team_id = $1 AND sid = $2",
+                    team_id, user_sid,
+                )
+                if not is_member:
+                    raise HTTPException(status_code=403, detail="Forbidden")
+            elif str(row["owner_sid"]) != user_sid:
+                raise HTTPException(status_code=403, detail="Forbidden")
 
             old_status_str: str = row["status"]
             try:

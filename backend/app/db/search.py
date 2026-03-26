@@ -6,6 +6,16 @@ from typing import Any
 from ._pool import _acquire
 
 
+def _row_to_dict(row: Any) -> dict[str, Any]:
+    d = dict(row)
+    for k, v in d.items():
+        if hasattr(v, "hex"):  # UUID
+            d[k] = str(v)
+        elif hasattr(v, "isoformat"):  # datetime
+            d[k] = v.isoformat()
+    return d
+
+
 async def db_search_all(
     query: str,
     *,
@@ -16,9 +26,11 @@ async def db_search_all(
     """Search across entities, attributes, campaigns, and programs.
 
     Results are scoped to campaigns the user owns or belongs to via team membership.
+    Uses full-text search (GIN search_vector) for entities and attributes, and
+    trigram-indexed ILIKE for campaigns and programs.
 
     Args:
-        query: Search term (matched with ILIKE).
+        query: Search term.
         owner_sid: User SID for ownership filtering.
         team_ids: Team IDs the user is a member of.
         limit: Max results per category.
@@ -28,9 +40,11 @@ async def db_search_all(
     """
     pattern = f"%{query}%"
     team_ids = team_ids or []
+    # plainto_tsquery is safe for user input — converts free text to AND-joined terms
+    ts_query = query.strip()
 
     async with _acquire() as conn:
-        # Search campaigns (user owns or is team member)
+        # Search campaigns using trigram-indexed ILIKE
         if team_ids:
             campaigns = await conn.fetch(
                 """
@@ -73,6 +87,7 @@ async def db_search_all(
         campaign_ids = [r["id"] for r in accessible_campaigns]
 
         if campaign_ids:
+            # Use search_vector (GIN) for full-text + ILIKE fallback for partial matches
             entities = await conn.fetch(
                 """
                 SELECT e.id, e.campaign_id, e.label, e.description,
@@ -81,12 +96,20 @@ async def db_search_all(
                 FROM playbook.entities e
                 JOIN playbook.campaigns c ON e.campaign_id = c.id
                 WHERE e.campaign_id = ANY($1::uuid[])
-                  AND (e.label ILIKE $2 OR e.description ILIKE $2
-                       OR e.gwm_id ILIKE $2)
-                ORDER BY e.created_at DESC
-                LIMIT $3
+                  AND (
+                      (e.search_vector @@ plainto_tsquery('english', $3)
+                       AND $3 <> '')
+                      OR e.label ILIKE $2
+                      OR e.description ILIKE $2
+                      OR e.gwm_id ILIKE $2
+                  )
+                ORDER BY
+                    (e.search_vector @@ plainto_tsquery('english', $3)
+                     AND $3 <> '') DESC,
+                    e.created_at DESC
+                LIMIT $4
                 """,
-                campaign_ids, pattern, limit,
+                campaign_ids, pattern, ts_query, limit,
             )
 
             attributes = await conn.fetch(
@@ -97,18 +120,26 @@ async def db_search_all(
                 FROM playbook.attributes a
                 JOIN playbook.campaigns c ON a.campaign_id = c.id
                 WHERE a.campaign_id = ANY($1::uuid[])
-                  AND (a.label ILIKE $2 OR a.description ILIKE $2
-                       OR a.category ILIKE $2)
-                ORDER BY a.label
-                LIMIT $3
+                  AND (
+                      (a.search_vector @@ plainto_tsquery('english', $3)
+                       AND $3 <> '')
+                      OR a.label ILIKE $2
+                      OR a.description ILIKE $2
+                      OR a.category ILIKE $2
+                  )
+                ORDER BY
+                    (a.search_vector @@ plainto_tsquery('english', $3)
+                     AND $3 <> '') DESC,
+                    a.label
+                LIMIT $4
                 """,
-                campaign_ids, pattern, limit,
+                campaign_ids, pattern, ts_query, limit,
             )
         else:
             entities = []
             attributes = []
 
-        # Search programs (team-scoped)
+        # Search programs using trigram-indexed ILIKE
         if team_ids:
             programs = await conn.fetch(
                 """
@@ -123,15 +154,6 @@ async def db_search_all(
             )
         else:
             programs = []
-
-    def _row_to_dict(row: Any) -> dict[str, Any]:
-        d = dict(row)
-        for k, v in d.items():
-            if hasattr(v, "hex"):  # UUID
-                d[k] = str(v)
-            elif hasattr(v, "isoformat"):  # datetime
-                d[k] = v.isoformat()
-        return d
 
     return {
         "campaigns": [_row_to_dict(r) for r in campaigns],

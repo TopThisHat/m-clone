@@ -4,7 +4,7 @@ from typing import Any
 
 import asyncpg
 
-from ._pool import _acquire
+from ._pool import _acquire, _acquire_team
 
 
 def _assignment_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
@@ -104,15 +104,20 @@ async def db_upsert_cell_value(
     *,
     attribute_type: str | None = None,
     updated_by: str | None = None,
+    team_id: str | None = None,
 ) -> dict[str, Any]:
     """Upsert a single cell value in the matrix.
 
     If attribute_type is not provided, it will be looked up from the attribute.
     The value is stored in the appropriate typed column based on attribute_type.
 
+    Args:
+        team_id: When provided, ``SET LOCAL app.current_team_id`` is issued so
+            that row-level security policies are enforced on the write.
+
     Returns the upserted row as a dict.
     """
-    async with _acquire() as conn:
+    async with _acquire_team(team_id) as conn:
         # Look up attribute type if not provided
         if attribute_type is None:
             attribute_type = await conn.fetchval(
@@ -167,9 +172,15 @@ async def db_delete_cell_value(
     campaign_id: str,
     entity_id: str,
     attribute_id: str,
+    *,
+    team_id: str | None = None,
 ) -> bool:
-    """Delete a cell value (clear the cell). Returns True if deleted."""
-    async with _acquire() as conn:
+    """Delete a cell value (clear the cell). Returns True if deleted.
+
+    Args:
+        team_id: When provided, enforces RLS via ``SET LOCAL app.current_team_id``.
+    """
+    async with _acquire_team(team_id) as conn:
         result = await conn.execute(
             """
             DELETE FROM playbook.entity_attribute_assignments
@@ -206,14 +217,18 @@ async def db_bulk_upsert_cells(
     cells: list[dict[str, Any]],
     *,
     updated_by: str | None = None,
+    team_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Bulk upsert cell values within a single transaction.
 
     Each cell dict should have: entity_id, attribute_id, value, and optionally
     attribute_type (looked up if missing).
+
+    Args:
+        team_id: When provided, enforces RLS via ``SET LOCAL app.current_team_id``.
     """
     results: list[dict[str, Any]] = []
-    async with _acquire() as conn:
+    async with _acquire_team(team_id) as conn:
         # Pre-fetch attribute types for all referenced attributes
         attr_ids = list({c["attribute_id"] for c in cells})
         type_rows = await conn.fetch(

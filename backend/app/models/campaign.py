@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ── Campaign Status ────────────────────────────────────────────────────────────
@@ -109,17 +109,31 @@ class AttributeTemplateOut(BaseModel):
 
 
 class EntityCreate(BaseModel):
-    label: str
-    description: str | None = None
-    gwm_id: str | None = None
+    label: str = Field(min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=5000)
+    gwm_id: str | None = Field(default=None, max_length=200)
     metadata: dict[str, Any] = {}
+
+    @field_validator("label")
+    @classmethod
+    def label_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("label must not be blank")
+        return v
 
 
 class EntityUpdate(BaseModel):
-    label: str | None = None
-    description: str | None = None
-    gwm_id: str | None = None
+    label: str | None = Field(default=None, min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=5000)
+    gwm_id: str | None = Field(default=None, max_length=200)
     metadata: dict[str, Any] | None = None
+
+    @field_validator("label")
+    @classmethod
+    def label_not_blank(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("label must not be blank")
+        return v
 
 
 class EntityOut(BaseModel):
@@ -141,8 +155,12 @@ class MetadataUpdate(BaseModel):
 class ExternalIdUpdate(BaseModel):
     """Request body for PUT /external-ids: set an external ID for a system."""
 
-    system: str
-    external_id: str
+    system: str = Field(
+        min_length=1,
+        max_length=50,
+        pattern=r"^[a-z][a-z0-9_-]*$",
+    )
+    external_id: str = Field(min_length=1, max_length=500)
 
 
 class ExternalIdOut(BaseModel):

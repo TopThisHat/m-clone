@@ -135,18 +135,15 @@ async def transition_campaign_status(
       completed -> archived
     """
     try:
-        campaign = await db_get_campaign(campaign_id)
+        # Access check, state read, and write are all atomic inside
+        # db_transition_campaign_status (FOR UPDATE lock eliminates TOCTOU).
+        updated = await db_transition_campaign_status(
+            campaign_id=campaign_id,
+            new_status=body.status,
+            user_sid=user["sub"],
+        )
     except DatabaseNotConfigured:
         raise _no_db()
-    if not campaign:
-        raise _not_found()
-    await _assert_campaign_access(campaign, user["sub"])
-    # db_transition_campaign_status raises HTTPException(400) for invalid transitions
-    updated = await db_transition_campaign_status(
-        campaign_id=campaign_id,
-        new_status=body.status,
-        user_sid=user["sub"],
-    )
     return updated
 
 

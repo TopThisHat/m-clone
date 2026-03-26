@@ -50,6 +50,27 @@ class ImportCommitRequest(BaseModel):
     cells: list[dict[str, Any]] = []
 
 
+class ImportErrorDetail(BaseModel):
+    """A single row-level validation error from the import upload."""
+
+    row: int            # 1-based row number (row 1 is the header row)
+    field: str = ""     # Column name, if applicable
+    message: str        # Human-readable error reason
+
+
+class ErrorReportRequest(BaseModel):
+    """Request body for generating an import error report CSV.
+
+    ``rows`` contains the original data rows as parsed from the uploaded file.
+    ``errors`` contains the validation errors returned by the upload endpoint.
+    Only rows referenced in ``errors`` appear in the output CSV; each gets an
+    appended ``_error`` column with the error message.
+    """
+
+    rows: list[dict[str, str]]
+    errors: list[ImportErrorDetail]
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -323,6 +344,63 @@ async def commit_import(
         raise _no_db()
 
     return result
+
+
+@router.post("/{campaign_id}/import/error-report")
+async def download_error_report(
+    campaign_id: str,
+    body: ErrorReportRequest,
+    user=Depends(get_current_user),
+) -> StreamingResponse:
+    """Generate a CSV error report for failed import rows.
+
+    Returns a CSV containing only the rows that had validation errors, with
+    an appended ``_error`` column describing the failure reason.  Column order
+    matches the original upload file.  All cell values are sanitized against
+    CSV formula injection.
+    """
+    await _get_owned_campaign(campaign_id, user["sub"])
+
+    if not body.errors:
+        raise HTTPException(status_code=400, detail="No errors to report")
+
+    # Build a mapping from 1-based row number → error messages (a row can have
+    # multiple errors; they are joined with "; " in the _error column).
+    error_by_row: dict[int, list[str]] = {}
+    for err in body.errors:
+        msgs = error_by_row.setdefault(err.row, [])
+        if err.field:
+            msgs.append(f"{err.field}: {err.message}")
+        else:
+            msgs.append(err.message)
+
+    # Determine column headers from the first data row (or body rows list)
+    if not body.rows:
+        raise HTTPException(status_code=400, detail="No row data provided")
+
+    original_headers = list(body.rows[0].keys())
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(original_headers + ["_error"])
+
+    # Rows are 1-indexed where row 1 is the header; data starts at row 2.
+    for i, row in enumerate(body.rows, start=2):
+        if i not in error_by_row:
+            continue
+        data_cells = [_sanitize_csv_cell(row.get(h, "")) for h in original_headers]
+        error_cell = "; ".join(error_by_row[i])
+        writer.writerow(data_cells + [error_cell])
+
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="import-errors-{campaign_id}.csv"'
+            ),
+        },
+    )
 
 
 @router.get("/{campaign_id}/export")

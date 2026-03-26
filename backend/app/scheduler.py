@@ -33,7 +33,10 @@ async def _run_monitor(monitor: dict) -> None:
                         payload = json.loads(line[6:])
                         final_md = payload.get("markdown", "")
                     except Exception:
-                        pass
+                        logger.debug(
+                            "Monitor %s: failed to parse final_report SSE payload",
+                            monitor["id"], exc_info=True,
+                        )
     except Exception as exc:
         logger.error("Monitor %s failed during stream: %s", monitor["id"], exc)
         return
@@ -72,7 +75,7 @@ async def _run_monitor(monitor: dict) -> None:
 
 
 async def _trigger_campaign(campaign: dict) -> None:
-    from app.db import db_create_validation_job, db_update_campaign_next_run
+    from app.db import db_update_campaign_next_run
     try:
         from croniter import croniter
         from datetime import timezone

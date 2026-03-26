@@ -88,7 +88,8 @@ async def upsert_cell(
     user=Depends(get_current_user),
 ):
     """Upsert a single cell value and recalculate the entity's score."""
-    await _get_owned_campaign(campaign_id, user["sub"])
+    campaign = await _get_owned_campaign(campaign_id, user["sub"])
+    team_id: str | None = campaign.get("team_id")
     try:
         result = await db_upsert_cell_value(
             campaign_id,
@@ -97,13 +98,16 @@ async def upsert_cell(
             body.value,
             attribute_type=body.attribute_type,
             updated_by=user["sub"],
+            team_id=team_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except DatabaseNotConfigured:
         raise _no_db()
     try:
-        await db_recalculate_scores_from_matrix(campaign_id, entity_id=body.entity_id)
+        await db_recalculate_scores_from_matrix(
+            campaign_id, entity_id=body.entity_id, team_id=team_id,
+        )
     except Exception:
         logger.exception("Score recalculation failed after cell upsert")
     return result
@@ -116,13 +120,14 @@ async def bulk_upsert_cells(
     user=Depends(get_current_user),
 ):
     """Bulk upsert cell values and recalculate affected entities' scores."""
-    await _get_owned_campaign(campaign_id, user["sub"])
+    campaign = await _get_owned_campaign(campaign_id, user["sub"])
+    team_id: str | None = campaign.get("team_id")
     if not body.cells:
         return []
     cells = [c.model_dump() for c in body.cells]
     try:
         result = await db_bulk_upsert_cells(
-            campaign_id, cells, updated_by=user["sub"],
+            campaign_id, cells, updated_by=user["sub"], team_id=team_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -132,7 +137,9 @@ async def bulk_upsert_cells(
     affected_entity_ids = {c.entity_id for c in body.cells}
     for eid in affected_entity_ids:
         try:
-            await db_recalculate_scores_from_matrix(campaign_id, entity_id=eid)
+            await db_recalculate_scores_from_matrix(
+                campaign_id, entity_id=eid, team_id=team_id,
+            )
         except Exception:
             logger.exception("Score recalculation failed for entity %s", eid)
     return result
@@ -145,17 +152,20 @@ async def delete_cell(
     user=Depends(get_current_user),
 ):
     """Clear a cell value and recalculate the entity's score."""
-    await _get_owned_campaign(campaign_id, user["sub"])
+    campaign = await _get_owned_campaign(campaign_id, user["sub"])
+    team_id: str | None = campaign.get("team_id")
     try:
         deleted = await db_delete_cell_value(
-            campaign_id, body.entity_id, body.attribute_id,
+            campaign_id, body.entity_id, body.attribute_id, team_id=team_id,
         )
     except DatabaseNotConfigured:
         raise _no_db()
     if not deleted:
         raise HTTPException(status_code=404, detail="Cell not found")
     try:
-        await db_recalculate_scores_from_matrix(campaign_id, entity_id=body.entity_id)
+        await db_recalculate_scores_from_matrix(
+            campaign_id, entity_id=body.entity_id, team_id=team_id,
+        )
     except Exception:
         logger.exception("Score recalculation failed after cell delete")
     return {"deleted": True}

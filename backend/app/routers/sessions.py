@@ -1,13 +1,10 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-logger = logging.getLogger(__name__)
-
 from app.export import markdown_to_docx
-
 from app.auth import get_current_user, get_optional_user
 from app.db import (
     DatabaseNotConfigured,
@@ -20,7 +17,6 @@ from app.db import (
     db_get_session,
     db_get_session_diff,
     db_get_session_teams,
-    db_get_team,
     db_get_team_by_id,
     db_get_member_role,
     db_heartbeat_presence,
@@ -38,6 +34,8 @@ from app.db import (
     db_record_activity,
 )
 from app.models.session import SessionCreate, SessionFull, SessionSummary, SessionUpdate
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -129,7 +127,7 @@ async def share_session(session_id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Session not found")
     if session.get("owner_sid") != user["sub"]:
         raise HTTPException(status_code=403, detail="Only the session owner can share")
-    row = await db_update_session(session_id, {"is_public": True})
+    await db_update_session(session_id, {"is_public": True})
     return {"share_url": f"/share/{session_id}"}
 
 
@@ -174,7 +172,10 @@ async def share_to_team(session_id: str, body: TeamShareBody, user=Depends(get_c
                 "session_title": session.get("title", ""),
             })
         except Exception:
-            pass
+            logger.warning(
+                "Failed to record share activity for session %s team %s",
+                session_id, body.team_id, exc_info=True,
+            )
         # Notify all team members except sharer
         try:
             sharer_name = user.get("display_name", user["sub"])
@@ -193,7 +194,10 @@ async def share_to_team(session_id: str, body: TeamShareBody, user=Depends(get_c
                     },
                 )
         except Exception:
-            pass
+            logger.warning(
+                "Failed to send share notifications for session %s team %s",
+                session_id, body.team_id, exc_info=True,
+            )
         # Publish report to KG extraction pipeline for team-scoped entities
         report_md = session.get("report_markdown") or ""
         if report_md.strip():
@@ -238,7 +242,9 @@ async def pin_session(session_id: str, body: PinBody, user=Depends(get_current_u
                 "session_id": session_id,
             })
         except Exception:
-            pass
+            logger.warning(
+                "Failed to record pin activity for session %s", session_id, exc_info=True,
+            )
         return result
     except DatabaseNotConfigured:
         raise _no_db()

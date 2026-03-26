@@ -13,7 +13,7 @@ from typing import Any
 
 import asyncpg
 
-from ._pool import _acquire
+from ._pool import _acquire, _acquire_team
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +39,15 @@ def _score_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
 async def db_mark_scores_stale(
     campaign_id: str,
     entity_id: str | None = None,
+    *,
+    team_id: str | None = None,
 ) -> int:
     """Set ``score_stale = TRUE`` for affected entity_scores rows.
 
     Args:
         campaign_id: Target campaign UUID.
         entity_id:   Optional single entity to scope the update.
+        team_id:     When provided, enforces RLS via ``SET LOCAL app.current_team_id``.
 
     Returns:
         Number of rows marked stale.
@@ -64,7 +67,7 @@ async def db_mark_scores_stale(
         )
         args = (campaign_id,)
 
-    async with _acquire() as conn:
+    async with _acquire_team(team_id) as conn:
         result = await conn.execute(sql, *args)
     # asyncpg returns e.g. "UPDATE 5"
     return int(result.split()[-1])
@@ -73,6 +76,8 @@ async def db_mark_scores_stale(
 async def db_mark_scores_fresh(
     campaign_id: str,
     entity_id: str | None = None,
+    *,
+    team_id: str | None = None,
 ) -> int:
     """Set ``score_stale = FALSE`` for entities that have backing data.
 
@@ -83,6 +88,7 @@ async def db_mark_scores_fresh(
     Args:
         campaign_id: Target campaign UUID.
         entity_id:   Optional single entity to scope the update.
+        team_id:     When provided, enforces RLS via ``SET LOCAL app.current_team_id``.
 
     Returns:
         Number of rows marked fresh.
@@ -115,7 +121,7 @@ async def db_mark_scores_fresh(
           )
     """
 
-    async with _acquire() as conn:
+    async with _acquire_team(team_id) as conn:
         result = await conn.execute(sql, *args)
     return int(result.split()[-1])
 
@@ -127,6 +133,8 @@ async def db_mark_scores_fresh(
 async def db_recalculate_scores(
     campaign_id: str,
     entity_id: str | None = None,
+    *,
+    team_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Recalculate scores for a campaign in a single atomic transaction.
 
@@ -144,6 +152,7 @@ async def db_recalculate_scores(
     Args:
         campaign_id: Campaign UUID to recalculate.
         entity_id:   Optional entity UUID to limit recalculation scope.
+        team_id:     When provided, enforces RLS via ``SET LOCAL app.current_team_id``.
 
     Returns:
         List of updated score dicts.
@@ -160,7 +169,7 @@ async def db_recalculate_scores(
         stale_where += " AND entity_id = $2::uuid"
 
     try:
-        async with _acquire() as conn:
+        async with _acquire_team(team_id) as conn:
             async with conn.transaction():
                 # Step 1: mark stale (inside the transaction — rolls back on failure)
                 await conn.execute(
@@ -236,6 +245,8 @@ async def db_recalculate_scores(
 async def db_recalculate_scores_from_matrix(
     campaign_id: str,
     entity_id: str | None = None,
+    *,
+    team_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Recalculate scores from matrix cell values in a single atomic transaction.
 
@@ -251,6 +262,9 @@ async def db_recalculate_scores_from_matrix(
 
     All steps execute on one connection within one transaction.
     On failure the entire transaction rolls back — scores remain unchanged.
+
+    Args:
+        team_id: When provided, enforces RLS via ``SET LOCAL app.current_team_id``.
     """
     entity_filter = ""
     args: list[str] = [campaign_id]
@@ -263,7 +277,7 @@ async def db_recalculate_scores_from_matrix(
         stale_where += " AND entity_id = $2::uuid"
 
     try:
-        async with _acquire() as conn:
+        async with _acquire_team(team_id) as conn:
             async with conn.transaction():
                 # Step 1: mark stale (inside the transaction)
                 await conn.execute(

@@ -1259,5 +1259,57 @@ async def init_schema() -> None:
             # (table owner is exempt). This is intentional: admin/system queries
             # need full access, while user-facing team queries get isolation.
 
+            # ── Full-text search: search_vector on entities ───────────────
+            await conn.execute("""
+                ALTER TABLE playbook.entities
+                    ADD COLUMN IF NOT EXISTS search_vector tsvector
+                    GENERATED ALWAYS AS (
+                        to_tsvector('english',
+                            coalesce(label, '') || ' ' ||
+                            coalesce(description, '') || ' ' ||
+                            coalesce(gwm_id, '')
+                        )
+                    ) STORED
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS entities_search_gin_idx
+                    ON entities USING GIN(search_vector)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS entities_label_trgm_idx
+                    ON entities USING GIN(LOWER(label) gin_trgm_ops)
+            """)
+
+            # ── Full-text search: search_vector on attributes ─────────────
+            await conn.execute("""
+                ALTER TABLE playbook.attributes
+                    ADD COLUMN IF NOT EXISTS search_vector tsvector
+                    GENERATED ALWAYS AS (
+                        to_tsvector('english',
+                            coalesce(label, '') || ' ' ||
+                            coalesce(description, '') || ' ' ||
+                            coalesce(category, '')
+                        )
+                    ) STORED
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS attributes_search_gin_idx
+                    ON attributes USING GIN(search_vector)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS attributes_label_trgm_idx
+                    ON attributes USING GIN(LOWER(label) gin_trgm_ops)
+            """)
+
+            # ── Trigram indexes on campaigns.name and programs.name ───────
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS campaigns_name_trgm_idx
+                    ON campaigns USING GIN(LOWER(name) gin_trgm_ops)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS programs_name_trgm_idx
+                    ON programs USING GIN(LOWER(name) gin_trgm_ops)
+            """)
+
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")

@@ -3,10 +3,10 @@ Comments router: CRUD + @mention notification trigger + reply notifications.
 """
 from __future__ import annotations
 
+import logging
 import re
-from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.auth import get_current_user
@@ -25,6 +25,8 @@ from app.db import (
     db_toggle_reaction,
     db_update_comment,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["comments"])
 
@@ -122,7 +124,10 @@ async def create_comment(session_id: str, body: CommentCreate, user=Depends(get_
                         },
                     )
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to send mention notification to %s for comment %s",
+                    mentioned_sid, comment["id"], exc_info=True,
+                )
 
         # Notify parent comment author on reply
         if body.parent_id:
@@ -143,7 +148,10 @@ async def create_comment(session_id: str, body: CommentCreate, user=Depends(get_
                         },
                     )
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to send reply notification for comment %s",
+                    comment["id"], exc_info=True,
+                )
 
         # Notify subscribers (except commenter)
         try:
@@ -166,7 +174,10 @@ async def create_comment(session_id: str, body: CommentCreate, user=Depends(get_
                     },
                 )
         except Exception:
-            pass
+            logger.warning(
+                "Failed to send subscriber notifications for comment %s",
+                comment["id"], exc_info=True,
+            )
 
         return comment
     except DatabaseNotConfigured:
