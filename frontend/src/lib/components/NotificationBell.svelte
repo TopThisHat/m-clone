@@ -103,9 +103,9 @@
 									{/if}
 								</p>
 								{#if notif.payload.body_preview}
-									<p class="text-[11px] text-slate-500 truncate mt-0.5">"{notif.payload.body_preview as string}"</p>
+									<p class="text-xs text-slate-500 truncate mt-0.5">"{notif.payload.body_preview as string}"</p>
 								{/if}
-								<p class="text-[10px] text-slate-700 mt-1">
+								<p class="text-xs text-slate-700 mt-1">
 									{new Date(notif.created_at).toLocaleString()}
 								</p>
 							</div>

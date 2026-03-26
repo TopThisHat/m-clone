@@ -166,7 +166,7 @@ async def publish_for_extraction(
             fields["team_id"] = team_id
         if is_document:
             fields["is_document"] = "true"
-        await r.xadd(STREAM_ENTITY_EXTRACTION, fields)
+        await r.xadd(STREAM_ENTITY_EXTRACTION, fields, maxlen=1000, approximate=True)
         logger.debug("Published extraction task for session_id=%s", session_id)
     except Exception as exc:
         logger.warning("Failed to publish extraction task for session_id=%s: %s", session_id, exc)

@@ -130,10 +130,10 @@
 			{#if !hasChanges}
 				<span class="text-xs text-slate-600">No changes detected</span>
 			{:else}
-				<span class="text-[10px] text-green-400">
+				<span class="text-xs text-green-400">
 					+{diff.filter((t) => t.type === 'add').length} tokens added
 				</span>
-				<span class="text-[10px] text-red-400">
+				<span class="text-xs text-red-400">
 					−{diff.filter((t) => t.type === 'remove').length} tokens removed
 				</span>
 			{/if}
@@ -147,14 +147,14 @@
 		{:else if mode === 'side'}
 			<div class="grid grid-cols-2 divide-x divide-navy-700 max-h-[50vh] sm:max-h-[60vh] lg:max-h-[70vh] overflow-y-auto">
 				<div class="px-4 py-3">
-					<p class="text-[10px] text-slate-600 uppercase tracking-wide mb-2">Previous</p>
+					<p class="text-xs text-slate-600 uppercase tracking-wide mb-2">Previous</p>
 					<div class="font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
 						<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 						{@html leftHtml}
 					</div>
 				</div>
 				<div class="px-4 py-3">
-					<p class="text-[10px] text-slate-600 uppercase tracking-wide mb-2">Current</p>
+					<p class="text-xs text-slate-600 uppercase tracking-wide mb-2">Current</p>
 					<div class="font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
 						<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 						{@html rightHtml}

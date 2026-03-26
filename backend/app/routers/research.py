@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from datetime import datetime, timezone
 
@@ -116,7 +115,7 @@ async def _run_async_job(
     include_master: bool = False,
 ):
     """Background task: run research and POST results to webhook."""
-    from app.db import db_update_job, DatabaseNotConfigured
+    from app.db import db_update_job
 
     try:
         await db_update_job(job_id, {"status": "running"})

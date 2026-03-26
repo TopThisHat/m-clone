@@ -64,6 +64,9 @@ def extract_pdf(contents: bytes) -> str:
 
 def extract_docx(contents: bytes) -> str:
     """Extract text and tables from a DOCX document."""
+    if len(contents) > _MAX_FILE_SIZE:
+        raise ValueError(f"DOCX too large ({len(contents) // 1024 // 1024} MB). Maximum is {_MAX_FILE_SIZE // 1024 // 1024} MB.")
+
     import docx
 
     doc = docx.Document(io.BytesIO(contents))
@@ -128,6 +131,9 @@ def extract_excel(contents: bytes, filename: str = "") -> str:
 
 def extract_csv(contents: bytes, filename: str = "") -> str:
     """Extract a CSV/TSV file as a markdown table."""
+    if len(contents) > _MAX_FILE_SIZE:
+        raise ValueError(f"CSV too large ({len(contents) // 1024 // 1024} MB). Maximum is {_MAX_FILE_SIZE // 1024 // 1024} MB.")
+
     text = contents.decode("utf-8", errors="replace")
 
     # Detect delimiter

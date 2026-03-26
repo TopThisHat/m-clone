@@ -776,7 +776,7 @@
 					{@const w = getColWidth(attr.id)}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<th
-						class="group relative px-1 py-2 text-slate-400 font-medium text-center whitespace-nowrap overflow-hidden text-ellipsis border-b border-navy-700 select-none {dragOverAttrId === attr.id && draggingAttrId !== attr.id ? 'border-l-2 border-l-gold' : ''} {draggingAttrId === attr.id ? 'opacity-40' : ''}"
+						class="group relative px-1 py-2 text-slate-400 font-medium text-center whitespace-nowrap overflow-hidden text-ellipsis border-b border-navy-700 select-none cursor-grab {dragOverAttrId === attr.id && draggingAttrId !== attr.id ? 'border-l-2 border-l-gold' : ''} {draggingAttrId === attr.id ? 'opacity-40' : ''}"
 						style="width: {w}px; min-width: {w}px"
 						title="{attr.label} (weight: {attr.weight})"
 						role="columnheader"
@@ -790,7 +790,7 @@
 					>
 						<span class="block truncate text-xs pr-2 pl-4 cursor-grab">{attr.label}</span>
 						<!-- Drag grip icon -->
-						<span class="absolute left-0.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs opacity-50 group-hover:opacity-100 pointer-events-none" aria-hidden="true">⠿</span>
+						<span class="absolute left-0.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs opacity-40 group-hover:opacity-100 pointer-events-none" aria-hidden="true">⠿</span>
 						<!-- Resize handle (keyboard: Left/Right arrow keys) -->
 						<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 						<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->

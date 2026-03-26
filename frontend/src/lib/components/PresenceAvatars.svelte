@@ -42,7 +42,7 @@
 					{/if}
 				</div>
 				<!-- Tooltip -->
-				<div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-1.5 py-0.5 bg-navy-900 border border-navy-700 rounded text-[10px] text-slate-300 whitespace-nowrap z-30 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+				<div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-1.5 py-0.5 bg-navy-900 border border-navy-700 rounded text-xs text-slate-300 whitespace-nowrap z-30 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
 					{viewer.display_name}{viewer.user_sid === currentSid ? ' (you)' : ''}
 				</div>
 			</div>
@@ -52,6 +52,6 @@
 				+{overflow}
 			</div>
 		{/if}
-		<span class="text-[10px] text-slate-600 ml-0.5">viewing</span>
+		<span class="text-xs text-slate-600 ml-0.5">viewing</span>
 	</div>
 {/if}

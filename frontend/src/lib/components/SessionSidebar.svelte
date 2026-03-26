@@ -153,7 +153,7 @@
 		>
 			<span class="text-base leading-none">+</span>
 			<span>New Research</span>
-			<span class="ml-auto text-[10px] text-slate-700">⌘⇧N</span>
+			<span class="ml-auto text-xs text-slate-700">⌘⇧N</span>
 		</button>
 	</div>
 
@@ -207,7 +207,7 @@
 					</span>
 				{/if}
 
-				<span class="text-[10px] text-slate-600 flex items-center gap-1">
+				<span class="text-xs text-slate-600 flex items-center gap-1">
 					{relativeTime(session.updated_at)}
 					{#if session.doc_session_key}
 						<svg class="w-3 h-3 text-slate-500 inline-block" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -229,7 +229,7 @@
 		{/each}
 
 		{#if $sessionList.length === 0}
-			<p class="text-[11px] text-slate-700 px-3 pt-4 text-center leading-relaxed">
+			<p class="text-xs text-slate-700 px-3 pt-4 text-center leading-relaxed">
 				{searchQuery ? 'No matching sessions.' : 'No saved sessions yet.\nSubmit a query to begin.'}
 			</p>
 		{/if}

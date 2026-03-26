@@ -19,7 +19,7 @@ async def extract_memories(session_id: str, query: str, report: str) -> None:
     but not raised.
     """
     try:
-        from app.db import get_pool, DatabaseNotConfigured
+        from app.db import get_pool
         pool = await get_pool()
     except Exception:
         return  # DB not configured or unavailable
@@ -113,7 +113,7 @@ async def retrieve_memories(query: str, limit: int = 5) -> str:
     Returns a formatted context string or "" if none found / DB not configured.
     """
     try:
-        from app.db import get_pool, DatabaseNotConfigured
+        from app.db import get_pool
         pool = await get_pool()
     except Exception:
         return ""

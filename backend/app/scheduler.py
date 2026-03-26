@@ -129,23 +129,21 @@ async def _loop() -> None:
                     continue
 
                 try:
-                    due = await db_get_due_monitors()
-                except (DatabaseNotConfigured, Exception) as exc:
-                    logger.debug("Scheduler poll skipped: %s", exc)
+                    try:
+                        due = await db_get_due_monitors()
+                    except (DatabaseNotConfigured, Exception) as exc:
+                        logger.debug("Scheduler poll skipped: %s", exc)
+                        continue
+
+                    try:
+                        due_campaigns = await db_get_due_campaigns()
+                    except Exception as exc:
+                        logger.debug("Campaign scheduler poll skipped: %s", exc)
+                        due_campaigns = []
+                finally:
                     await conn.execute(
                         "SELECT pg_advisory_unlock($1)", _SCHEDULER_LOCK_KEY
                     )
-                    continue
-
-                try:
-                    due_campaigns = await db_get_due_campaigns()
-                except Exception as exc:
-                    logger.debug("Campaign scheduler poll skipped: %s", exc)
-                    due_campaigns = []
-
-                await conn.execute(
-                    "SELECT pg_advisory_unlock($1)", _SCHEDULER_LOCK_KEY
-                )
 
         except Exception as exc:
             logger.debug("Scheduler poll skipped: %s", exc)

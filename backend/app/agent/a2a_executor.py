@@ -4,7 +4,6 @@ A2A AgentExecutor — bridges the ResearchOrchestrator into Google's A2A protoco
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -23,9 +22,8 @@ from app.agent.agent import (
     ResearchOrchestrator,
     TextDelta,
     ToolCallStart,
-    ToolResult,
 )
-from app.dependencies import AgentDeps, get_agent_deps
+from app.dependencies import get_agent_deps
 
 logger = logging.getLogger(__name__)
 

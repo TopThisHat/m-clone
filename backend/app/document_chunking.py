@@ -123,7 +123,7 @@ def chunk_file(
     result: list[ChunkDict] = []
 
     if resolved_type == "pdf":
-        rc = RecursiveChunker(tokenizer="character", chunk_size=512)
+        rc = RecursiveChunker(tokenizer="character", chunk_size=2000)
         pages = split_by_pages(text) if has_page_markers(text) else [(1, text)]
         for page_num, page_text in pages:
             chunks = _chunk_text(page_text, rc)
@@ -160,7 +160,7 @@ def chunk_file(
                 })
 
     else:
-        rc = RecursiveChunker(tokenizer="character", chunk_size=512)
+        rc = RecursiveChunker(tokenizer="character", chunk_size=2000)
         chunks = _chunk_text(text, rc)
         for idx, chunk_text in enumerate(chunks):
             result.append({

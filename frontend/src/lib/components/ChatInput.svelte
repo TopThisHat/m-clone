@@ -187,7 +187,7 @@
 						</span>
 					{:else}
 						<span
-							class="text-[10px] font-medium px-1 py-0.5 rounded
+							class="text-xs font-medium px-1 py-0.5 rounded
 							       {doc.status === 'error' ? 'bg-red-900/40 text-red-400' : 'bg-navy-600 text-gold'}"
 						>
 							{getTypeLabel(doc.filename)}
@@ -197,11 +197,11 @@
 					{#if doc.status === 'success'}
 						{@const meta = getMetaLabel(doc)}
 						{#if meta}
-							<span class="text-[10px] text-slate-500">{meta}</span>
+							<span class="text-xs text-slate-500">{meta}</span>
 						{/if}
 					{/if}
 					{#if doc.status === 'error'}
-						<span class="text-[10px] text-red-400 truncate max-w-[100px]">{doc.error}</span>
+						<span class="text-xs text-red-400 truncate max-w-[100px]">{doc.error}</span>
 					{/if}
 					{#if doc.status !== 'uploading'}
 						<button

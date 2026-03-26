@@ -96,27 +96,27 @@
 						{#if step.args}
 							{@const firstArg = Object.values(step.args)[0]}
 							{#if firstArg}
-								<p class="text-slate-500 font-mono truncate text-[10px]">
+								<p class="text-slate-500 font-mono truncate text-xs">
 									{String(firstArg).slice(0, 40)}
 								</p>
 							{/if}
 						{/if}
 						{#if duration(step, steps)}
-							<p class="text-slate-600 text-[10px] mt-0.5">{duration(step, steps)}</p>
+							<p class="text-slate-600 text-xs mt-0.5">{duration(step, steps)}</p>
 						{/if}
 					</div>
 				{/each}
 
 				{#if laneSteps.length === 0}
 					<div class="flex-1 flex items-center justify-center">
-						<span class="text-slate-700 text-[10px]">—</span>
+						<span class="text-slate-700 text-xs">—</span>
 					</div>
 				{/if}
 			</div>
 
 			<!-- Lane total -->
 			{#if laneSteps.length > 0}
-				<div class="text-[10px] text-slate-600 text-center">
+				<div class="text-xs text-slate-600 text-center">
 					{laneSteps.filter((s) => s.status === 'done').length}/{laneSteps.length} done
 				</div>
 			{/if}

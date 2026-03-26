@@ -40,6 +40,53 @@ export interface CampaignUpdate {
 	is_active?: boolean;
 }
 
+// ── Comparison types ─────────────────────────────────────────────────────────
+
+export interface ComparisonEntityInfo {
+	id: string;
+	label: string;
+	gwm_id: string | null;
+	total_score: number | null;
+	attributes_present: number | null;
+	attributes_checked: number | null;
+}
+
+export interface ComparisonEntityValue {
+	present: boolean;
+	confidence: number | null;
+	evidence: string | null;
+}
+
+export interface ComparisonAttributeRow {
+	attribute_id: string;
+	label: string;
+	description: string | null;
+	weight: number;
+	attribute_type: string;
+	category: string | null;
+	entity_values: Record<string, ComparisonEntityValue | null>;
+	best_entity_ids: string[];
+	worst_entity_ids: string[];
+}
+
+export interface ComparisonSummary {
+	entity_count: number;
+	attribute_count: number;
+}
+
+export interface ComparisonHighlights {
+	best_score_entity_ids: string[];
+	worst_score_entity_ids: string[];
+}
+
+export interface ComparisonOut {
+	campaign_id: string;
+	entities: ComparisonEntityInfo[];
+	attributes: ComparisonAttributeRow[];
+	summary: ComparisonSummary;
+	highlights: ComparisonHighlights;
+}
+
 export const campaignsApi = {
 	list: (teamId?: string | null): Promise<Campaign[]> => {
 		const qs = teamId ? `?team_id=${encodeURIComponent(teamId)}` : '';
@@ -72,4 +119,11 @@ export const campaignsApi = {
 		const qs = teamId ? `?team_id=${encodeURIComponent(teamId)}` : '';
 		return apiFetch(`/api/campaigns/stats${qs}`);
 	},
+
+	compare: (campaignId: string, entityIds: string[]): Promise<ComparisonOut> =>
+		apiFetch(`/api/campaigns/${campaignId}/compare`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ entity_ids: entityIds }),
+		}),
 };
