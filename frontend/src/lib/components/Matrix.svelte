@@ -2,6 +2,7 @@
 	import type { Entity } from '$lib/api/entities';
 	import type { Attribute } from '$lib/api/attributes';
 	import type { Result, Knowledge, Score } from '$lib/api/jobs';
+	import { OptimisticStore } from '$lib/utils/optimistic.svelte';
 
 	let {
 		entities,
@@ -13,15 +14,24 @@
 		selectable = false,
 		selectedEntityIds = new Set<string>(),
 		scores = [],
+		pendingScores = {},
 		oncellclick,
 		onselectionchange,
 		oncompare,
+		onentitylabelsave,
 	}: {
 		entities: Entity[];
 		attributes: Attribute[];
 		results: Result[];
 		knowledge?: Knowledge[];
 		scores?: Score[];
+		/**
+		 * Client-side optimistic scores (entityId → 0–1 value).
+		 * When provided for an entity, shown instead of the server score with a
+		 * stale indicator until the server score refreshes.
+		 * Computed by callers via computeClientScore() from $lib/utils/score.
+		 */
+		pendingScores?: Record<string, number>;
 		campaignId?: string;
 		minConfidence?: number;
 		selectable?: boolean;
@@ -29,7 +39,23 @@
 		oncellclick?: (result: Result) => void;
 		onselectionchange?: (ids: Set<string>) => void;
 		oncompare?: (ids: string[]) => void;
+		/** Called when user saves an entity label edit. Return the confirmed label. */
+		onentitylabelsave?: (entityId: string, label: string) => Promise<string>;
 	} = $props();
+
+	// ── Optimistic entity label edits ────────────────────────────────────
+	const labelStore = new OptimisticStore<string, string>();
+	let editingEntityId = $state<string | null>(null);
+	let editDraft = $state('');
+	let editInputEl = $state<HTMLInputElement | null>(null);
+
+	// Auto-focus the inline input whenever we enter edit mode
+	$effect(() => {
+		if (editingEntityId && editInputEl) {
+			editInputEl.focus();
+			editInputEl.select();
+		}
+	});
 
 	// ── Layout constants ──────────────────────────────────────────────────
 	const DEFAULT_COL_WIDTH = 120;
@@ -42,6 +68,7 @@
 	const ROW_OVERSCAN = 5;
 	const COL_OVERSCAN = 3;
 	const STORAGE_KEY_PREFIX = 'matrix-col-widths-';
+	const STORAGE_ORDER_KEY_PREFIX = 'matrix-col-order-';
 
 	// ── Scroll state ──────────────────────────────────────────────────────
 	let scrollContainer: HTMLDivElement | undefined = $state();
@@ -82,6 +109,72 @@
 		return 'bg-red-500/15 text-red-400';
 	}
 
+	// ── Column order (drag-and-drop, persisted to localStorage) ─────────
+	let colOrder = $state<string[]>([]);
+	$effect(() => {
+		if (!campaignId) return;
+		const stored = localStorage.getItem(STORAGE_ORDER_KEY_PREFIX + campaignId);
+		if (stored) {
+			try { colOrder = JSON.parse(stored); } catch { colOrder = []; }
+		} else {
+			colOrder = [];
+		}
+	});
+	let orderedAttributes = $derived.by(() => {
+		if (colOrder.length === 0) return attributes;
+		const orderMap = new Map(colOrder.map((id, i) => [id, i]));
+		return [...attributes].sort((a, b) => {
+			const ia = orderMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+			const ib = orderMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+			return ia - ib;
+		});
+	});
+
+	// drag state
+	let draggingAttrId = $state<string | null>(null);
+	let dragOverAttrId = $state<string | null>(null);
+
+	function startColDrag(e: DragEvent, attrId: string) {
+		draggingAttrId = attrId;
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', attrId);
+		}
+	}
+
+	function onColDragOver(e: DragEvent, attrId: string) {
+		if (!draggingAttrId || draggingAttrId === attrId) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+		dragOverAttrId = attrId;
+	}
+
+	function onColDrop(e: DragEvent, targetAttrId: string) {
+		e.preventDefault();
+		if (!draggingAttrId || draggingAttrId === targetAttrId) {
+			draggingAttrId = null;
+			dragOverAttrId = null;
+			return;
+		}
+		const ordered = [...orderedAttributes];
+		const fromIdx = ordered.findIndex((a) => a.id === draggingAttrId);
+		const toIdx = ordered.findIndex((a) => a.id === targetAttrId);
+		if (fromIdx < 0 || toIdx < 0) { draggingAttrId = null; dragOverAttrId = null; return; }
+		ordered.splice(toIdx, 0, ordered.splice(fromIdx, 1)[0]);
+		const newOrder = ordered.map((a) => a.id);
+		colOrder = newOrder;
+		if (campaignId) {
+			localStorage.setItem(STORAGE_ORDER_KEY_PREFIX + campaignId, JSON.stringify(newOrder));
+		}
+		draggingAttrId = null;
+		dragOverAttrId = null;
+	}
+
+	function onColDragEnd() {
+		draggingAttrId = null;
+		dragOverAttrId = null;
+	}
+
 	// ── Column widths (resizable, persisted to localStorage) ─────────────
 	let colWidths = $state<Record<string, number>>({});
 
@@ -103,7 +196,7 @@
 	// Prefix sum of column offsets: colOffsets[i] = sum of widths of cols 0..i-1
 	let colOffsets = $derived.by(() => {
 		const offsets = [0];
-		for (const attr of attributes) {
+		for (const attr of orderedAttributes) {
 			offsets.push(offsets[offsets.length - 1] + getColWidth(attr.id));
 		}
 		return offsets;
@@ -115,7 +208,7 @@
 	function findColAtOffset(offset: number): number {
 		const offs = colOffsets;
 		let lo = 0;
-		let hi = attributes.length;
+		let hi = orderedAttributes.length;
 		while (lo < hi) {
 			const mid = (lo + hi) >>> 1;
 			if (offs[mid + 1] <= offset) lo = mid + 1;
@@ -160,7 +253,7 @@
 		const total = entities.length;
 		if (total === 0) return new Map<string, number>();
 		const counts = new Map<string, number>();
-		for (const attr of attributes) counts.set(attr.id, 0);
+		for (const attr of orderedAttributes) counts.set(attr.id, 0);
 		for (const r of results) {
 			const prev = counts.get(r.attribute_id);
 			if (prev !== undefined) counts.set(r.attribute_id, prev + 1);
@@ -196,15 +289,15 @@
 	});
 	let endCol = $derived.by(() => {
 		const offset = Math.max(0, scrollLeft + viewportWidth - fixedColsWidth);
-		return Math.min(attributes.length, findColAtOffset(offset) + 1 + COL_OVERSCAN);
+		return Math.min(orderedAttributes.length, findColAtOffset(offset) + 1 + COL_OVERSCAN);
 	});
-	let visibleAttributes = $derived(attributes.slice(startCol, endCol));
+	let visibleAttributes = $derived(orderedAttributes.slice(startCol, endCol));
 
 	// ── Padding for off-screen rows/columns ───────────────────────────────
 	let topPadding = $derived(startRow * ROW_HEIGHT);
 	let bottomPadding = $derived(Math.max(0, (entities.length - endRow) * ROW_HEIGHT));
 	let leftColPadding = $derived(colOffsets[startCol] ?? 0);
-	let rightColPadding = $derived(Math.max(0, (colOffsets[attributes.length] ?? 0) - (colOffsets[endCol] ?? 0)));
+	let rightColPadding = $derived(Math.max(0, (colOffsets[orderedAttributes.length] ?? 0) - (colOffsets[endCol] ?? 0)));
 
 	// ── Scroll indicators for frozen pane shadows ────────────────────────
 	let isScrolledDown = $derived(scrollTop > 0);
@@ -216,7 +309,7 @@
 		1 +
 		(startCol > 0 ? 1 : 0) +
 		visibleAttributes.length +
-		(endCol < attributes.length ? 1 : 0) +
+		(endCol < orderedAttributes.length ? 1 : 0) +
 		(hasScores ? 1 : 0)
 	);
 
@@ -274,6 +367,54 @@
 		if (result && oncellclick) oncellclick(result);
 	}
 
+	// ── Entity label inline editing ───────────────────────────────────────
+	function startEntityEdit(entity: Entity) {
+		if (!onentitylabelsave) return;
+		editingEntityId = entity.id;
+		editDraft = labelStore.get(entity.id, entity.label) || entity.label;
+	}
+
+	function cancelEntityEdit() {
+		editingEntityId = null;
+		editDraft = '';
+	}
+
+	async function commitEntityEdit(entity: Entity) {
+		if (!onentitylabelsave || !editingEntityId) return;
+		const trimmed = editDraft.trim();
+		editingEntityId = null;
+		editDraft = '';
+		if (!trimmed || trimmed === labelStore.get(entity.id, entity.label)) return;
+		await labelStore.update(entity.id, trimmed, () =>
+			onentitylabelsave!(entity.id, trimmed)
+		);
+	}
+
+	function handleEntityKeydown(e: KeyboardEvent, entity: Entity) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			commitEntityEdit(entity);
+			// Return keyboard focus to the grid container
+			scrollContainer?.focus();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			cancelEntityEdit();
+			scrollContainer?.focus();
+		} else if (e.key === 'Tab') {
+			e.preventDefault();
+			commitEntityEdit(entity);
+			// Advance to next/prev row (Shift+Tab = prev)
+			const maxRow = entities.length - 1;
+			if (e.shiftKey) {
+				focusRow = Math.max(focusRow - 1, 0);
+			} else {
+				focusRow = Math.min(focusRow + 1, maxRow);
+			}
+			scrollToCell(focusRow, focusCol);
+			scrollContainer?.focus();
+		}
+	}
+
 	// ── Scroll handling (rAF-throttled) ───────────────────────────────────
 	function handleScroll() {
 		if (rafId) return;
@@ -305,8 +446,11 @@
 
 	// ── Keyboard navigation ───────────────────────────────────────────────
 	function handleKeydown(e: KeyboardEvent) {
+		// If we're in inline edit mode, delegate to the input handler
+		if (editingEntityId) return;
+
 		const maxRow = entities.length - 1;
-		const maxCol = attributes.length - 1;
+		const maxCol = orderedAttributes.length - 1;
 		if (maxRow < 0 || maxCol < 0) return;
 
 		switch (e.key) {
@@ -330,16 +474,50 @@
 				focusCol = Math.max(focusCol - 1, 0);
 				scrollToCell(focusRow, focusCol);
 				break;
+			case 'Tab': {
+				// Tab navigates columns; Shift+Tab goes backwards.
+				// When hitting an edge, wrap to next/prev row.
+				e.preventDefault();
+				if (e.shiftKey) {
+					if (focusCol > 0) {
+						focusCol--;
+					} else if (focusRow > 0) {
+						focusRow--;
+						focusCol = maxCol;
+					}
+				} else {
+					if (focusCol < maxCol) {
+						focusCol++;
+					} else if (focusRow < maxRow) {
+						focusRow++;
+						focusCol = 0;
+					}
+				}
+				scrollToCell(focusRow, focusCol);
+				break;
+			}
 			case 'Enter':
 			case ' ': {
 				e.preventDefault();
 				const entity = entities[focusRow];
-				const attr = attributes[focusCol];
+				const attr = orderedAttributes[focusCol];
 				if (entity && attr) {
 					handleClick(getCell(entity.id, attr.id));
 				}
 				break;
 			}
+			case 'F2': {
+				// F2 = enter edit mode for entity label (standard spreadsheet shortcut)
+				e.preventDefault();
+				const entity = entities[focusRow];
+				if (entity) startEntityEdit(entity);
+				break;
+			}
+			case 'Escape':
+				// Escape blurs the grid entirely when not editing
+				e.preventDefault();
+				scrollContainer?.blur();
+				break;
 			case 'Home':
 				e.preventDefault();
 				if (e.ctrlKey) {
@@ -368,7 +546,7 @@
 		const cellTop = row * ROW_HEIGHT;
 		const cellLeft = fixedColsWidth + (colOffsets[col] ?? 0);
 		const cellBottom = cellTop + ROW_HEIGHT;
-		const cellRight = cellLeft + getColWidth(attributes[col]?.id ?? '');
+		const cellRight = cellLeft + getColWidth(orderedAttributes[col]?.id ?? '');
 
 		if (cellTop < scrollContainer.scrollTop + HEADER_HEIGHT) {
 			scrollContainer.scrollTop = cellTop;
@@ -434,7 +612,7 @@
 	<div class="flex items-center gap-2 mb-1 px-1 text-xs text-slate-500">
 		<span>{entities.length.toLocaleString()} rows</span>
 		<span class="text-navy-600">&times;</span>
-		<span>{attributes.length} columns</span>
+		<span>{orderedAttributes.length} columns</span>
 	</div>
 {/if}
 
@@ -444,9 +622,9 @@
 	class="overflow-auto max-h-[70vh] {resizingCol ? 'cursor-col-resize select-none' : ''}"
 	onscroll={handleScroll}
 	role="grid"
-	aria-label="Attribute validation matrix"
+	aria-label="Attribute validation matrix — Arrow keys navigate, Enter/Space to view, Tab moves columns, F2 to edit label, Escape to exit"
 	aria-rowcount={entities.length + 1}
-	aria-colcount={attributes.length + (selectable ? 2 : 1)}
+	aria-colcount={orderedAttributes.length + (selectable ? 2 : 1)}
 	tabindex="0"
 	onkeydown={handleKeydown}
 >
@@ -485,15 +663,23 @@
 				{/if}
 				{#each visibleAttributes as attr, ci (attr.id)}
 					{@const w = getColWidth(attr.id)}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<th
-						class="relative px-1 py-2 text-slate-400 font-medium text-center whitespace-nowrap overflow-hidden text-ellipsis border-b border-navy-700 select-none"
+						class="relative px-1 py-2 text-slate-400 font-medium text-center whitespace-nowrap overflow-hidden text-ellipsis border-b border-navy-700 select-none {dragOverAttrId === attr.id && draggingAttrId !== attr.id ? 'border-l-2 border-l-gold' : ''} {draggingAttrId === attr.id ? 'opacity-40' : ''}"
 						style="width: {w}px; min-width: {w}px"
 						title="{attr.label} (weight: {attr.weight})"
 						role="columnheader"
 						scope="col"
 						aria-colindex={startCol + ci + 2}
+						draggable="true"
+						ondragstart={(e) => startColDrag(e, attr.id)}
+						ondragover={(e) => onColDragOver(e, attr.id)}
+						ondrop={(e) => onColDrop(e, attr.id)}
+						ondragend={onColDragEnd}
 					>
-						<span class="block truncate text-xs pr-2">{attr.label}</span>
+						<span class="block truncate text-xs pr-2 pl-4 cursor-grab">{attr.label}</span>
+						<!-- Drag grip icon -->
+						<span class="absolute left-0.5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400 text-[10px] opacity-0 group-hover:opacity-100 pointer-events-none" aria-hidden="true">⠿</span>
 						<!-- Resize handle -->
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
 						<div
@@ -534,6 +720,10 @@
 			{#each visibleEntities as entity, vi (entity.id)}
 				{@const rowIdx = startRow + vi}
 				{@const isChecked = selectedEntityIds.has(entity.id)}
+				{@const effectiveLabel = labelStore.get(entity.id, entity.label) || entity.label}
+				{@const isSavingLabel = labelStore.isSaving(entity.id)}
+				{@const labelError = labelStore.errorOf(entity.id)}
+				{@const labelConflict = labelStore.isConflicted(entity.id)}
 				<tr
 					class="border-t border-navy-700 hover:bg-navy-800
 						{focusRow === rowIdx ? 'ring-1 ring-gold/30 ring-inset' : ''}
@@ -568,15 +758,43 @@
 
 					<!-- Entity label column (sticky left, frozen pane) -->
 					<td
-						class="px-3 py-2 text-slate-300 sticky bg-navy-900 font-medium z-10 truncate transition-shadow
-							{isScrolledRight ? 'shadow-[2px_0_6px_-1px_rgba(0,0,0,0.4)] border-r-2 border-r-navy-600' : 'border-r border-r-navy-700'}"
+						class="px-3 py-2 text-slate-300 sticky bg-navy-900 font-medium z-10 transition-shadow overflow-hidden
+							{isScrolledRight ? 'shadow-[2px_0_6px_-1px_rgba(0,0,0,0.4)] border-r-2 border-r-navy-600' : 'border-r border-r-navy-700'}
+							{labelConflict ? 'conflict-flash' : ''}"
 						style="left: {selectable ? CHECKBOX_COL_WIDTH : 0}px; width: {ENTITY_COL_WIDTH}px; min-width: {ENTITY_COL_WIDTH}px; max-width: {ENTITY_COL_WIDTH}px"
 						role="rowheader"
-						title={entity.label || entity.gwm_id || entity.id}
+						title={labelError ?? (effectiveLabel + (entity.gwm_id ? ` (${entity.gwm_id})` : ''))}
 					>
-						{entity.label || entity.gwm_id || entity.id}
-						{#if entity.gwm_id && entity.label}
-							<span class="text-slate-500 text-xs font-mono ml-1">{entity.gwm_id}</span>
+						{#if editingEntityId === entity.id}
+							<input
+								bind:this={editInputEl}
+								class="w-full bg-navy-700 border border-gold rounded px-1 py-0.5 text-sm text-slate-100 focus:outline-none focus:border-gold-light"
+								bind:value={editDraft}
+								onblur={() => commitEntityEdit(entity)}
+								onkeydown={(e) => handleEntityKeydown(e, entity)}
+								aria-label="Edit entity label — Enter to save, Escape to cancel, Tab to move"
+								maxlength={200}
+							/>
+						{:else}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<span
+								class="flex items-center gap-1 min-h-[1em] {onentitylabelsave ? 'cursor-pointer group' : 'cursor-default'}"
+								ondblclick={() => startEntityEdit(entity)}
+							>
+								<span class="truncate {isSavingLabel ? 'opacity-50' : ''} {labelError ? 'text-red-400' : ''}">
+									{effectiveLabel}
+								</span>
+								{#if isSavingLabel}
+									<span class="shrink-0 w-3 h-3 rounded-full border-2 border-gold border-t-transparent animate-spin" aria-hidden="true"></span>
+								{:else if labelError}
+									<span class="shrink-0 text-red-400 text-xs" title={labelError} aria-label="Save failed: {labelError}">!</span>
+								{:else if onentitylabelsave}
+									<span class="shrink-0 opacity-0 group-hover:opacity-40 text-slate-500 text-xs leading-none" aria-hidden="true">✎</span>
+								{/if}
+							</span>
+							{#if entity.gwm_id && entity.label}
+								<span class="text-slate-500 text-xs font-mono ml-1">{entity.gwm_id}</span>
+							{/if}
 						{/if}
 					</td>
 
@@ -626,15 +844,23 @@
 					<!-- Score column (sticky right) -->
 					{#if hasScores}
 						{@const entityScore = scoreMap.get(entity.id)}
+						{@const optimisticScore = pendingScores[entity.id]}
+						{@const displayScore = optimisticScore ?? entityScore?.total_score}
 						<td
 							class="px-2 py-2 text-center sticky right-0 bg-navy-900 z-10 border-l border-l-navy-600 shadow-[-2px_0_6px_-1px_rgba(0,0,0,0.4)]"
 							style="width: {SCORE_COL_WIDTH}px; min-width: {SCORE_COL_WIDTH}px"
 						>
-							{#if entityScore}
-								<div class="inline-flex items-center gap-1 px-2 py-1 rounded {scoreGradient(entityScore.total_score)}">
+							{#if displayScore != null}
+								<div
+									class="inline-flex items-center gap-1 px-2 py-1 rounded {scoreGradient(displayScore)}"
+									title={optimisticScore != null ? 'Score pending server confirmation' : undefined}
+								>
 									<span class="font-mono font-semibold text-xs tabular-nums">
-										{entityScore.total_score.toFixed(2)}
+										{displayScore.toFixed(2)}
 									</span>
+									{#if optimisticScore != null}
+										<span class="opacity-50 text-[10px] leading-none" aria-label="Pending" aria-live="polite">~</span>
+									{/if}
 								</div>
 							{:else}
 								<span class="text-slate-600 text-xs">&mdash;</span>

@@ -69,6 +69,25 @@
 	}
 }
 
+/* ── Animations ───────────────────────────────────────────────────────────── */
+
+/**
+ * conflict-flash-bg: yellow pulse played when an optimistic save returns a
+ * value that differs from what the user typed (server normalised the input).
+ * Used by OptimisticStore.isConflicted() via the .conflict-flash class.
+ */
+@keyframes conflict-flash-bg {
+	0%   { background-color: transparent; }
+	20%  { background-color: rgb(161 98 7 / 0.5); }  /* amber-700/50 */
+	50%  { background-color: rgb(234 179 8 / 0.35); } /* yellow-500/35 */
+	80%  { background-color: rgb(161 98 7 / 0.5); }
+	100% { background-color: transparent; }
+}
+
+@utility conflict-flash {
+	animation: conflict-flash-bg 0.6s ease-in-out 3;
+}
+
 /* ── Component utilities ──────────────────────────────────────────────────── */
 @utility gold-divider {
 	border-top: 1px solid color-mix(in srgb, var(--color-gold) 20%, transparent);

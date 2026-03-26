@@ -3,6 +3,7 @@
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
+	import TeamSwitcher from '$lib/components/TeamSwitcher.svelte';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -47,36 +48,8 @@
 			{/each}
 		</nav>
 
-		<!-- Team picker -->
-		{#if data.teams.length > 0}
-			<div class="flex items-center gap-2">
-				<span id="team-picker-label" class="text-xs text-slate-500 uppercase tracking-wide">Team</span>
-				<div role="group" aria-labelledby="team-picker-label" class="flex items-center gap-1.5 flex-wrap">
-					<button
-						onclick={() => scoutTeam.select(null)}
-						aria-pressed={$scoutTeam === null}
-						class="text-xs px-3 py-1 rounded-full border transition-colors
-							{$scoutTeam === null
-								? 'bg-gold text-navy border-gold font-semibold'
-								: 'border-navy-600 text-slate-400 hover:border-navy-500 hover:text-slate-300'}"
-					>
-						Personal
-					</button>
-					{#each data.teams as team (team.id)}
-						<button
-							onclick={() => scoutTeam.select(team.id)}
-							aria-pressed={$scoutTeam === team.id}
-							class="text-xs px-3 py-1 rounded-full border transition-colors
-								{$scoutTeam === team.id
-									? 'bg-gold text-navy border-gold font-semibold'
-									: 'border-navy-600 text-slate-400 hover:border-navy-500 hover:text-slate-300'}"
-						>
-							{team.display_name}
-						</button>
-					{/each}
-				</div>
-			</div>
-		{/if}
+		<!-- Team switcher -->
+		<TeamSwitcher teams={data.teams} />
 	</div>
 
 	{@render children()}
