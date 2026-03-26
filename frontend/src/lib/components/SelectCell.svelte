@@ -26,6 +26,7 @@
 	let highlightIndex = $state(0);
 	let dropdown: HTMLDivElement | undefined = $state();
 	let searchInput: HTMLInputElement | undefined = $state();
+	let triggerButton: HTMLButtonElement | undefined = $state();
 
 	let selectedOption = $derived(
 		options.find((o) => o.value === value) ?? null
@@ -63,6 +64,7 @@
 	function closeDropdown() {
 		open = false;
 		search = '';
+		queueMicrotask(() => triggerButton?.focus());
 	}
 
 	function selectOption(opt: SelectOption) {
@@ -169,46 +171,46 @@
 {/if}
 
 <div class="relative">
-	<!-- Trigger button -->
-	<button
-		type="button"
-		class="w-full flex items-center gap-1.5 text-sm px-2 py-1.5 rounded-md h-8
-			text-slate-300 hover:bg-navy-700 transition-colors text-left
-			{disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}
-			{open ? 'bg-navy-700 ring-1 ring-gold/40' : ''}"
-		onclick={openDropdown}
-		onkeydown={handleTriggerKeydown}
-		{disabled}
-		aria-haspopup="listbox"
-		aria-expanded={open}
-		aria-label={selectedOption ? `Selected: ${selectedOption.label}` : placeholder}
-	>
-		{#if selectedOption}
-			<span
-				class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border
-					{pillClasses(selectedOption)}"
-			>
-				{selectedOption.label}
-			</span>
-			{#if !disabled}
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<!-- Trigger row -->
+	<div class="flex items-center gap-0.5">
+		<button
+			bind:this={triggerButton}
+			type="button"
+			class="flex-1 flex items-center gap-1.5 text-sm px-2 py-1.5 rounded-md h-8
+				text-slate-300 hover:bg-navy-700 transition-colors text-left
+				{disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}
+				{open ? 'bg-navy-700 ring-1 ring-gold/40' : ''}"
+			onclick={openDropdown}
+			onkeydown={handleTriggerKeydown}
+			{disabled}
+			aria-haspopup="listbox"
+			aria-expanded={open}
+			aria-label={selectedOption ? `Selected: ${selectedOption.label}` : placeholder}
+		>
+			{#if selectedOption}
 				<span
-					role="button"
-					class="ml-auto text-slate-500 hover:text-slate-300 shrink-0 cursor-pointer"
-					onclick={clearSelection}
-					onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') clearSelection(e); }}
-					aria-label="Clear selection"
-					tabindex={-1}
+					class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border
+						{pillClasses(selectedOption)}"
 				>
-					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-					</svg>
+					{selectedOption.label}
 				</span>
+			{:else}
+				<span class="text-slate-500 italic">{placeholder}</span>
 			{/if}
-		{:else}
-			<span class="text-slate-500 italic">{placeholder}</span>
+		</button>
+		{#if selectedOption && !disabled}
+			<button
+				type="button"
+				class="text-slate-500 hover:text-slate-300 shrink-0 cursor-pointer p-1 rounded hover:bg-navy-700 transition-colors"
+				onclick={clearSelection}
+				aria-label="Clear selection"
+			>
+				<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+				</svg>
+			</button>
 		{/if}
-	</button>
+	</div>
 
 	<!-- Dropdown -->
 	{#if open}
@@ -218,8 +220,6 @@
 				bg-navy-800 border border-navy-600 rounded-lg shadow-xl"
 			role="listbox"
 			aria-label="Options"
-			tabindex="0"
-			onkeydown={handleDropdownKeydown}
 		>
 			{#if searchable}
 				<div class="p-1.5 border-b border-navy-700">
@@ -231,6 +231,7 @@
 						class="w-full bg-navy-700 border border-navy-600 rounded px-2 py-1 text-xs text-slate-300
 							placeholder-slate-500 focus:outline-none focus:border-gold/50"
 						aria-label="Filter options"
+						onkeydown={handleDropdownKeydown}
 					/>
 				</div>
 			{/if}

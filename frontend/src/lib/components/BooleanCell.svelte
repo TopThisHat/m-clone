@@ -41,6 +41,10 @@
 	let stateLabel = $derived(
 		value === null ? 'indeterminate' : value ? 'checked' : 'unchecked'
 	);
+
+	let nextStateLabel = $derived(
+		value === null ? 'checked' : value ? 'unchecked' : 'indeterminate'
+	);
 </script>
 
 <button
@@ -48,7 +52,9 @@
 	role="checkbox"
 	aria-checked={ariaChecked}
 	aria-label={label ? `${label}: ${stateLabel}` : stateLabel}
+	title="Click to cycle: {stateLabel} → {nextStateLabel}"
 	class="flex items-center justify-center w-8 h-8 rounded-md transition-all
+		focus-visible:ring-2 focus-visible:ring-gold/60 focus-visible:outline-none
 		{disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-navy-700'}"
 	onclick={toggle}
 	onkeydown={handleKeydown}

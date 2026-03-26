@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { campaignsApi, type Campaign, type CampaignStats } from '$lib/api/campaigns';
 	import { jobsApi, type Job } from '$lib/api/jobs';
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
@@ -11,6 +10,27 @@
 	let error = $state('');
 	let cloning = $state<Set<string>>(new Set());
 	let runningIds = $state<Set<string>>(new Set());
+
+	// Filters
+	let statusFilter = $state<'all' | 'active' | 'paused'>('all');
+	let programFilter = $state<string>('all');
+
+	// Derive unique program names from campaigns (placeholder until backend programs API)
+	let programNames = $derived(
+		[...new Set(campaigns.map((c) => (c as Campaign & { program_name?: string }).program_name).filter(Boolean))] as string[]
+	);
+
+	let filteredCampaigns = $derived(
+		campaigns.filter((c) => {
+			if (statusFilter === 'active' && !c.is_active) return false;
+			if (statusFilter === 'paused' && c.is_active) return false;
+			if (programFilter !== 'all') {
+				const progName = (c as Campaign & { program_name?: string }).program_name;
+				if (progName !== programFilter) return false;
+			}
+			return true;
+		})
+	);
 
 	// Inline edit state
 	let editingId = $state<string | null>(null);
@@ -28,6 +48,11 @@
 
 	function cancelEdit() {
 		editingId = null;
+	}
+
+	function handleEditKeydown(e: KeyboardEvent, id: string) {
+		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(id); }
+		if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
 	}
 
 	async function saveEdit(id: string) {
@@ -73,7 +98,6 @@
 	}
 
 	$effect(() => { loadCampaigns($scoutTeam); });
-	onMount(() => { /* effect handles initial load */ });
 
 	async function runNow(campaignId: string, e: Event) {
 		e.preventDefault();
@@ -91,8 +115,12 @@
 	async function toggleActive(c: Campaign, e: Event) {
 		e.preventDefault();
 		e.stopPropagation();
-		const updated = await campaignsApi.update(c.id, { is_active: !c.is_active });
-		campaigns = campaigns.map((x) => (x.id === c.id ? updated : x));
+		try {
+			const updated = await campaignsApi.update(c.id, { is_active: !c.is_active });
+			campaigns = campaigns.map((x) => (x.id === c.id ? updated : x));
+		} catch (err: unknown) {
+			alert(err instanceof Error ? err.message : 'Failed to update status');
+		}
 	}
 
 	async function cloneCampaign(id: string, e: Event) {
@@ -174,13 +202,42 @@
 <div class="max-w-5xl mx-auto">
 	<div class="flex items-center justify-between mb-5">
 		<h1 class="font-serif text-gold text-2xl font-bold">Campaigns</h1>
-		<a
-			href="/campaigns/new"
-			class="bg-gold text-navy font-semibold px-4 py-2 rounded-lg hover:bg-gold-light transition-colors text-sm"
-		>
-			+ New Campaign
-		</a>
+		<a href="/campaigns/new" class="btn-gold">+ New Campaign</a>
 	</div>
+
+	<!-- Filter bar -->
+	{#if campaigns.length > 0 && !loading}
+		<div class="flex flex-wrap items-center gap-3 mb-5">
+			<label class="flex items-center gap-1.5 text-xs text-slate-500">
+				<span>Status:</span>
+				<select
+					bind:value={statusFilter}
+					class="bg-navy-800 border border-navy-700 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-gold/40"
+				>
+					<option value="all">All</option>
+					<option value="active">Active</option>
+					<option value="paused">Paused</option>
+				</select>
+			</label>
+			{#if programNames.length > 0}
+				<label class="flex items-center gap-1.5 text-xs text-slate-500">
+					<span>Program:</span>
+					<select
+						bind:value={programFilter}
+						class="bg-navy-800 border border-navy-700 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-gold/40"
+					>
+						<option value="all">All Programs</option>
+						{#each programNames as pName (pName)}
+							<option value={pName}>{pName}</option>
+						{/each}
+					</select>
+				</label>
+			{/if}
+			<span class="text-[10px] text-slate-600 ml-auto">
+				{filteredCampaigns.length} of {campaigns.length} campaigns
+			</span>
+		</div>
+	{/if}
 
 	<!-- Stats bar -->
 	{#if stats && !loading}
@@ -217,9 +274,11 @@
 			<p class="text-lg mb-2">No campaigns yet.</p>
 			<a href="/campaigns/new" class="text-gold hover:underline text-sm">Create your first campaign →</a>
 		</div>
+	{:else if filteredCampaigns.length === 0}
+		<p class="text-sm text-slate-500 text-center py-12">No campaigns match the current filters.</p>
 	{:else}
 		<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-			{#each campaigns as c (c.id)}
+			{#each filteredCampaigns as c (c.id)}
 				{@const fresh = resultFreshness(c)}
 				{@const job = latestJobs[c.id]}
 				<div class="bg-navy-800 border border-navy-700 rounded-xl p-5 hover:border-navy-600 transition-all flex flex-col gap-3">
@@ -229,13 +288,15 @@
 							<input
 								bind:value={editName}
 								placeholder="Campaign name"
-								class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
+								class="w-full input-field"
+								onkeydown={(e) => handleEditKeydown(e, c.id)}
 							/>
 							<textarea
 								bind:value={editDesc}
 								placeholder="Description (optional)"
 								rows="2"
-								class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold resize-none"
+								class="w-full input-field resize-none"
+								onkeydown={(e) => handleEditKeydown(e, c.id)}
 							></textarea>
 							<div class="flex gap-2">
 								<button
@@ -263,9 +324,10 @@
 							onclick={(e) => toggleActive(c, e)}
 							aria-label="{c.is_active ? 'Pause' : 'Activate'} campaign {c.name}"
 							aria-pressed={c.is_active}
-							class="text-[10px] px-2 py-0.5 rounded-full cursor-pointer border transition-all flex-shrink-0
+							class="status-badge cursor-pointer border transition-all flex-shrink-0
 								{c.is_active ? 'bg-green-950 text-green-400 border-green-800' : 'bg-navy-700 text-slate-500 border-navy-600'}"
 						>
+							<span class="w-1.5 h-1.5 rounded-full {c.is_active ? 'bg-green-400' : 'bg-slate-500'}" aria-hidden="true"></span>
 							{c.is_active ? 'active' : 'paused'}
 						</button>
 					</div>
@@ -310,9 +372,15 @@
 
 					<!-- Latest job -->
 					{#if job}
-						<div class="flex items-center gap-1.5 text-xs">
-							<span class="w-1.5 h-1.5 rounded-full {statusDot(job.status)}" aria-hidden="true"></span>
-							<span class="{statusColor(job.status)}">{job.status}</span>
+						<div class="flex items-center gap-2 text-xs">
+							<span class="status-badge border {statusColor(job.status)}
+								{job.status === 'running' ? 'border-gold/30 bg-gold/5' :
+								 job.status === 'done' ? 'border-green-800 bg-green-950' :
+								 job.status === 'failed' ? 'border-red-800 bg-red-950' :
+								 'border-navy-600 bg-navy-700'}">
+								<span class="w-1.5 h-1.5 rounded-full {statusDot(job.status)}" aria-hidden="true"></span>
+								{job.status}
+							</span>
 							{#if job.status === 'running'}
 								<span class="text-slate-500">{job.completed_pairs}/{job.total_pairs} pairs</span>
 							{:else if job.completed_at}

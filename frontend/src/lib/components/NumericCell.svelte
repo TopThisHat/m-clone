@@ -28,14 +28,14 @@
 		}
 	});
 
-	let parsedValue = $derived(() => {
+	let parsedValue = $derived.by(() => {
 		if (draft.trim() === '') return null;
 		const n = Number(draft);
 		return Number.isNaN(n) ? undefined : n;
 	});
 
-	let error = $derived(() => {
-		const parsed = parsedValue();
+	let error = $derived.by(() => {
+		const parsed = parsedValue;
 		if (parsed === undefined) return 'Invalid number';
 		if (parsed === null) return null;
 		if (min !== undefined && parsed < min) return `Min: ${min}`;
@@ -43,7 +43,7 @@
 		return null;
 	});
 
-	let hasError = $derived(error() !== null);
+	let hasError = $derived(error !== null);
 
 	function startEditing() {
 		if (disabled) return;
@@ -58,8 +58,8 @@
 	}
 
 	function save() {
-		const parsed = parsedValue();
-		const err = error();
+		const parsed = parsedValue;
+		const err = error;
 		if (err) {
 			// Revert on invalid
 			draft = value !== null ? String(value) : '';
@@ -110,15 +110,8 @@
 			onkeydown={handleKeydown}
 			aria-label="Edit number"
 			aria-invalid={hasError}
+			title={hasError ? error ?? '' : ''}
 		/>
-		{#if hasError}
-			<span
-				class="absolute -bottom-4 right-0 text-[10px] text-red-400 whitespace-nowrap"
-				role="alert"
-			>
-				{error()}
-			</span>
-		{/if}
 	</div>
 {:else}
 	<button
