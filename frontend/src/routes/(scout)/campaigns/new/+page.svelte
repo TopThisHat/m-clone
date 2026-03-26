@@ -94,6 +94,7 @@
 	let showTemplates = $state(false);
 	let savingTemplate = $state(false);
 	let templateName = $state('');
+	let templateSavedToast = $state('');
 	let _tplLoaded = false;
 
 	let templatesLoading = $state(false);
@@ -128,7 +129,8 @@
 			const resp = await attributesApi.list(campaign.id, { limit: 0 });
 			await templatesApi.create({ name: templateName.trim(), attributes: resp.items.map((a) => ({ label: a.label, description: a.description ?? undefined, weight: a.weight })) });
 			templateName = '';
-			alert('Template saved!');
+			templateSavedToast = 'Template saved!';
+			setTimeout(() => { templateSavedToast = ''; }, 3000);
 		} catch { /* ignore */ } finally { savingTemplate = false; }
 	}
 
@@ -758,10 +760,14 @@
 					</button>
 					{#if attrCount > 0}
 						<div class="flex items-center gap-1.5 ml-auto">
-							<input bind:value={templateName} placeholder="Template name..." aria-label="Template name" class="bg-navy-700 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-gold w-36" />
-							<button type="button" onclick={saveTemplate} disabled={savingTemplate || !templateName.trim()} class="text-xs text-slate-400 hover:text-gold border border-navy-600 px-2 py-1 rounded transition-colors disabled:opacity-50">
-								{savingTemplate ? '...' : 'Save as template'}
-							</button>
+							{#if templateSavedToast}
+								<span role="status" class="text-xs text-green-400">{templateSavedToast}</span>
+							{:else}
+								<input bind:value={templateName} placeholder="Template name..." aria-label="Template name" class="bg-navy-700 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-gold w-36" />
+								<button type="button" onclick={saveTemplate} disabled={savingTemplate || !templateName.trim()} class="text-xs text-slate-400 hover:text-gold border border-navy-600 px-2 py-1 rounded transition-colors disabled:opacity-50">
+									{savingTemplate ? '...' : 'Save as template'}
+								</button>
+							{/if}
 						</div>
 					{/if}
 				</div>

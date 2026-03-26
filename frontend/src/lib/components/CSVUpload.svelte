@@ -86,8 +86,14 @@
 		return { headers: hdrs, rows: dataRows };
 	}
 
+	const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
 	async function handleFile(file: File) {
 		error = '';
+		if (file.size > MAX_FILE_SIZE) {
+			error = `File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum size is 10 MB.`;
+			return;
+		}
 		try {
 			let parsed: { headers: string[]; rows: Record<string, string>[] };
 			const ext = file.name.split('.').pop()?.toLowerCase();
@@ -277,15 +283,17 @@
 		</div>
 		<div class="grid grid-cols-3 gap-4">
 			{#each [
-				{ label: 'Label', hint: 'required', bind: 'labelCol' },
-				{ label: 'Description', hint: 'optional', bind: 'descCol' },
-				{ label: 'GWM ID', hint: 'optional', bind: 'gwmIdCol' },
+				{ label: 'Label', hint: 'required', bind: 'labelCol', id: 'csv-col-label' },
+				{ label: 'Description', hint: 'optional', bind: 'descCol', id: 'csv-col-desc' },
+				{ label: 'GWM ID', hint: 'optional', bind: 'gwmIdCol', id: 'csv-col-gwm' },
 			] as col}
 				<div>
-					<label class="block text-xs mb-1">
+					<label for={col.id} class="block text-xs mb-1">
 						<span class="text-slate-400">{col.label}</span>
 						<span class="ml-1 {col.hint === 'required' ? 'text-amber-400' : 'text-slate-600'}">{col.hint}</span>
+					</label>
 					<select
+						id={col.id}
 						class="w-full bg-navy-700 border border-navy-600 rounded-lg px-2 py-1.5 text-sm text-slate-200"
 						value={col.bind === 'labelCol' ? labelCol : col.bind === 'descCol' ? descCol : gwmIdCol}
 						onchange={(e) => {
@@ -300,7 +308,6 @@
 							<option value={h}>{h}</option>
 						{/each}
 					</select>
-					</label>
 				</div>
 			{/each}
 		</div>
