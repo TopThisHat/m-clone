@@ -135,9 +135,14 @@ async def db_find_similar_entities(
     Searches within team scope + master graph.
     Returns list of {id, name, entity_type, aliases, similarity} sorted by similarity DESC.
     """
+    # Validate threshold to prevent SQL injection (SET does not support $1 params)
+    if not (0.0 < threshold < 1.0):
+        raise ValueError(f"threshold must be between 0 and 1 exclusive, got {threshold}")
+    safe_threshold = float(threshold)
     async with _acquire() as conn:
-        # Set the similarity threshold for the % operator
-        await conn.execute(f"SET pg_trgm.similarity_threshold = {threshold}")
+        await conn.execute(
+            "SET pg_trgm.similarity_threshold = " + str(safe_threshold)
+        )
         rows = await conn.fetch(
             """
             SELECT id, name, entity_type, aliases, metadata, disambiguation_context, description,
@@ -211,7 +216,7 @@ async def db_update_kg_entity(
         else:
             set_parts.append(f"{k} = ${i}")
         values.append(v)
-    set_parts.append(f"updated_at = NOW()")
+    set_parts.append("updated_at = NOW()")
     values.append(entity_id)
     sql = f"UPDATE playbook.kg_entities SET {', '.join(set_parts)} WHERE id = ${len(values)}::uuid RETURNING *"
     async with _acquire() as conn:
@@ -545,7 +550,7 @@ async def db_get_kg_stats(team_id: str | None = None, include_master: bool = Fal
             )
         else:
             row = await conn.fetchrow(
-                f"""
+                """
                 SELECT
                     (SELECT COUNT(*)::int FROM playbook.kg_entities) AS total_entities,
                     (SELECT COUNT(*)::int FROM playbook.kg_relationships WHERE is_active = TRUE) AS total_relationships,

@@ -332,3 +332,51 @@ async def db_delete_external_id(entity_id: str, system: str) -> bool:
             entity_id, system,
         )
     return result.endswith("1")
+
+
+# ── Entity-Campaign Assignment ────────────────────────────────────────────────
+
+async def db_assign_entities_to_campaign(
+    campaign_id: str,
+    entity_ids: list[str],
+) -> dict[str, Any]:
+    """Assign entities from the entity library to a campaign by copying them.
+
+    Skips duplicates (matching on label within the campaign).
+    Returns {inserted: list, skipped: int}.
+    """
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
+            SELECT $1::uuid, el.label, el.description, el.gwm_id, el.metadata
+            FROM playbook.entity_library el
+            WHERE el.id = ANY($2::uuid[])
+            ON CONFLICT DO NOTHING
+            RETURNING *
+            """,
+            campaign_id, entity_ids,
+        )
+    inserted = [_entity_row_to_dict(r) for r in rows]
+    skipped = len(entity_ids) - len(inserted)
+    return {"inserted": inserted, "skipped": max(0, skipped)}
+
+
+async def db_unassign_entities_from_campaign(
+    campaign_id: str,
+    entity_ids: list[str],
+) -> int:
+    """Remove entities from a campaign. Returns the number of entities removed."""
+    async with _acquire() as conn:
+        result = await conn.execute(
+            """
+            DELETE FROM playbook.entities
+            WHERE campaign_id = $1::uuid AND id = ANY($2::uuid[])
+            """,
+            campaign_id, entity_ids,
+        )
+    # result is like "DELETE 3"
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0

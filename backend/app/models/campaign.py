@@ -7,8 +7,10 @@ from pydantic import BaseModel
 
 # ── Campaign Status ────────────────────────────────────────────────────────────
 
+
 class CampaignStatus(str, Enum):
     """Lifecycle status for campaigns."""
+
     draft = "draft"
     active = "active"
     completed = "completed"
@@ -26,10 +28,12 @@ VALID_STATUS_TRANSITIONS: dict[CampaignStatus, set[CampaignStatus]] = {
 
 class CampaignStatusUpdate(BaseModel):
     """Request body for PATCH /api/campaigns/{id}/status."""
+
     status: CampaignStatus
 
 
 # ── Campaign ───────────────────────────────────────────────────────────────────
+
 
 class CampaignCreate(BaseModel):
     name: str
@@ -60,6 +64,9 @@ class CampaignOut(BaseModel):
     entity_count: int = 0
     attribute_count: int = 0
     result_count: int = 0
+    avg_scout_score: float | None = None
+    program_id: str | None = None
+    program_name: str | None = None
     created_at: str
     updated_at: str
 
@@ -89,6 +96,7 @@ class AttributeTemplateOut(BaseModel):
 
 # ── Entity ─────────────────────────────────────────────────────────────────────
 
+
 class EntityCreate(BaseModel):
     label: str
     description: str | None = None
@@ -115,11 +123,13 @@ class EntityOut(BaseModel):
 
 class MetadataUpdate(BaseModel):
     """Request body for PUT /metadata: set one or more key/value pairs."""
+
     metadata: dict[str, Any]
 
 
 class ExternalIdUpdate(BaseModel):
     """Request body for PUT /external-ids: set an external ID for a system."""
+
     system: str
     external_id: str
 
@@ -133,8 +143,10 @@ class ExternalIdOut(BaseModel):
 
 # ── Attribute ──────────────────────────────────────────────────────────────────
 
+
 class AttributeType(str, Enum):
     """Supported attribute value types."""
+
     text = "text"
     numeric = "numeric"
     boolean = "boolean"
@@ -179,6 +191,7 @@ class AttributeOut(BaseModel):
 
 # ── Validation Job ─────────────────────────────────────────────────────────────
 
+
 class JobCreate(BaseModel):
     entity_ids: list[str] | None = None
     attribute_ids: list[str] | None = None
@@ -202,6 +215,7 @@ class JobOut(BaseModel):
 
 # ── Validation Result ──────────────────────────────────────────────────────────
 
+
 class ResultOut(BaseModel):
     id: str
     job_id: str
@@ -218,6 +232,7 @@ class ResultOut(BaseModel):
 
 # ── Entity Score ───────────────────────────────────────────────────────────────
 
+
 class ScoreOut(BaseModel):
     entity_id: str
     campaign_id: str
@@ -230,6 +245,7 @@ class ScoreOut(BaseModel):
 
 
 # ── Knowledge Store ────────────────────────────────────────────────────────────
+
 
 class KnowledgeOut(BaseModel):
     gwm_id: str
@@ -246,11 +262,25 @@ class KnowledgeOut(BaseModel):
 
 # ── Import ─────────────────────────────────────────────────────────────────────
 
+
+class EntityAssignBody(BaseModel):
+    """Request body for POST /entities/assign: assign library entities to a campaign."""
+
+    entity_ids: list[str]
+
+
+class EntityUnassignBody(BaseModel):
+    """Request body for POST /entities/unassign: remove entities from a campaign."""
+
+    entity_ids: list[str]
+
+
 class ImportBody(BaseModel):
     source_campaign_id: str
 
 
 # ── Bulk operation results ──────────────────────────────────────────────────────
+
 
 class BulkEntityResult(BaseModel):
     inserted: list[EntityOut]
@@ -272,3 +302,51 @@ class ImportAttributeResult(BaseModel):
     inserted: list[AttributeOut]
     skipped: int
     total_requested: int
+
+
+# ── Comparison ────────────────────────────────────────────────────────────────
+
+
+class CompareRequest(BaseModel):
+    """Request body for POST /api/campaigns/{id}/compare."""
+
+    entity_ids: list[str]
+
+
+class ComparisonEntityInfo(BaseModel):
+    id: str
+    label: str
+    gwm_id: str | None = None
+    total_score: float | None = None
+    attributes_present: int | None = None
+    attributes_checked: int | None = None
+
+
+class ComparisonAttributeRow(BaseModel):
+    attribute_id: str
+    label: str
+    description: str | None = None
+    weight: float = 1.0
+    attribute_type: str = "text"
+    category: str | None = None
+    entity_values: dict[str, dict[str, Any] | None] = {}
+    best_entity_ids: list[str] = []
+    worst_entity_ids: list[str] = []
+
+
+class ComparisonSummary(BaseModel):
+    entity_count: int
+    attribute_count: int
+
+
+class ComparisonHighlights(BaseModel):
+    best_score_entity_ids: list[str] = []
+    worst_score_entity_ids: list[str] = []
+
+
+class ComparisonOut(BaseModel):
+    campaign_id: str
+    entities: list[ComparisonEntityInfo]
+    attributes: list[ComparisonAttributeRow]
+    summary: ComparisonSummary
+    highlights: ComparisonHighlights

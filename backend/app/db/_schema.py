@@ -900,6 +900,85 @@ async def init_schema() -> None:
                     ON attributes(campaign_id, category) WHERE category IS NOT NULL
             """)
 
+            # ── Program-Campaign junction ──────────────────────────────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.program_campaigns (
+                    program_id  UUID NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
+                    campaign_id UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+                    assigned_at TIMESTAMPTZ DEFAULT NOW(),
+                    PRIMARY KEY (program_id, campaign_id)
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS program_campaigns_campaign_idx
+                    ON program_campaigns(campaign_id)
+            """)
+
+            # ── Entity-Attribute assignments (matrix cell values) ──────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.entity_attribute_assignments (
+                    campaign_id    UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+                    entity_id      UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                    attribute_id   UUID NOT NULL REFERENCES attributes(id) ON DELETE CASCADE,
+                    value_boolean  BOOLEAN,
+                    value_numeric  FLOAT,
+                    value_text     TEXT,
+                    value_select   TEXT,
+                    updated_at     TIMESTAMPTZ DEFAULT NOW(),
+                    updated_by     TEXT,
+                    PRIMARY KEY (campaign_id, entity_id, attribute_id)
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS eaa_entity_idx
+                    ON entity_attribute_assignments(entity_id, campaign_id)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS eaa_attribute_idx
+                    ON entity_attribute_assignments(attribute_id, campaign_id)
+            """)
+
+            # ── Campaign-Attribute assignment (weight overrides) ──────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.campaign_attributes (
+                    campaign_id     UUID NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+                    attribute_id    UUID NOT NULL REFERENCES attributes(id) ON DELETE CASCADE,
+                    weight_override FLOAT,
+                    display_order   INT NOT NULL DEFAULT 0,
+                    assigned_at     TIMESTAMPTZ DEFAULT NOW(),
+                    PRIMARY KEY (campaign_id, attribute_id)
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS campaign_attributes_attr_idx
+                    ON campaign_attributes(attribute_id)
+            """)
+
+            # ── Metadata schemas (team-scoped field definitions) ──────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.metadata_schemas (
+                    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    team_id       UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                    field_name    TEXT NOT NULL,
+                    field_type    TEXT NOT NULL DEFAULT 'text',
+                    label         TEXT NOT NULL,
+                    description   TEXT,
+                    required      BOOLEAN NOT NULL DEFAULT FALSE,
+                    options       JSONB,
+                    display_order INT NOT NULL DEFAULT 0,
+                    created_at    TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at    TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS metadata_schemas_team_field_unique
+                    ON metadata_schemas (team_id, LOWER(TRIM(field_name)))
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS metadata_schemas_team_idx
+                    ON metadata_schemas(team_id)
+            """)
+
             # ── Score staleness tracking ──────────────────────────────────
             await conn.execute("""
                 ALTER TABLE playbook.entity_scores

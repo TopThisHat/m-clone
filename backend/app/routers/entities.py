@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from app.db import (
     DatabaseNotConfigured,
     DuplicateLabelError,
+    db_assign_entities_to_campaign,
     db_bulk_create_entities,
     db_create_entity,
     db_delete_entity,
@@ -22,12 +23,15 @@ from app.db import (
     db_list_entities,
     db_set_entity_metadata,
     db_set_external_id,
+    db_unassign_entities_from_campaign,
     db_update_entity,
 )
 from app.models.campaign import (
     BulkEntityResult,
+    EntityAssignBody,
     EntityCreate,
     EntityOut,
+    EntityUnassignBody,
     EntityUpdate,
     ExternalIdOut,
     ExternalIdUpdate,
@@ -174,6 +178,33 @@ async def import_entities_from_library(campaign_id: str, body: ImportLibraryBody
         )
     except DatabaseNotConfigured:
         raise _no_db()
+
+
+# ── Assign / Unassign entities ────────────────────────────────────────────────
+
+@router.post("/{campaign_id}/entities/assign", response_model=BulkEntityResult, status_code=201)
+async def assign_entities(campaign_id: str, body: EntityAssignBody, user=Depends(get_current_user)):
+    """Assign existing library entities to a campaign (copies them in)."""
+    await _get_owned_campaign(campaign_id, user["sub"])
+    if not body.entity_ids:
+        return {"inserted": [], "skipped": 0}
+    try:
+        return await db_assign_entities_to_campaign(campaign_id, body.entity_ids)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.post("/{campaign_id}/entities/unassign", status_code=200)
+async def unassign_entities(campaign_id: str, body: EntityUnassignBody, user=Depends(get_current_user)):
+    """Remove entities from a campaign."""
+    await _get_owned_campaign(campaign_id, user["sub"])
+    if not body.entity_ids:
+        return {"removed": 0}
+    try:
+        removed = await db_unassign_entities_from_campaign(campaign_id, body.entity_ids)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    return {"removed": removed}
 
 
 # ── Update entity ────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
     db_clone_campaign,
+    db_compare_entities,
     db_create_campaign,
     db_delete_campaign,
     db_get_campaign,
@@ -20,6 +21,8 @@ from app.models.campaign import (
     CampaignStatsOut,
     CampaignStatusUpdate,
     CampaignUpdate,
+    CompareRequest,
+    ComparisonOut,
 )
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
@@ -101,7 +104,9 @@ async def get_campaign(campaign_id: str, user=Depends(get_current_user)):
 
 
 @router.patch("/{campaign_id}", response_model=CampaignOut)
-async def update_campaign(campaign_id: str, body: CampaignUpdate, user=Depends(get_current_user)):
+async def update_campaign(
+    campaign_id: str, body: CampaignUpdate, user=Depends(get_current_user)
+):
     try:
         campaign = await db_get_campaign(campaign_id)
     except DatabaseNotConfigured:
@@ -161,9 +166,38 @@ async def clone_campaign(campaign_id: str, user=Depends(get_current_user)):
 @router.delete("/{campaign_id}", status_code=204)
 async def delete_campaign(campaign_id: str, user=Depends(get_current_user)):
     try:
-        deleted = await db_delete_campaign(campaign_id=campaign_id, owner_sid=user["sub"])
+        deleted = await db_delete_campaign(
+            campaign_id=campaign_id, owner_sid=user["sub"]
+        )
     except DatabaseNotConfigured:
         raise _no_db()
     if not deleted:
         raise _not_found()
     return Response(status_code=204)
+
+
+@router.post("/{campaign_id}/compare", response_model=ComparisonOut)
+async def compare_entities(
+    campaign_id: str,
+    body: CompareRequest,
+    user=Depends(get_current_user),
+):
+    """Compare 2-5 entities side-by-side within a campaign.
+
+    Returns a matrix with attributes as rows and entities as columns,
+    including each entity's overall score and per-attribute validation results.
+    """
+    try:
+        campaign = await db_get_campaign(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not campaign:
+        raise _not_found()
+    await _assert_campaign_access(campaign, user["sub"])
+    try:
+        return await db_compare_entities(
+            campaign_id=campaign_id,
+            entity_ids=body.entity_ids,
+        )
+    except DatabaseNotConfigured:
+        raise _no_db()

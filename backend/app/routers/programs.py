@@ -4,13 +4,17 @@ from fastapi.responses import Response
 from app.auth import get_current_user
 from app.db import DatabaseNotConfigured, db_is_team_member
 from app.db.programs import (
+    CampaignAlreadyAssignedError,
+    db_assign_campaign_to_program,
     db_create_program,
     db_delete_program,
     db_get_program,
+    db_list_program_campaigns,
     db_list_programs,
+    db_unassign_campaign_from_program,
     db_update_program,
 )
-from app.models.program import ProgramCreate, ProgramOut, ProgramUpdate
+from app.models.program import ProgramCampaignAssign, ProgramCreate, ProgramOut, ProgramUpdate
 
 router = APIRouter(prefix="/api/programs", tags=["programs"])
 
@@ -105,4 +109,59 @@ async def delete_program(program_id: str, user=Depends(get_current_user)):
         raise _not_found()
     await _assert_program_access(program, user["sub"])
     await db_delete_program(program_id)
+    return Response(status_code=204)
+
+
+# ── Program-Campaign Assignment ───────────────────────────────────────────────
+
+@router.get("/{program_id}/campaigns")
+async def list_program_campaigns(program_id: str, user=Depends(get_current_user)):
+    """List all campaigns assigned to a program."""
+    try:
+        program = await db_get_program(program_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not program:
+        raise _not_found()
+    await _assert_program_access(program, user["sub"])
+    return await db_list_program_campaigns(program_id)
+
+
+@router.post("/{program_id}/campaigns", status_code=201)
+async def assign_campaign(
+    program_id: str,
+    body: ProgramCampaignAssign,
+    user=Depends(get_current_user),
+):
+    """Assign a campaign to a program. A campaign can belong to at most one program."""
+    try:
+        program = await db_get_program(program_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not program:
+        raise _not_found()
+    await _assert_program_access(program, user["sub"])
+    try:
+        return await db_assign_campaign_to_program(program_id, body.campaign_id)
+    except CampaignAlreadyAssignedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@router.delete("/{program_id}/campaigns/{campaign_id}", status_code=204)
+async def unassign_campaign(
+    program_id: str,
+    campaign_id: str,
+    user=Depends(get_current_user),
+):
+    """Remove a campaign from a program."""
+    try:
+        program = await db_get_program(program_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not program:
+        raise _not_found()
+    await _assert_program_access(program, user["sub"])
+    removed = await db_unassign_campaign_from_program(program_id, campaign_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Campaign not assigned to this program")
     return Response(status_code=204)

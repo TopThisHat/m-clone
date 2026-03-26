@@ -209,6 +209,122 @@ async def db_recalculate_scores(
 
 
 # ---------------------------------------------------------------------------
+# Matrix-based recalculation (entity_attribute_assignments)
+# ---------------------------------------------------------------------------
+
+async def db_recalculate_scores_from_matrix(
+    campaign_id: str,
+    entity_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Recalculate scores from matrix cell values (entity_attribute_assignments).
+
+    Uses the weighted-sum formula from the design:
+      score = sum(normalized_value_i * effective_weight_i) / sum(effective_weight_i)
+
+    Normalization:
+      - boolean: true=1.0, false=0.0
+      - numeric (bounded): clamp((value - min) / (max - min), 0, 1)
+      - numeric (unbounded): value / max(all_values) (relative)
+      - select: ordinal_position / (total_options - 1)
+      - text: excluded from scoring
+
+    Steps: mark stale -> recalculate in transaction -> mark fresh on success.
+    """
+    await db_mark_scores_stale(campaign_id, entity_id)
+    logger.info(
+        "Matrix scores marked stale for campaign=%s entity=%s",
+        campaign_id, entity_id or "ALL",
+    )
+
+    entity_filter = ""
+    args: list[str] = [campaign_id]
+    if entity_id:
+        entity_filter = " AND eaa.entity_id = $2::uuid"
+        args.append(entity_id)
+
+    try:
+        async with _acquire() as conn:
+            async with conn.transaction():
+                rows = await conn.fetch(
+                    f"""
+                    WITH cell_scores AS (
+                        SELECT
+                            eaa.entity_id,
+                            COALESCE(ca.weight_override, a.weight, 1.0) AS eff_weight,
+                            CASE a.attribute_type
+                                WHEN 'boolean' THEN
+                                    CASE WHEN eaa.value_boolean THEN 1.0 ELSE 0.0 END
+                                WHEN 'numeric' THEN
+                                    CASE
+                                        WHEN a.numeric_min IS NOT NULL
+                                             AND a.numeric_max IS NOT NULL
+                                             AND a.numeric_max > a.numeric_min
+                                        THEN LEAST(1.0, GREATEST(0.0,
+                                            (eaa.value_numeric - a.numeric_min)
+                                            / (a.numeric_max - a.numeric_min)))
+                                        ELSE NULL
+                                    END
+                                ELSE NULL
+                            END AS normalized_value
+                        FROM playbook.entity_attribute_assignments eaa
+                        JOIN playbook.attributes a ON a.id = eaa.attribute_id
+                        LEFT JOIN playbook.campaign_attributes ca
+                            ON ca.campaign_id = eaa.campaign_id
+                            AND ca.attribute_id = eaa.attribute_id
+                        WHERE eaa.campaign_id = $1::uuid
+                          AND a.attribute_type IN ('boolean', 'numeric')
+                          AND (eaa.value_boolean IS NOT NULL
+                               OR eaa.value_numeric IS NOT NULL)
+                          {entity_filter}
+                    ),
+                    scored AS (
+                        SELECT
+                            entity_id,
+                            SUM(normalized_value * eff_weight)
+                                / NULLIF(SUM(eff_weight), 0) * 100 AS total_score,
+                            COUNT(CASE WHEN normalized_value > 0 THEN 1 END)::int
+                                AS attributes_present,
+                            COUNT(*)::int AS attributes_checked
+                        FROM cell_scores
+                        WHERE normalized_value IS NOT NULL
+                        GROUP BY entity_id
+                    )
+                    INSERT INTO playbook.entity_scores
+                        (entity_id, campaign_id, total_score,
+                         attributes_present, attributes_checked,
+                         last_updated, score_stale)
+                    SELECT
+                        s.entity_id, $1::uuid, ROUND(s.total_score::numeric, 2),
+                        s.attributes_present, s.attributes_checked,
+                        NOW(), FALSE
+                    FROM scored s
+                    ON CONFLICT (entity_id, campaign_id) DO UPDATE SET
+                        total_score        = EXCLUDED.total_score,
+                        attributes_present = EXCLUDED.attributes_present,
+                        attributes_checked = EXCLUDED.attributes_checked,
+                        last_updated       = NOW(),
+                        score_stale        = FALSE
+                    RETURNING *
+                    """,
+                    *args,
+                )
+
+        await db_mark_scores_fresh(campaign_id, entity_id)
+        logger.info(
+            "Matrix scores recalculated for campaign=%s entity=%s (%d rows)",
+            campaign_id, entity_id or "ALL", len(rows),
+        )
+        return [_score_row_to_dict(r) for r in rows]
+
+    except Exception:
+        logger.exception(
+            "Matrix score recalculation failed for campaign=%s entity=%s — scores remain stale",
+            campaign_id, entity_id or "ALL",
+        )
+        raise
+
+
+# ---------------------------------------------------------------------------
 # Queries
 # ---------------------------------------------------------------------------
 

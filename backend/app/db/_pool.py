@@ -109,6 +109,34 @@ async def _acquire():
         await pool.release(conn)
 
 
+@asynccontextmanager
+async def _acquire_team(team_id: str | None):
+    """Async context manager that yields a DB connection with team context set.
+
+    Sets ``SET LOCAL app.current_team_id`` for row-level security policies.
+    The SET LOCAL is transaction-scoped and automatically reverts when the
+    connection is released back to the pool.
+
+    If team_id is None, the setting is not applied (useful for non-team queries).
+    """
+    pool = await get_pool()
+    try:
+        conn = await pool.acquire()
+    except _AUTH_ERRORS as exc:
+        logger.warning("DB auth error — attempting rotation recovery: %s", exc)
+        await _reset_pool()
+        pool = await get_pool()
+        conn = await pool.acquire()
+    try:
+        if team_id:
+            await conn.execute(
+                "SET LOCAL app.current_team_id = $1", team_id,
+            )
+        yield conn
+    finally:
+        await pool.release(conn)
+
+
 async def close_pool() -> None:
     global _pool
     if _pool is not None:

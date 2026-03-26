@@ -15,12 +15,15 @@ logger = logging.getLogger(__name__)
 
 def _campaign_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     d = dict(row)
-    for field in ("id", "campaign_id", "team_id"):
+    for field in ("id", "campaign_id", "team_id", "program_id"):
         if field in d and d[field] is not None:
             d[field] = str(d[field])
     for ts in ("created_at", "updated_at", "last_run_at", "next_run_at", "last_completed_at"):
         if ts in d and d[ts] is not None:
             d[ts] = d[ts].isoformat()
+    # Convert Decimal avg_scout_score to float for JSON serialisation
+    if "avg_scout_score" in d and d["avg_scout_score"] is not None:
+        d["avg_scout_score"] = float(d["avg_scout_score"])
     return d
 
 
@@ -68,7 +71,17 @@ _CAMPAIGN_COUNTS_SQL = """
             JOIN playbook.entities e ON e.id = vr.entity_id
             WHERE e.campaign_id = c.id)::int                                  AS result_count,
            (SELECT MAX(completed_at) FROM playbook.validation_jobs
-            WHERE campaign_id = c.id AND status = 'done')                     AS last_completed_at
+            WHERE campaign_id = c.id AND status = 'done')                     AS last_completed_at,
+           (SELECT ROUND(AVG(es.total_score)::numeric, 2)
+            FROM playbook.entity_scores es
+            WHERE es.campaign_id = c.id)                                      AS avg_scout_score,
+           pc.program_id,
+           prg.name                                                           AS program_name
+"""
+
+_CAMPAIGN_JOINS_SQL = """
+    LEFT JOIN playbook.program_campaigns pc ON pc.campaign_id = c.id
+    LEFT JOIN playbook.programs prg ON prg.id = pc.program_id
 """
 
 async def db_list_campaigns(owner_sid: str, team_id: str | None = None) -> list[dict[str, Any]]:
@@ -78,6 +91,7 @@ async def db_list_campaigns(owner_sid: str, team_id: str | None = None) -> list[
                 f"""
                 {_CAMPAIGN_COUNTS_SQL}
                 FROM playbook.campaigns c
+                {_CAMPAIGN_JOINS_SQL}
                 JOIN playbook.team_members tm ON tm.team_id = c.team_id
                 WHERE c.team_id = $1::uuid AND tm.sid = $2
                 ORDER BY c.updated_at DESC
@@ -89,6 +103,7 @@ async def db_list_campaigns(owner_sid: str, team_id: str | None = None) -> list[
                 f"""
                 {_CAMPAIGN_COUNTS_SQL}
                 FROM playbook.campaigns c
+                {_CAMPAIGN_JOINS_SQL}
                 WHERE c.owner_sid = $1 AND c.team_id IS NULL
                 ORDER BY c.updated_at DESC
                 """,
@@ -103,6 +118,7 @@ async def db_get_campaign(campaign_id: str) -> dict[str, Any] | None:
             f"""
             {_CAMPAIGN_COUNTS_SQL}
             FROM playbook.campaigns c
+            {_CAMPAIGN_JOINS_SQL}
             WHERE c.id = $1::uuid
             """,
             campaign_id,

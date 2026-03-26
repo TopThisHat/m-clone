@@ -24,3 +24,7 @@ class ProgramOut(BaseModel):
     description: str | None = None
     created_at: str
     updated_at: str
+
+
+class ProgramCampaignAssign(BaseModel):
+    campaign_id: str

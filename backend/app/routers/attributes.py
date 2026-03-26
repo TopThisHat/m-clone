@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
+    db_assign_attribute_to_campaign,
     db_bulk_create_attributes,
     db_create_attribute,
     db_delete_attribute,
@@ -14,7 +15,11 @@ from app.db import (
     db_import_attributes_from_library,
     db_is_team_member,
     db_list_attributes,
+    db_list_campaign_attributes,
+    db_reorder_campaign_attributes,
+    db_unassign_attribute_from_campaign,
     db_update_attribute,
+    db_update_campaign_attribute,
 )
 from app.models.campaign import (
     AttributeCreate,
@@ -28,6 +33,24 @@ from app.models.campaign import (
 
 class ImportLibraryBody(BaseModel):
     ids: list[str] = Field(min_length=1)
+
+
+class CampaignAttributeAssign(BaseModel):
+    attribute_id: str
+    weight_override: float | None = None
+    display_order: int = 0
+
+
+class CampaignAttributePatch(BaseModel):
+    weight_override: float | None = None
+    display_order: int | None = None
+
+
+class CampaignAttributeReorder(BaseModel):
+    ordering: list[dict] = Field(
+        ..., description="List of {attribute_id: str, display_order: int}"
+    )
+
 
 router = APIRouter(prefix="/api/campaigns", tags=["attributes"])
 
@@ -197,3 +220,91 @@ async def delete_attribute(campaign_id: str, attribute_id: str, user=Depends(get
     if not deleted:
         raise HTTPException(status_code=404, detail="Attribute not found")
     return Response(status_code=204)
+
+
+# ── Campaign-Attribute Assignment (weight override + display order) ───────────
+
+@router.get("/{campaign_id}/attribute-assignments")
+async def list_campaign_attribute_assignments(
+    campaign_id: str,
+    user=Depends(get_current_user),
+):
+    """List all attribute assignments for a campaign with effective weights."""
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_list_campaign_attributes(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.post("/{campaign_id}/attribute-assignments", status_code=201)
+async def assign_attribute_to_campaign(
+    campaign_id: str,
+    body: CampaignAttributeAssign,
+    user=Depends(get_current_user),
+):
+    """Assign an attribute to a campaign with optional weight override."""
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_assign_attribute_to_campaign(
+            campaign_id,
+            body.attribute_id,
+            weight_override=body.weight_override,
+            display_order=body.display_order,
+        )
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.patch("/{campaign_id}/attribute-assignments/{attribute_id}")
+async def update_campaign_attribute_assignment(
+    campaign_id: str,
+    attribute_id: str,
+    body: CampaignAttributePatch,
+    user=Depends(get_current_user),
+):
+    """Update weight_override and/or display_order for a campaign-attribute assignment."""
+    await _get_owned_campaign(campaign_id, user["sub"])
+    kwargs: dict = {}
+    if body.weight_override is not None:
+        kwargs["weight_override"] = body.weight_override
+    if body.display_order is not None:
+        kwargs["display_order"] = body.display_order
+    try:
+        updated = await db_update_campaign_attribute(campaign_id, attribute_id, **kwargs)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not updated:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    return updated
+
+
+@router.delete("/{campaign_id}/attribute-assignments/{attribute_id}", status_code=204)
+async def unassign_attribute_from_campaign(
+    campaign_id: str,
+    attribute_id: str,
+    user=Depends(get_current_user),
+):
+    """Remove an attribute assignment from a campaign."""
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        removed = await db_unassign_attribute_from_campaign(campaign_id, attribute_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not removed:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    return Response(status_code=204)
+
+
+@router.put("/{campaign_id}/attribute-assignments/reorder")
+async def reorder_campaign_attributes(
+    campaign_id: str,
+    body: CampaignAttributeReorder,
+    user=Depends(get_current_user),
+):
+    """Update display_order for multiple attribute assignments at once."""
+    await _get_owned_campaign(campaign_id, user["sub"])
+    try:
+        return await db_reorder_campaign_attributes(campaign_id, body.ordering)
+    except DatabaseNotConfigured:
+        raise _no_db()

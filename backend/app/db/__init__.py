@@ -1,4 +1,4 @@
-from ._pool import DatabaseNotConfigured, get_pool, close_pool
+from ._pool import DatabaseNotConfigured, get_pool, close_pool, _acquire_team
 from ._schema import init_schema
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
@@ -123,6 +123,8 @@ from .entities import (
     db_set_external_id,
     db_get_external_ids,
     db_delete_external_id,
+    db_assign_entities_to_campaign,
+    db_unassign_entities_from_campaign,
 )
 
 # ── Attributes ────────────────────────────────────────────────────────────────
@@ -212,16 +214,22 @@ from .library import (
 
 # ── Programs ─────────────────────────────────────────────────────────────────
 from .programs import (
+    CampaignAlreadyAssignedError,
     db_create_program,
     db_list_programs,
     db_get_program,
     db_update_program,
     db_delete_program,
+    db_assign_campaign_to_program,
+    db_unassign_campaign_from_program,
+    db_list_program_campaigns,
+    db_get_campaign_program,
 )
 
 # ── Scores ───────────────────────────────────────────────────────────────────
 from .scores import (
     db_recalculate_scores,
+    db_recalculate_scores_from_matrix,
     db_mark_scores_stale,
     db_mark_scores_fresh,
     db_get_score,
@@ -233,6 +241,37 @@ from .clusters import (
     db_get_clusters,
     db_save_clusters,
     db_delete_clusters,
+)
+
+# ── Matrix (entity-attribute cell values) ─────────────────────────────────────
+from .matrix import (
+    db_get_matrix_data,
+    db_upsert_cell_value,
+    db_delete_cell_value,
+    db_get_cell_value,
+    db_bulk_upsert_cells,
+)
+
+# ── Campaign-Attribute Assignments ────────────────────────────────────────────
+from .campaign_attributes import (
+    db_assign_attribute_to_campaign,
+    db_bulk_assign_attributes,
+    db_update_campaign_attribute,
+    db_unassign_attribute_from_campaign,
+    db_get_campaign_attribute,
+    db_list_campaign_attributes,
+    db_reorder_campaign_attributes,
+)
+
+# ── Metadata Schemas ─────────────────────────────────────────────────────────
+from .metadata_schemas import (
+    db_create_metadata_schema,
+    db_list_metadata_schemas,
+    db_get_metadata_schema,
+    db_update_metadata_schema,
+    db_delete_metadata_schema,
+    db_bulk_create_metadata_schemas,
+    db_reorder_metadata_schemas,
 )
 
 # ── Preferences ──────────────────────────────────────────────────────────────
