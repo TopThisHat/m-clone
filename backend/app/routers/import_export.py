@@ -40,6 +40,9 @@ _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "|", "\t")
 # Maximum rows accepted in a single upload to guard memory.
 _MAX_UPLOAD_ROWS = 50_000
 
+# Maximum raw file size accepted before reading into memory (10 MB).
+_MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+
 
 # ── Request / Response models ────────────────────────────────────────────────
 
@@ -244,9 +247,14 @@ async def upload_import(
             "Upload a CSV or TSV file.",
         )
 
-    data = await file.read()
+    data = await file.read(_MAX_UPLOAD_SIZE + 1)
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > _MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum upload size is {_MAX_UPLOAD_SIZE // 1024 // 1024} MB.",
+        )
 
     rows = _parse_csv_bytes(data)
     if not rows:

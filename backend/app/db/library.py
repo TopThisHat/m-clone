@@ -42,6 +42,21 @@ def _attribute_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     return d
 
 
+# Safe column-name maps for ORDER BY interpolation.  Only these exact SQL
+# identifiers may appear in generated queries — user input is looked up here
+# and the *value* (not the user string) is interpolated.
+_ENTITY_LIB_SORT_COLS: dict[str, str] = {
+    "label": "label",
+    "gwm_id": "gwm_id",
+    "created_at": "created_at",
+}
+_ATTR_LIB_SORT_COLS: dict[str, str] = {
+    "label": "label",
+    "weight": "weight",
+    "created_at": "created_at",
+}
+
+
 async def db_list_entity_library(
     owner_sid: str,
     team_id: str | None = None,
@@ -52,9 +67,7 @@ async def db_list_entity_library(
     sort_by: str = "created_at",
     sort_dir: str = "asc",
 ) -> dict[str, Any]:
-    # Whitelist sort columns
-    allowed_sort = {"label", "gwm_id", "created_at"}
-    sort_col = sort_by if sort_by in allowed_sort else "created_at"
+    sort_col = _ENTITY_LIB_SORT_COLS.get(sort_by, "created_at")
     sort_direction = "DESC" if sort_dir.upper() == "DESC" else "ASC"
 
     # Search now covers label, gwm_id, and description
@@ -192,9 +205,7 @@ async def db_list_attribute_library(
     sort_by: str = "created_at",
     sort_dir: str = "asc",
 ) -> dict[str, Any]:
-    # Whitelist sort columns
-    allowed_sort = {"label", "weight", "created_at"}
-    sort_col = sort_by if sort_by in allowed_sort else "created_at"
+    sort_col = _ATTR_LIB_SORT_COLS.get(sort_by, "created_at")
     sort_direction = "DESC" if sort_dir.upper() == "DESC" else "ASC"
 
     # Search covers label and description
@@ -404,7 +415,7 @@ async def db_import_attributes_from_library(
         rows = await conn.fetch(
             f"""
             WITH source AS (
-                SELECT DISTINCT ON (LOWER(TRIM(label)))
+                SELECT
                     TRIM(label) AS label,
                     description,
                     weight
@@ -412,7 +423,6 @@ async def db_import_attributes_from_library(
                 WHERE id = ANY($2::uuid[])
                   AND TRIM(COALESCE(label, '')) != ''
                   {ownership_filter}
-                ORDER BY LOWER(TRIM(label)), created_at
             )
             INSERT INTO playbook.attributes (campaign_id, label, description, weight)
             SELECT $1::uuid, s.label, s.description, s.weight

@@ -158,6 +158,8 @@ async def share_to_team(session_id: str, body: TeamShareBody, user=Depends(get_c
         session = await db_get_session(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
+        if session.get("owner_sid") != user["sub"]:
+            raise HTTPException(status_code=403, detail="Only the session owner can share")
         team = await db_get_team_by_id(body.team_id)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -236,6 +238,9 @@ class PinBody(BaseModel):
 @router.post("/{session_id}/pin", status_code=201)
 async def pin_session(session_id: str, body: PinBody, user=Depends(get_current_user)):
     try:
+        role = await db_get_member_role(body.team_id, user["sub"])
+        if role not in ("owner", "admin", "member"):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
         result = await db_pin_session(user["sub"], session_id, body.team_id)
         try:
             await db_record_activity(body.team_id, user["sub"], "pinned", {
@@ -253,6 +258,9 @@ async def pin_session(session_id: str, body: PinBody, user=Depends(get_current_u
 @router.delete("/{session_id}/pin", status_code=204)
 async def unpin_session(session_id: str, team_id: str, user=Depends(get_current_user)):
     try:
+        role = await db_get_member_role(team_id, user["sub"])
+        if role not in ("owner", "admin", "member"):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
         await db_unpin_session(user["sub"], session_id, team_id)
     except DatabaseNotConfigured:
         raise _no_db()
@@ -336,12 +344,30 @@ async def get_presence(session_id: str, user=Depends(get_current_user)):
 @router.get("/{session_id}/diff")
 async def get_session_diff(session_id: str, user=Depends(get_optional_user)):
     try:
-        diff = await db_get_session_diff(session_id)
-        if diff is None:
-            raise HTTPException(status_code=404, detail="No previous version found")
-        return diff
+        row = await db_get_session(session_id)
     except DatabaseNotConfigured:
         raise _no_db()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    # Apply the same access rules as get_session
+    visibility = row.get("visibility", "private")
+    if visibility == "private":
+        if not user or row.get("owner_sid") != user.get("sub"):
+            raise HTTPException(status_code=403, detail="Access denied")
+    elif visibility == "team":
+        if not user:
+            raise HTTPException(status_code=403, detail="Access denied")
+        session_team_ids = set(await db_get_session_teams(session_id))
+        user_team_ids = {t["id"] for t in await db_list_user_teams(user["sub"])}
+        if not session_team_ids & user_team_ids:
+            raise HTTPException(status_code=403, detail="Access denied")
+    try:
+        diff = await db_get_session_diff(session_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if diff is None:
+        raise HTTPException(status_code=404, detail="No previous version found")
+    return diff
 
 
 # ── Export ────────────────────────────────────────────────────────────────────
@@ -364,19 +390,23 @@ async def export_session(
     report = row.get("report_markdown", "")
     title = row.get("title", "Research Report")
 
+    # Strip characters that could inject additional header fields or break the
+    # Content-Disposition value (quotes, newlines, semicolons, backslashes).
+    safe_title = "".join(c for c in title if c not in '"\\\r\n;').strip() or "report"
+
     if format == "docx":
         docx_bytes = markdown_to_docx(title, report)
         return Response(
             content=docx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f'attachment; filename="{title}.docx"'},
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}.docx"'},
         )
 
     # Default: markdown
     return Response(
         content=report,
         media_type="text/markdown",
-        headers={"Content-Disposition": f'attachment; filename="{title}.md"'},
+        headers={"Content-Disposition": f'attachment; filename="{safe_title}.md"'},
     )
 
 
