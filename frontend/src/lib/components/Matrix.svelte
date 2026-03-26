@@ -82,6 +82,35 @@
 	let focusRow = $state(0);
 	let focusCol = $state(0);
 
+	// ── Search / filter ───────────────────────────────────────────────────
+	let searchQuery = $state('');
+	let searchOpen = $state(false);
+	let searchInputEl = $state<HTMLInputElement | null>(null);
+
+	// Auto-focus the search input when it opens
+	$effect(() => {
+		if (searchOpen && searchInputEl) {
+			searchInputEl.focus();
+			searchInputEl.select();
+		}
+	});
+
+	function openSearch() {
+		searchOpen = true;
+	}
+
+	function closeSearch() {
+		searchOpen = false;
+		searchQuery = '';
+		scrollContainer?.focus();
+	}
+
+	let filteredEntities = $derived.by(() => {
+		if (!searchQuery) return entities;
+		const q = searchQuery.toLowerCase();
+		return entities.filter((e) => (e.label || '').toLowerCase().includes(q));
+	});
+
 	// ── Selection ─────────────────────────────────────────────────────────
 	let canCompare = $derived(selectedEntityIds.size >= 2 && selectedEntityIds.size <= 5);
 	let selectionCount = $derived(selectedEntityIds.size);
@@ -271,16 +300,16 @@
 	// ── Virtual dimensions ────────────────────────────────────────────────
 	let fixedColsWidth = $derived(ENTITY_COL_WIDTH + (selectable ? CHECKBOX_COL_WIDTH : 0));
 	let totalWidth = $derived(fixedColsWidth + totalColsWidth + (hasScores ? SCORE_COL_WIDTH : 0));
-	let totalHeight = $derived(HEADER_HEIGHT + entities.length * ROW_HEIGHT);
+	let totalHeight = $derived(HEADER_HEIGHT + filteredEntities.length * ROW_HEIGHT);
 
 	// ── Visible row range ─────────────────────────────────────────────────
 	let startRow = $derived(
 		Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - ROW_OVERSCAN)
 	);
 	let endRow = $derived(
-		Math.min(entities.length, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + ROW_OVERSCAN)
+		Math.min(filteredEntities.length, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + ROW_OVERSCAN)
 	);
-	let visibleEntities = $derived(entities.slice(startRow, endRow));
+	let visibleEntities = $derived(filteredEntities.slice(startRow, endRow));
 
 	// ── Visible column range (binary search on prefix sums) ──────────────
 	let startCol = $derived.by(() => {
@@ -295,7 +324,7 @@
 
 	// ── Padding for off-screen rows/columns ───────────────────────────────
 	let topPadding = $derived(startRow * ROW_HEIGHT);
-	let bottomPadding = $derived(Math.max(0, (entities.length - endRow) * ROW_HEIGHT));
+	let bottomPadding = $derived(Math.max(0, (filteredEntities.length - endRow) * ROW_HEIGHT));
 	let leftColPadding = $derived(colOffsets[startCol] ?? 0);
 	let rightColPadding = $derived(Math.max(0, (colOffsets[orderedAttributes.length] ?? 0) - (colOffsets[endCol] ?? 0)));
 
@@ -404,7 +433,7 @@
 			e.preventDefault();
 			commitEntityEdit(entity);
 			// Advance to next/prev row (Shift+Tab = prev)
-			const maxRow = entities.length - 1;
+			const maxRow = filteredEntities.length - 1;
 			if (e.shiftKey) {
 				focusRow = Math.max(focusRow - 1, 0);
 			} else {
@@ -449,7 +478,14 @@
 		// If we're in inline edit mode, delegate to the input handler
 		if (editingEntityId) return;
 
-		const maxRow = entities.length - 1;
+		// Cmd+F / Ctrl+F → open search
+		if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+			e.preventDefault();
+			openSearch();
+			return;
+		}
+
+		const maxRow = filteredEntities.length - 1;
 		const maxCol = orderedAttributes.length - 1;
 		if (maxRow < 0 || maxCol < 0) return;
 
@@ -607,12 +643,59 @@
 	</div>
 {/if}
 
-<!-- Grid dimensions indicator -->
+<!-- Toolbar: search + grid dimensions -->
 {#if entities.length > 0}
-	<div class="flex items-center gap-2 mb-1 px-1 text-xs text-slate-500">
-		<span>{entities.length.toLocaleString()} rows</span>
-		<span class="text-navy-600">&times;</span>
-		<span>{orderedAttributes.length} columns</span>
+	<div class="flex items-center gap-3 mb-1 px-1">
+		<!-- Search bar (expandable) -->
+		<div class="flex items-center gap-1.5">
+			{#if searchOpen}
+				<div class="flex items-center gap-1 bg-navy-800 border border-navy-600 focus-within:border-gold/50 rounded-lg px-2 py-1 transition-all">
+					<svg class="w-3 h-3 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+					</svg>
+					<input
+						bind:this={searchInputEl}
+						bind:value={searchQuery}
+						type="search"
+						placeholder="Filter entities…"
+						class="bg-transparent text-xs text-slate-200 placeholder-slate-600 outline-none w-36"
+						aria-label="Filter entities by name"
+						onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeSearch(); } }}
+					/>
+					{#if searchQuery}
+						<span class="text-slate-500 text-xs shrink-0">{filteredEntities.length}/{entities.length}</span>
+					{/if}
+					<button
+						onclick={closeSearch}
+						class="text-slate-600 hover:text-slate-400 transition-colors ml-0.5"
+						aria-label="Close search"
+					>
+						<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+						</svg>
+					</button>
+				</div>
+			{:else}
+				<button
+					onclick={openSearch}
+					class="flex items-center gap-1 text-slate-600 hover:text-slate-400 transition-colors"
+					aria-label="Search entities (Cmd+F)"
+					title="Search entities (Cmd+F)"
+				>
+					<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+					</svg>
+					<span class="text-xs">Search</span>
+				</button>
+			{/if}
+		</div>
+
+		<!-- Dimension count -->
+		<span class="text-xs text-slate-500 ml-auto">
+			{filteredEntities.length.toLocaleString()}{searchQuery ? `/${entities.length.toLocaleString()}` : ''} rows
+			<span class="text-navy-600 mx-1">&times;</span>
+			{orderedAttributes.length} columns
+		</span>
 	</div>
 {/if}
 
@@ -623,7 +706,7 @@
 	onscroll={handleScroll}
 	role="grid"
 	aria-label="Attribute validation matrix — Arrow keys navigate, Enter/Space to view, Tab moves columns, F2 to edit label, Escape to exit"
-	aria-rowcount={entities.length + 1}
+	aria-rowcount={filteredEntities.length + 1}
 	aria-colcount={orderedAttributes.length + (selectable ? 2 : 1)}
 	tabindex="0"
 	onkeydown={handleKeydown}

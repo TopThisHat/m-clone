@@ -96,11 +96,19 @@
 	let templateName = $state('');
 	let _tplLoaded = false;
 
+	let templatesLoading = $state(false);
+
 	async function loadTemplates() {
 		if (_tplLoaded) return;
 		_tplLoaded = true;
-		try { templates = await templatesApi.list(); } catch { /* ignore */ }
+		templatesLoading = true;
+		try { templates = await templatesApi.list(); } catch { /* ignore */ } finally { templatesLoading = false; }
 	}
+
+	// Load templates eagerly when entering step 3
+	$effect(() => {
+		if (step === 3) loadTemplates();
+	});
 
 	async function applyTemplate(tpl: AttributeTemplate) {
 		if (!campaign) return;
@@ -682,6 +690,40 @@
 						<span class="text-sm text-green-400 font-medium">{attrCount} added</span>
 					{/if}
 				</div>
+
+				<!-- Template picker (shown at top of step 3 if templates available) -->
+				{#if attrCount === 0}
+					<div class="mb-5 pb-5 border-b border-navy-700">
+						<p class="text-xs text-slate-400 mb-2.5">
+							{#if templatesLoading}
+								<span class="text-slate-600">Loading templates…</span>
+							{:else if templates.length > 0}
+								Start from a template, or add attributes manually below.
+							{:else}
+								Add your first attribute below, or
+								<button type="button" onclick={() => { showAttrUpload = !showAttrUpload; }}
+									class="text-gold hover:text-gold-light underline transition-colors">upload a CSV</button>.
+							{/if}
+						</p>
+						{#if templates.length > 0}
+							<div class="grid grid-cols-2 gap-2">
+								{#each templates as tpl (tpl.id)}
+									<button
+										type="button"
+										onclick={() => applyTemplate(tpl)}
+										class="flex items-start justify-between px-3 py-2.5 bg-navy-800 border border-navy-700 rounded-xl hover:border-gold/40 hover:bg-gold/5 text-left transition-all group"
+									>
+										<div class="min-w-0">
+											<p class="text-sm text-slate-200 group-hover:text-gold font-medium truncate">{tpl.name}</p>
+											<p class="text-xs text-slate-500 mt-0.5">{tpl.attributes.length} attribute{tpl.attributes.length === 1 ? '' : 's'}</p>
+										</div>
+										<span class="text-gold text-xs ml-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">Apply →</span>
+									</button>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
 
 				<!-- Quick add -->
 				<form onsubmit={quickAddAttr} class="mb-4 space-y-2">
