@@ -5,17 +5,20 @@
 		value = '',
 		placeholder = 'Enter text...',
 		disabled = false,
+		conflict = false,
 		onchange,
 	}: {
 		value?: string;
 		placeholder?: string;
 		disabled?: boolean;
+		conflict?: boolean;
 		onchange?: (value: string) => void;
 	} = $props();
 
 	let editing = $state(false);
 	let draft = $state('');
 	let textarea: HTMLTextAreaElement | undefined = $state();
+	let cancelled = false;
 
 	// Sync draft when value prop changes externally
 	$effect(() => {
@@ -47,6 +50,7 @@
 	}
 
 	function save() {
+		if (cancelled) { cancelled = false; return; }
 		if (overLimit) return;
 		const trimmed = draft.trim();
 		editing = false;
@@ -56,6 +60,7 @@
 	}
 
 	function cancel() {
+		cancelled = true;
 		draft = value;
 		editing = false;
 	}
@@ -104,7 +109,8 @@
 		class="w-full text-left text-sm px-2 py-1.5 rounded-md min-h-[2rem]
 			text-slate-300 hover:bg-navy-700 transition-colors truncate
 			{disabled ? 'cursor-not-allowed opacity-60' : 'cursor-text'}
-			{!value ? 'text-slate-500 italic' : ''}"
+			{!value ? 'text-slate-500 italic' : ''}
+			{conflict ? 'conflict-flash' : ''}"
 		onclick={startEditing}
 		{disabled}
 		title={value || placeholder}

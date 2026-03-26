@@ -3,11 +3,13 @@
 		value = null,
 		disabled = false,
 		label = '',
+		conflict = false,
 		onchange,
 	}: {
 		value?: boolean | null;
 		disabled?: boolean;
 		label?: string;
+		conflict?: boolean;
 		onchange?: (value: boolean | null) => void;
 	} = $props();
 
@@ -55,7 +57,8 @@
 	title="Click to cycle: {stateLabel} → {nextStateLabel}"
 	class="flex items-center justify-center w-8 h-8 rounded-md transition-all
 		focus-visible:ring-2 focus-visible:ring-gold/60 focus-visible:outline-none
-		{disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-navy-700'}"
+		{disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-navy-700'}
+		{conflict ? 'conflict-flash' : ''}"
 	onclick={toggle}
 	onkeydown={handleKeydown}
 	{disabled}

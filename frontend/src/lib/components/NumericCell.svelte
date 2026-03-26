@@ -6,6 +6,7 @@
 		step = 1,
 		placeholder = '0',
 		disabled = false,
+		conflict = false,
 		onchange,
 	}: {
 		value?: number | null;
@@ -14,12 +15,14 @@
 		step?: number;
 		placeholder?: string;
 		disabled?: boolean;
+		conflict?: boolean;
 		onchange?: (value: number | null) => void;
 	} = $props();
 
 	let editing = $state(false);
 	let draft = $state('');
 	let input: HTMLInputElement | undefined = $state();
+	let cancelled = false;
 
 	// Sync draft when value prop changes externally
 	$effect(() => {
@@ -58,6 +61,7 @@
 	}
 
 	function save() {
+		if (cancelled) { cancelled = false; return; }
 		const parsed = parsedValue;
 		const err = error;
 		if (err) {
@@ -74,6 +78,7 @@
 	}
 
 	function cancel() {
+		cancelled = true;
 		draft = value !== null ? String(value) : '';
 		editing = false;
 	}
@@ -119,7 +124,8 @@
 		class="w-full text-right text-sm px-2 py-1.5 rounded-md h-8 tabular-nums
 			text-slate-300 hover:bg-navy-700 transition-colors
 			{disabled ? 'cursor-not-allowed opacity-60' : 'cursor-text'}
-			{!displayValue() ? 'text-slate-500 italic text-center' : ''}"
+			{!displayValue() ? 'text-slate-500 italic text-center' : ''}
+			{conflict ? 'conflict-flash' : ''}"
 		onclick={startEditing}
 		{disabled}
 		aria-label={displayValue() ? `Edit: ${displayValue()}` : placeholder}

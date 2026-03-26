@@ -81,6 +81,7 @@
 	// ── Keyboard focus ────────────────────────────────────────────────────
 	let focusRow = $state(0);
 	let focusCol = $state(0);
+	let gridFocused = $state(false);
 
 	// ── Search / filter ───────────────────────────────────────────────────
 	let searchQuery = $state('');
@@ -710,6 +711,10 @@
 	aria-colcount={orderedAttributes.length + (selectable ? 2 : 1)}
 	tabindex="0"
 	onkeydown={handleKeydown}
+	onfocus={() => (gridFocused = true)}
+	onblur={(e) => {
+		if (!scrollContainer?.contains(e.relatedTarget as Node | null)) gridFocused = false;
+	}}
 >
 	<table
 		class="text-sm border-collapse"
@@ -809,7 +814,7 @@
 				{@const labelConflict = labelStore.isConflicted(entity.id)}
 				<tr
 					class="border-t border-navy-700 hover:bg-navy-800
-						{focusRow === rowIdx ? 'ring-1 ring-gold/30 ring-inset' : ''}
+						{gridFocused && focusRow === rowIdx ? 'ring-1 ring-gold/30 ring-inset' : ''}
 						{isChecked ? 'bg-gold/5' : ''}"
 					aria-rowindex={rowIdx + 2}
 					style="height: {ROW_HEIGHT}px"
@@ -905,7 +910,7 @@
 							<button
 								class="w-11 h-11 rounded text-sm font-bold transition-all hover:opacity-80 {cellClass(cell, cached, lowConf)}
 									{cell || cached ? 'cursor-pointer' : 'cursor-default'}
-									{focusRow === rowIdx && focusCol === globalCol ? 'ring-2 ring-gold' : ''}"
+									{gridFocused && focusRow === rowIdx && focusCol === globalCol ? 'ring-2 ring-gold' : ''}"
 								onclick={() => handleClick(cell)}
 								title={cached ? `Cached from ${cached.source_campaign_name}` : (cell?.evidence ?? '')}
 								aria-label={cellAriaLabel(entity, attr, cell, cached)}

@@ -11,6 +11,7 @@
 		placeholder = 'Select...',
 		disabled = false,
 		searchable = true,
+		conflict = false,
 		onchange,
 	}: {
 		value?: string | null;
@@ -18,6 +19,7 @@
 		placeholder?: string;
 		disabled?: boolean;
 		searchable?: boolean;
+		conflict?: boolean;
 		onchange?: (value: string | null) => void;
 	} = $props();
 
@@ -179,7 +181,8 @@
 			class="flex-1 flex items-center gap-1.5 text-sm px-2 py-1.5 rounded-md h-8
 				text-slate-300 hover:bg-navy-700 transition-colors text-left
 				{disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}
-				{open ? 'bg-navy-700 ring-1 ring-gold/40' : ''}"
+				{open ? 'bg-navy-700 ring-1 ring-gold/40' : ''}
+				{conflict ? 'conflict-flash' : ''}"
 			onclick={openDropdown}
 			onkeydown={handleTriggerKeydown}
 			{disabled}
