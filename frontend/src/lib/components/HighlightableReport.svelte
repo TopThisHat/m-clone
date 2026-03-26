@@ -280,11 +280,11 @@
 					{tooltipComment.author_name?.charAt(0).toUpperCase() ?? '?'}
 				</div>
 				<span class="font-medium text-slate-200">{tooltipComment.author_name}</span>
-				<span class="text-slate-600 text-[10px]">{new Date(tooltipComment.created_at).toLocaleDateString()}</span>
+				<span class="text-slate-600 text-xs">{new Date(tooltipComment.created_at).toLocaleDateString()}</span>
 			</div>
 			<!-- Anchor context (Feature 5) -->
 			{#if tooltipComment.highlight_anchor && (tooltipComment.highlight_anchor.context_before || tooltipComment.highlight_anchor.context_after)}
-				<p class="text-slate-600 text-[10px] leading-relaxed mb-1.5 italic line-clamp-2">
+				<p class="text-slate-600 text-xs leading-relaxed mb-1.5 italic line-clamp-2">
 					…{tooltipComment.highlight_anchor.context_before.slice(-30)}<strong class="text-slate-400 not-italic">"{tooltipComment.highlight_anchor.quote}"</strong>{tooltipComment.highlight_anchor.context_after.slice(0, 30)}…
 				</p>
 			{/if}
@@ -293,9 +293,9 @@
 				{@html highlightMentions(tooltipComment.body)}
 			</p>
 			{#if tooltipComment.comment_type === 'suggestion' && tooltipComment.proposed_text}
-				<p class="text-green-400/70 text-[10px] mt-1">→ {tooltipComment.proposed_text}</p>
+				<p class="text-green-400/70 text-xs mt-1">→ {tooltipComment.proposed_text}</p>
 			{/if}
-			<p class="text-gold text-[10px] mt-1.5">Click to view thread →</p>
+			<p class="text-gold text-xs mt-1.5">Click to view thread →</p>
 		</div>
 	{/if}
 </div>

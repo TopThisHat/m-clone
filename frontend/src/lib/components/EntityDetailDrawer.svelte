@@ -21,6 +21,48 @@
 	let crossResults = $state<CrossCampaignResult[]>([]);
 	let showCross = $state(false);
 
+	// ── Focus trap ────────────────────────────────────────────────────────
+	let drawer: HTMLDivElement | undefined = $state();
+
+	function trapFocus(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			onClose();
+			return;
+		}
+		if (e.key !== 'Tab' || !drawer) return;
+
+		const focusable = drawer.querySelectorAll<HTMLElement>(
+			'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+		);
+		if (focusable.length === 0) return;
+
+		const first = focusable[0];
+		const last = focusable[focusable.length - 1];
+
+		if (e.shiftKey) {
+			if (document.activeElement === first) {
+				e.preventDefault();
+				last.focus();
+			}
+		} else {
+			if (document.activeElement === last) {
+				e.preventDefault();
+				first.focus();
+			}
+		}
+	}
+
+	// Focus the drawer on mount
+	$effect(() => {
+		if (drawer) {
+			const firstFocusable = drawer.querySelector<HTMLElement>(
+				'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+			);
+			firstFocusable?.focus();
+		}
+	});
+
 	onMount(async () => {
 		if (score.gwm_id) {
 			try {
@@ -70,11 +112,19 @@
 	<div class="fixed inset-0 bg-black/40"></div>
 
 	<!-- Drawer panel -->
-	<div class="relative z-50 w-full max-w-md bg-navy-900 border-l border-navy-700 h-full overflow-y-auto flex flex-col shadow-2xl">
+	<div
+		bind:this={drawer}
+		class="relative z-50 w-full max-w-md bg-navy-900 border-l border-navy-700 h-full overflow-y-auto flex flex-col shadow-2xl"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="entity-drawer-title"
+		tabindex="-1"
+		onkeydown={trapFocus}
+	>
 		<!-- Header -->
 		<div class="sticky top-0 bg-navy-900 border-b border-navy-700 px-5 py-4 flex items-start gap-3">
 			<div class="flex-1 min-w-0">
-				<h2 class="font-medium text-slate-200 truncate">{score.entity_label ?? score.entity_id}</h2>
+				<h2 id="entity-drawer-title" class="font-medium text-slate-200 truncate">{score.entity_label ?? score.entity_id}</h2>
 				{#if score.gwm_id}
 					<p class="text-xs text-slate-600 font-mono mt-0.5">{score.gwm_id}</p>
 				{/if}
@@ -87,7 +137,7 @@
 				>
 					{revalidating ? '…' : '↻ Re-run'}
 				</button>
-				<button onclick={onClose} class="text-slate-500 hover:text-slate-300 p-1" aria-label="Close detail drawer">
+				<button onclick={onClose} class="text-slate-500 hover:text-slate-300 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Close detail drawer">
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
 					</svg>
@@ -100,15 +150,15 @@
 			<div class="grid grid-cols-3 gap-3 mb-3">
 				<div class="text-center">
 					<p class="text-2xl font-mono font-bold text-gold">{scoreRaw}</p>
-					<p class="text-[10px] text-slate-500 mt-0.5">Score</p>
+					<p class="text-xs text-slate-500 mt-0.5">Score</p>
 				</div>
 				<div class="text-center">
 					<p class="text-2xl font-mono font-bold text-green-400">{score.attributes_present}</p>
-					<p class="text-[10px] text-slate-500 mt-0.5">Present</p>
+					<p class="text-xs text-slate-500 mt-0.5">Present</p>
 				</div>
 				<div class="text-center">
 					<p class="text-2xl font-mono font-bold text-slate-400">{coveragePct}<span class="text-sm text-slate-600">%</span></p>
-					<p class="text-[10px] text-slate-500 mt-0.5">Coverage</p>
+					<p class="text-xs text-slate-500 mt-0.5">Coverage</p>
 				</div>
 			</div>
 			<!-- Score bar -->
@@ -124,7 +174,7 @@
 			{:else}
 				<!-- Present attributes -->
 				{#if present.length > 0}
-					<p class="text-[10px] text-slate-600 uppercase tracking-widest mb-2">Present ({present.length})</p>
+					<p class="text-xs text-slate-600 uppercase tracking-widest mb-2">Present ({present.length})</p>
 					{#each present as r (r.id)}
 						{@const attr = attrByLabel.get(r.attribute_label ?? '')}
 						<div class="bg-navy-800 border border-navy-700 rounded-lg overflow-hidden">
@@ -140,12 +190,12 @@
 											<div class="flex-1 h-0.5 bg-navy-700 rounded-full max-w-20">
 												<div class="h-0.5 rounded-full bg-green-500" style="width:{r.confidence * 100}%"></div>
 											</div>
-											<span class="text-[10px] text-slate-500">{(r.confidence * 100).toFixed(0)}%</span>
+											<span class="text-xs text-slate-500">{(r.confidence * 100).toFixed(0)}%</span>
 										</div>
 									{/if}
 								</div>
 								{#if attr}
-									<span class="text-[10px] text-slate-600 bg-navy-700 px-1.5 py-0.5 rounded flex-shrink-0">w:{attr.weight.toFixed(1)}</span>
+									<span class="text-xs text-slate-600 bg-navy-700 px-1.5 py-0.5 rounded flex-shrink-0">w:{attr.weight.toFixed(1)}</span>
 								{/if}
 								<svg class="w-3 h-3 text-slate-600 flex-shrink-0 transition-transform {expandedResult === r.id ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
 							</button>
@@ -153,13 +203,13 @@
 								<div class="border-t border-navy-700 px-3 py-3 space-y-2">
 									{#if r.evidence}
 										<div>
-											<p class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Evidence</p>
+											<p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Evidence</p>
 											<p class="text-xs text-slate-300 leading-relaxed">{r.evidence}</p>
 										</div>
 									{/if}
 									{#if r.report_md}
 										<details>
-											<summary class="text-[10px] text-slate-500 uppercase tracking-wider cursor-pointer hover:text-gold">Research report ▸</summary>
+											<summary class="text-xs text-slate-500 uppercase tracking-wider cursor-pointer hover:text-gold">Research report ▸</summary>
 											<div class="mt-2 prose prose-xs max-w-none text-xs bg-navy-900 rounded p-2 max-h-48 overflow-y-auto">
 												<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 												{@html renderMd(r.report_md)}
@@ -177,7 +227,7 @@
 
 				<!-- Absent attributes -->
 				{#if absent.length > 0}
-					<p class="text-[10px] text-slate-600 uppercase tracking-widest mb-2 mt-4">Absent ({absent.length})</p>
+					<p class="text-xs text-slate-600 uppercase tracking-widest mb-2 mt-4">Absent ({absent.length})</p>
 					{#each absent as r (r.id)}
 						<div class="bg-navy-800/50 border border-navy-700/50 rounded-lg overflow-hidden">
 							<button
@@ -188,7 +238,7 @@
 								<div class="flex-1 min-w-0">
 									<p class="text-sm text-slate-400 truncate">{r.attribute_label}</p>
 									{#if r.confidence != null}
-										<span class="text-[10px] text-slate-600">{(r.confidence * 100).toFixed(0)}% conf</span>
+										<span class="text-xs text-slate-600">{(r.confidence * 100).toFixed(0)}% conf</span>
 									{/if}
 								</div>
 								<svg class="w-3 h-3 text-slate-600 flex-shrink-0 transition-transform {expandedResult === r.id ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
@@ -209,7 +259,7 @@
 					{@const checkedLabels = new Set(entityResults.map((r) => r.attribute_label))}
 					{@const unchecked = attributes.filter((a) => !checkedLabels.has(a.label))}
 					{#if unchecked.length > 0}
-						<p class="text-[10px] text-slate-600 uppercase tracking-widest mb-2 mt-4">Not validated ({unchecked.length})</p>
+						<p class="text-xs text-slate-600 uppercase tracking-widest mb-2 mt-4">Not validated ({unchecked.length})</p>
 						{#each unchecked as attr (attr.id)}
 							<div class="flex items-center gap-3 px-3 py-2 bg-navy-800/30 border border-navy-700/30 rounded-lg">
 								<span class="text-slate-600 text-sm">—</span>
@@ -224,13 +274,13 @@
 			{#if otherCampaignResults.length > 0}
 				<button
 					onclick={() => (showCross = !showCross)}
-					class="w-full text-left text-[10px] text-slate-600 uppercase tracking-widest mt-4 hover:text-gold transition-colors"
+					class="w-full text-left text-xs text-slate-600 uppercase tracking-widest mt-4 hover:text-gold transition-colors"
 				>
 					Across campaigns ({otherCampaignResults.length} results) {showCross ? '▾' : '▸'}
 				</button>
 				{#if showCross}
 					<div class="space-y-1 mt-2">
-						{#each otherCampaignResults as cr}
+						{#each otherCampaignResults as cr (cr.campaign_id + '-' + cr.attribute_label)}
 							<div class="flex items-center gap-2 px-2 py-1.5 bg-navy-800/50 rounded text-xs">
 								<span class="{cr.present ? 'text-green-400' : 'text-red-400'}">{cr.present ? '✓' : '✗'}</span>
 								<span class="text-slate-300 flex-1 min-w-0 truncate">{cr.attribute_label}</span>

@@ -91,7 +91,7 @@
 			aria-label="Edit text"
 		></textarea>
 		<span
-			class="absolute bottom-0.5 right-1.5 text-[10px] select-none
+			class="absolute bottom-0.5 right-1.5 text-xs select-none
 				{overLimit ? 'text-red-400' : remaining <= 50 ? 'text-yellow-400' : 'text-slate-500'}"
 			aria-live="polite"
 		>

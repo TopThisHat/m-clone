@@ -84,7 +84,7 @@
 				<button
 					onclick={() => requestTransition(t.target, t.destructive)}
 					{disabled}
-					class="text-xs px-3 py-1.5 rounded-lg border transition-all
+					class="text-xs px-3 min-h-[44px] rounded-lg border transition-all
 						{t.destructive
 							? 'border-red-800 text-red-400 hover:bg-red-950 hover:border-red-700'
 							: 'border-navy-600 text-slate-300 hover:bg-navy-700 hover:text-gold hover:border-gold/30'}
@@ -111,13 +111,13 @@
 			<button
 				bind:this={confirmBtn}
 				onclick={confirmTransition}
-				class="text-xs px-2.5 py-1 rounded border border-red-700 text-red-300 hover:bg-red-900 transition-colors"
+				class="text-xs px-3 min-h-[44px] rounded border border-red-700 text-red-300 hover:bg-red-900 transition-colors"
 			>
 				Confirm
 			</button>
 			<button
 				onclick={cancelConfirm}
-				class="text-xs px-2.5 py-1 rounded border border-navy-600 text-slate-400 hover:bg-navy-700 transition-colors"
+				class="text-xs px-3 min-h-[44px] rounded border border-navy-600 text-slate-400 hover:bg-navy-700 transition-colors"
 			>
 				Cancel
 			</button>

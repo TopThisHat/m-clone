@@ -137,12 +137,23 @@
 		close();
 	}
 
+	let triggerElement: HTMLElement | null = $state(null);
+
+	// Capture the trigger element when overlay opens
+	$effect(() => {
+		if (open) {
+			triggerElement = document.activeElement as HTMLElement | null;
+		}
+	});
+
 	function close() {
 		query = '';
 		results = { campaigns: [], entities: [], attributes: [], programs: [] };
 		highlightIndex = 0;
 		activeFilter = 'all';
 		onclose?.();
+		// Return focus to the element that triggered the overlay
+		queueMicrotask(() => triggerElement?.focus());
 	}
 
 	// ── Keyboard handling ─────────────────────────────────────────────────
@@ -295,7 +306,7 @@
 				{#if loading}
 					<div class="w-4 h-4 border-2 border-gold/30 border-t-gold rounded-full animate-spin"></div>
 				{/if}
-				<kbd class="text-[10px] text-slate-500 bg-navy-700 border border-navy-600 px-1.5 py-0.5 rounded font-mono">ESC</kbd>
+				<kbd class="text-xs text-slate-500 bg-navy-700 border border-navy-600 px-1.5 py-0.5 rounded font-mono">ESC</kbd>
 			</div>
 
 			<!-- Filter chips -->
@@ -304,7 +315,7 @@
 					{@const count = filter.key === 'all' ? totalCount : results[filter.key as keyof SearchResults]?.length ?? 0}
 					<button
 						onclick={() => { activeFilter = filter.key; highlightIndex = 0; }}
-						class="text-[11px] px-2.5 py-1 rounded-full border transition-all
+						class="text-xs px-2.5 py-1 rounded-full border transition-all
 							{activeFilter === filter.key
 								? 'bg-gold/10 border-gold/40 text-gold font-medium'
 								: 'bg-navy-800 border-navy-700 text-slate-400 hover:border-navy-600 hover:text-slate-300'}"
@@ -312,14 +323,14 @@
 					>
 						{filter.label}
 						{#if query.trim() && count > 0}
-							<span class="ml-1 text-[10px] opacity-70">{count}</span>
+							<span class="ml-1 text-xs opacity-70">{count}</span>
 						{/if}
 					</button>
 				{/each}
 			</div>
 
 			<!-- Results -->
-			<div class="flex-1 overflow-y-auto" role="listbox" aria-label="Search results">
+			<div class="flex-1 overflow-y-auto" role="listbox" aria-label="Search results" aria-live="polite">
 				{#if !query.trim()}
 					<div class="px-4 py-8 text-center text-sm text-slate-500">
 						Type to search across all data
@@ -344,7 +355,7 @@
 							onmouseenter={() => (highlightIndex = i)}
 						>
 							<!-- Type badge -->
-							<span class="text-[10px] px-1.5 py-0.5 rounded border shrink-0 {typeBadge(flat.type)}">
+							<span class="text-xs px-1.5 py-0.5 rounded border shrink-0 {typeBadge(flat.type)}">
 								{typeLabel(flat.type)}
 							</span>
 
@@ -356,7 +367,7 @@
 									{/each}
 								</p>
 								{#if flat.item.campaign_name}
-									<p class="text-[11px] text-slate-500 truncate">
+									<p class="text-xs text-slate-500 truncate">
 										in {flat.item.campaign_name}
 									</p>
 								{/if}
@@ -374,7 +385,7 @@
 			</div>
 
 			<!-- Footer hints -->
-			<div class="flex items-center gap-4 px-4 py-2 border-t border-navy-700/50 text-[10px] text-slate-600">
+			<div class="flex items-center gap-4 px-4 py-2 border-t border-navy-700/50 text-xs text-slate-600">
 				<span class="flex items-center gap-1">
 					<kbd class="bg-navy-700 border border-navy-600 px-1 py-0.5 rounded font-mono">&uarr;</kbd>
 					<kbd class="bg-navy-700 border border-navy-600 px-1 py-0.5 rounded font-mono">&darr;</kbd>

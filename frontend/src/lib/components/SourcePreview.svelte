@@ -6,6 +6,10 @@
 		urlMap: Map<string, string>;
 	}
 
+	function escapeHtml(str: string): string {
+		return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+	}
+
 	export function sourcePreview(node: HTMLElement, options: SourcePreviewOptions) {
 		let tooltip: HTMLDivElement | null = null;
 		let cleanup: (() => void)[] = [];
@@ -24,10 +28,17 @@
 			tooltip = document.createElement('div');
 			tooltip.className =
 				'fixed z-50 max-w-xs bg-navy-900 border border-navy-600 rounded-lg shadow-xl p-3 pointer-events-none';
-			tooltip.innerHTML = `
-				<div class="text-xs text-gold/70 font-medium mb-1">${domain}</div>
-				<div class="text-xs text-slate-400 leading-relaxed line-clamp-4">${snippet}</div>
-			`;
+
+			const domainEl = document.createElement('div');
+			domainEl.className = 'text-xs text-gold/70 font-medium mb-1';
+			domainEl.textContent = domain;
+
+			const snippetEl = document.createElement('div');
+			snippetEl.className = 'text-xs text-slate-400 leading-relaxed line-clamp-4';
+			snippetEl.textContent = snippet;
+
+			tooltip.appendChild(domainEl);
+			tooltip.appendChild(snippetEl);
 
 			const rect = anchor.getBoundingClientRect();
 			tooltip.style.left = `${Math.min(rect.left, window.innerWidth - 320)}px`;

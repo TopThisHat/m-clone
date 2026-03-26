@@ -78,7 +78,7 @@
 				<button
 					type="button"
 					onclick={handleClose}
-					class="text-slate-500 hover:text-slate-300 transition-colors"
+					class="text-slate-500 hover:text-slate-300 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
 					aria-label="Close"
 				>
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -124,7 +124,7 @@
 						maxlength="500"
 						class="w-full input-field resize-none"
 					></textarea>
-					<p class="text-[10px] text-slate-600 mt-1 text-right">{description.length}/500</p>
+					<p class="text-xs text-slate-600 mt-1 text-right">{description.length}/500</p>
 				</div>
 			</div>
 

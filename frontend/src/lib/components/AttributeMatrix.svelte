@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Entity } from '$lib/api/entities';
 	import type { Attribute } from '$lib/api/attributes';
-	import type { Result, Knowledge } from '$lib/api/jobs';
+	import type { Result, Knowledge, Score } from '$lib/api/jobs';
 	import HeatmapOverlay from './HeatmapOverlay.svelte';
 
 	let {
@@ -13,6 +13,7 @@
 		minConfidence = 0,
 		selectable = false,
 		selectedEntityIds = new Set<string>(),
+		scores = [],
 		oncellclick,
 		onselectionchange,
 		oncompare,
@@ -21,6 +22,7 @@
 		attributes: Attribute[];
 		results: Result[];
 		knowledge?: Knowledge[];
+		scores?: Score[];
 		campaignId?: string;
 		minConfidence?: number;
 		selectable?: boolean;
@@ -86,6 +88,37 @@
 				.map((k) => [`${k.gwm_id}:${k.attribute_label}`, k])
 		)
 	);
+
+	// Score column
+	let scoreMap = $derived(new Map(scores.map((s) => [s.entity_id, s])));
+	let hasScores = $derived(scores.length > 0);
+
+	// Per-attribute fill rate: count of entities with a result / total entities
+	let fillRates = $derived.by(() => {
+		const total = entities.length;
+		if (total === 0) return new Map<string, number>();
+		const counts = new Map<string, number>();
+		for (const attr of attributes) counts.set(attr.id, 0);
+		for (const r of results) {
+			const prev = counts.get(r.attribute_id);
+			if (prev !== undefined) counts.set(r.attribute_id, prev + 1);
+		}
+		return new Map([...counts.entries()].map(([id, c]) => [id, c / total]));
+	});
+
+	function fillRateColor(rate: number): string {
+		if (rate >= 0.8) return 'text-green-400';
+		if (rate >= 0.5) return 'text-gold';
+		if (rate >= 0.3) return 'text-orange-400';
+		return 'text-red-400';
+	}
+
+	function scoreGradient(score: number): string {
+		if (score >= 0.8) return 'bg-green-900 text-green-300 border-green-700';
+		if (score >= 0.5) return 'bg-yellow-900/50 text-yellow-300 border-yellow-700';
+		if (score >= 0.3) return 'bg-orange-950 text-orange-300 border-orange-800';
+		return 'bg-red-950 text-red-400 border-red-900';
+	}
 
 	// Virtual scrolling derived state
 	let useVirtualScroll = $derived(entities.length > VIRTUAL_THRESHOLD);
@@ -223,7 +256,7 @@
 	role="grid"
 	aria-label="Attribute validation matrix"
 	aria-rowcount={entities.length + 1}
-	aria-colcount={attributes.length + (selectable ? 2 : 1)}
+	aria-colcount={attributes.length + (selectable ? 2 : 1) + (hasScores ? 1 : 0)}
 	tabindex="0"
 	onkeydown={handleKeydown}
 >
@@ -297,6 +330,15 @@
 						</div>
 					</th>
 				{/each}
+				{#if hasScores}
+					<th
+						class="px-2 py-2 text-gold font-medium text-center sticky right-0 bg-navy-900 z-30 w-[90px] shadow-[-4px_0_8px_rgba(0,0,0,0.3)]"
+						role="columnheader"
+						scope="col"
+					>
+						Score
+					</th>
+				{/if}
 			</tr>
 		</thead>
 		<tbody>
@@ -344,7 +386,7 @@
 						{@const lowConf = minConfidence > 0 && cell != null && cell.confidence != null && cell.confidence < minConfidence}
 						<td class="px-2 py-2 text-center" role="gridcell" aria-colindex={ci + 2}>
 							<button
-								class="w-8 h-8 rounded text-sm font-bold transition-all hover:opacity-80 {cellClass(cell, cached, lowConf)}
+								class="w-11 h-11 rounded text-sm font-bold transition-all hover:opacity-80 {cellClass(cell, cached, lowConf)}
 								       {(cell || cached) ? 'cursor-pointer' : 'cursor-default'}
 								       {focusRow === rowIdx && focusCol === ci ? 'ring-2 ring-gold' : ''}"
 								onclick={() => handleClick(cell)}
@@ -356,10 +398,22 @@
 							</button>
 						</td>
 					{/each}
+					{#if hasScores}
+						{@const entityScore = scoreMap.get(entity.id)}
+						<td class="px-2 py-2 text-center sticky right-0 bg-navy-900 z-10 shadow-[-4px_0_8px_rgba(0,0,0,0.3)]" role="gridcell">
+							{#if entityScore}
+								<span class="inline-block px-2 py-1 rounded text-xs font-bold border {scoreGradient(entityScore.total_score)}">
+									{entityScore.total_score.toFixed(2)}
+								</span>
+							{:else}
+								<span class="text-slate-600">&mdash;</span>
+							{/if}
+						</td>
+					{/if}
 				</tr>
 			{:else}
 				<tr>
-					<td colspan={attributes.length + (selectable ? 2 : 1)} class="text-slate-500 text-center py-8">
+					<td colspan={attributes.length + (selectable ? 2 : 1) + (hasScores ? 1 : 0)} class="text-slate-500 text-center py-8">
 						No entities in this campaign.
 					</td>
 				</tr>
@@ -368,5 +422,27 @@
 				<tr style="height: {bottomPadding}px;" aria-hidden="true"><td></td></tr>
 			{/if}
 		</tbody>
+		{#if entities.length > 0}
+			<tfoot class="sticky bottom-0 z-20 bg-navy-900 border-t-2 border-navy-600">
+				<tr>
+					{#if selectable}
+						<td class="px-2 py-2"></td>
+					{/if}
+					<td class="px-3 py-2 text-xs text-slate-500 font-medium sticky left-0 bg-navy-900 z-30">
+						Fill rate
+					</td>
+					{#each attributes as attr (attr.id)}
+						{@const rate = fillRates.get(attr.id) ?? 0}
+						{@const pct = Math.round(rate * 100)}
+						<td class="px-2 py-2 text-center">
+							<span class="text-xs font-mono font-semibold {fillRateColor(rate)}">{pct}%</span>
+						</td>
+					{/each}
+					{#if hasScores}
+						<td class="px-2 py-2 sticky right-0 bg-navy-900 z-10 shadow-[-4px_0_8px_rgba(0,0,0,0.3)]"></td>
+					{/if}
+				</tr>
+			</tfoot>
+		{/if}
 	</table>
 </div>

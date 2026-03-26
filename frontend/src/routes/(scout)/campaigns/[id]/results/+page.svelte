@@ -44,6 +44,9 @@
 	// Entity detail drawer
 	let drawerScore = $state<Score | null>(null);
 
+	// Inline error for revalidation (replaces alert)
+	let revalidateError = $state('');
+
 	// Evidence modal (matrix tab)
 	let modalResult = $state<Result | null>(null);
 
@@ -112,7 +115,7 @@
 			liveResultOffset = 0;
 			selectedEntityIds = new Set();
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to start job');
+			revalidateError = err instanceof Error ? err.message : 'Failed to start job';
 		} finally {
 			revalidating = false;
 		}
@@ -307,6 +310,12 @@
 	{/if}
 
 	{#if error}<p class="text-red-400 mb-4" role="alert">{error}</p>{/if}
+	{#if revalidateError}
+		<div class="mb-4 bg-red-950 border border-red-700 rounded-xl px-4 py-2.5 text-red-300 text-sm flex items-center justify-between" role="alert">
+			<span>{revalidateError}</span>
+			<button onclick={() => (revalidateError = '')} class="text-red-400 hover:text-red-200 ml-2">Dismiss</button>
+		</div>
+	{/if}
 
 	{#if resultsTruncated}
 		<div class="mb-4 bg-amber-950 border border-amber-700 rounded-xl px-4 py-2.5 text-amber-300 text-sm" role="alert">
@@ -403,7 +412,9 @@
 			<button
 				onclick={() => { activeTab = val as 'scores' | 'matrix'; selectedEntityIds = new Set(); }}
 				role="tab"
+				id="tab-{val}"
 				aria-selected={activeTab === val}
+				aria-controls="tabpanel-{val}"
 				class="px-4 py-2 text-sm font-medium rounded-t-lg transition-colors
 					{activeTab === val ? 'bg-navy-700 text-gold' : 'text-slate-400 hover:text-slate-200'}"
 			>
@@ -417,6 +428,7 @@
 			<span class="flex gap-1" aria-hidden="true">{#each [0,1,2] as j}<span class="w-2 h-2 bg-gold/40 rounded-full animate-bounce" style="animation-delay:{j*0.15}s"></span>{/each}</span>
 		</div>
 	{:else if activeTab === 'scores'}
+		<div role="tabpanel" id="tabpanel-scores" aria-labelledby="tab-scores">
 		<ScoreBoard
 			scores={filteredScores}
 			{results}
@@ -428,7 +440,9 @@
 			onselect={(ids) => (selectedEntityIds = ids)}
 			onopen={(score) => (drawerScore = score)}
 		/>
+		</div>
 	{:else}
+		<div role="tabpanel" id="tabpanel-matrix" aria-labelledby="tab-matrix">
 		{#if comparisonLoading}
 			<div class="flex justify-center py-16" aria-live="polite" aria-busy="true" aria-label="Loading comparison">
 				<span class="flex gap-1" aria-hidden="true">{#each [0,1,2] as j}<span class="w-2 h-2 bg-gold/40 rounded-full animate-bounce" style="animation-delay:{j*0.15}s"></span>{/each}</span>
@@ -449,6 +463,7 @@
 					{knowledge}
 					{campaignId}
 					{minConfidence}
+					{scores}
 					selectable={true}
 					selectedEntityIds={matrixSelectedIds}
 					oncellclick={(r) => (modalResult = r)}
@@ -457,6 +472,7 @@
 				/>
 			</div>
 		{/if}
+		</div>
 	{/if}
 </div>
 
@@ -474,9 +490,11 @@
 
 <!-- Evidence modal (matrix) -->
 {#if modalResult}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
 		role="presentation"
-		onmousedown={() => (modalResult = null)}>
+		onmousedown={() => (modalResult = null)}
+		onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); modalResult = null; } }}>
 		<div class="bg-navy-800 border border-navy-600 rounded-xl w-full max-w-lg shadow-2xl p-6 max-h-[80vh] overflow-y-auto"
 		role="dialog"
 		aria-modal="true"
@@ -488,7 +506,7 @@
 					<p id="evidence-modal-title" class="font-medium text-slate-200">{modalResult.entity_label}</p>
 					<p class="text-slate-400 text-sm">{modalResult.attribute_label}</p>
 				</div>
-				<button onclick={() => (modalResult = null)} aria-label="Close evidence panel" class="text-slate-500 hover:text-slate-300">✕</button>
+				<button onclick={() => (modalResult = null)} aria-label="Close evidence panel" class="text-slate-500 hover:text-slate-300 min-w-[44px] min-h-[44px] flex items-center justify-center">✕</button>
 			</div>
 			<div class="flex items-center gap-3 mb-4">
 				<span class="font-semibold {modalResult.present ? 'text-green-400' : 'text-red-400'}">{modalResult.present ? '✓ Present' : '✗ Absent'}</span>

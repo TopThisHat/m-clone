@@ -70,7 +70,7 @@
 		{#if oncreate}
 			<button
 				onclick={oncreate}
-				class="text-slate-500 hover:text-gold hover:bg-navy-800 rounded p-1 transition-colors"
+				class="text-slate-500 hover:text-gold hover:bg-navy-800 rounded min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors"
 				aria-label="Create new program"
 				title="New program"
 			>
@@ -102,14 +102,14 @@
 				aria-selected={selectedId === null}
 				onclick={() => select(null)}
 				onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(null); } }}
-				class="flex items-center gap-2 px-3 py-2 rounded cursor-pointer transition-colors text-xs
+				class="flex items-center gap-2 px-3 min-h-[44px] rounded cursor-pointer transition-colors text-xs
 					{selectedId === null
 						? 'bg-navy-800 text-gold font-medium border-l-2 border-gold'
 						: 'text-slate-400 hover:bg-navy-800/50 hover:text-slate-300 border-l-2 border-transparent'}"
 			>
-				<span class="text-[10px]" aria-hidden="true">◈</span>
+				<span class="text-xs" aria-hidden="true">◈</span>
 				All Programs
-				<span class="ml-auto text-[10px] text-slate-600 font-mono">{programs.length}</span>
+				<span class="ml-auto text-xs text-slate-600 font-mono">{programs.length}</span>
 			</div>
 
 			<!-- Program list -->
@@ -123,9 +123,9 @@
 					<span class="sr-only">Loading programs</span>
 				</div>
 			{:else if filtered.length === 0 && searchQuery.trim()}
-				<p class="text-[11px] text-slate-600 px-3 py-4 text-center">No matching programs.</p>
+				<p class="text-xs text-slate-600 px-3 py-4 text-center">No matching programs.</p>
 			{:else if programs.length === 0}
-				<p class="text-[11px] text-slate-600 px-3 py-4 text-center leading-relaxed">
+				<p class="text-xs text-slate-600 px-3 py-4 text-center leading-relaxed">
 					No programs yet.
 				</p>
 			{:else}
@@ -137,13 +137,13 @@
 						aria-selected={isSelected}
 						onclick={() => select(program.id)}
 						onkeydown={(e) => handleItemKeydown(e, program.id)}
-						class="group flex items-center gap-2 px-3 py-2 rounded cursor-pointer transition-colors text-xs
+						class="group flex items-center gap-2 px-3 min-h-[44px] rounded cursor-pointer transition-colors text-xs
 							{isSelected
 								? 'bg-navy-800 text-gold font-medium border-l-2 border-gold'
 								: 'text-slate-400 hover:bg-navy-800/50 hover:text-slate-300 border-l-2 border-transparent'}"
 					>
 						<span class="truncate flex-1" title={program.name}>{program.name}</span>
-						<span class="text-[10px] text-slate-600 font-mono flex-shrink-0">{program.campaign_count}</span>
+						<span class="text-xs text-slate-600 font-mono flex-shrink-0">{program.campaign_count}</span>
 					</div>
 				{/each}
 			{/if}

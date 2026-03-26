@@ -342,7 +342,7 @@
 			<span class="bg-gold text-navy text-[9px] font-bold rounded-full px-1.5 py-0.5 leading-none">{unseenCount} new</span>
 		{/if}
 		{#if $pendingAnchor}
-			<span class="ml-1 text-gold text-[10px] font-medium">● drafting</span>
+			<span class="ml-1 text-gold text-xs font-medium">● drafting</span>
 		{/if}
 		<span class="ml-auto">{open ? '▲' : '▼'}</span>
 	</button>
@@ -364,26 +364,26 @@
 					>
 						<!-- Root comment -->
 						<div class="flex gap-2.5 group">
-							<div class="w-6 h-6 rounded-full bg-navy-700 flex items-center justify-center text-[10px] text-gold font-bold flex-shrink-0 mt-0.5">
+							<div class="w-6 h-6 rounded-full bg-navy-700 flex items-center justify-center text-xs text-gold font-bold flex-shrink-0 mt-0.5">
 								{comment.author_name?.charAt(0).toUpperCase() ?? '?'}
 							</div>
 							<div class="flex-1 min-w-0">
 								<div class="flex items-baseline gap-2 flex-wrap">
 									<span class="text-xs font-medium text-slate-200">{comment.author_name}</span>
-									<span class="text-[10px] text-slate-700">{new Date(comment.created_at).toLocaleString()}</span>
+									<span class="text-xs text-slate-700">{new Date(comment.created_at).toLocaleString()}</span>
 									{#if isEdited(comment)}
-										<span class="text-[10px] text-slate-600 italic">(edited)</span>
+										<span class="text-xs text-slate-600 italic">(edited)</span>
 									{/if}
 									{#if $currentUser?.sid === comment.author_sid}
 										<button
 											onclick={() => startEdit(comment)}
-											class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-600 hover:text-gold transition-all"
+											class="opacity-0 group-hover:opacity-100 text-xs text-slate-600 hover:text-gold transition-all"
 										>
 											edit
 										</button>
 										<button
 											onclick={() => remove(comment.id)}
-											class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-600 hover:text-red-400 transition-all ml-auto"
+											class="opacity-0 group-hover:opacity-100 text-xs text-slate-600 hover:text-red-400 transition-all ml-auto"
 										>
 											delete
 										</button>
@@ -394,7 +394,7 @@
 								{#if comment.highlight_anchor?.quote}
 									<button
 										onclick={() => focusHighlight(comment)}
-										class="flex items-center gap-1 mt-1 mb-1 text-[10px] text-gold/70 hover:text-gold bg-gold/10 hover:bg-gold/20 rounded px-1.5 py-0.5 transition-colors max-w-full truncate"
+										class="flex items-center gap-1 mt-1 mb-1 text-xs text-gold/70 hover:text-gold bg-gold/10 hover:bg-gold/20 rounded px-1.5 py-0.5 transition-colors max-w-full truncate"
 										title="Click to jump to highlighted text"
 									>
 										<svg class="w-2.5 h-2.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -412,7 +412,7 @@
 
 								<!-- Suggestion badge -->
 								{#if comment.comment_type === 'suggestion'}
-									<div class="mt-1 mb-1 rounded border border-navy-600 p-1.5 text-[10px]">
+									<div class="mt-1 mb-1 rounded border border-navy-600 p-1.5 text-xs">
 										<div class="text-slate-500 mb-1">Suggestion</div>
 										{#if comment.proposed_text}
 											<div class="line-through text-red-400/70 truncate">{comment.highlight_anchor?.quote ?? '(original)'}</div>
@@ -449,11 +449,11 @@
 										<div class="flex gap-2 mt-1">
 											<button
 												onclick={() => saveEdit(comment.id)}
-												class="text-[10px] px-2 py-0.5 bg-gold text-navy rounded"
+												class="text-xs px-2 py-0.5 bg-gold text-navy rounded"
 											>Save</button>
 											<button
 												onclick={() => (editingId = null)}
-												class="text-[10px] text-slate-500 hover:text-slate-300"
+												class="text-xs text-slate-500 hover:text-slate-300"
 											>Cancel</button>
 										</div>
 									</div>
@@ -469,7 +469,7 @@
 									{#each Object.entries(comment.reactions ?? {}) as [emoji, sids] (emoji)}
 										<button
 											onclick={() => handleReaction(comment.id, emoji)}
-											class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border border-navy-600 hover:border-gold/30 transition-colors
+											class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs border border-navy-600 hover:border-gold/30 transition-colors
 												{$currentUser && sids.includes($currentUser.sid) ? 'bg-gold/10 border-gold/30 text-gold' : 'text-slate-400'}"
 										>
 											{emoji} <span>{sids.length}</span>
@@ -479,7 +479,7 @@
 										<div class="relative">
 											<button
 												onclick={() => (reactionPickerFor = reactionPickerFor === comment.id ? null : comment.id)}
-												class="text-[10px] text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
+												class="text-xs text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
 											>+</button>
 											{#if reactionPickerFor === comment.id}
 												<div class="absolute bottom-full left-0 mb-1 bg-navy-900 border border-navy-700 rounded-lg p-1.5 flex gap-1 z-30 shadow-xl">
@@ -497,7 +497,7 @@
 
 								<button
 									onclick={() => startReply(comment.id)}
-									class="text-[10px] text-slate-600 hover:text-slate-400 mt-1 transition-colors"
+									class="text-xs text-slate-600 hover:text-slate-400 mt-1 transition-colors"
 								>
 									Reply
 								</button>
@@ -514,19 +514,19 @@
 										</div>
 										<div class="flex-1 min-w-0">
 											<div class="flex items-baseline gap-2 flex-wrap">
-												<span class="text-[11px] font-medium text-slate-200">{reply.author_name}</span>
-												<span class="text-[10px] text-slate-700">{new Date(reply.created_at).toLocaleString()}</span>
+												<span class="text-xs font-medium text-slate-200">{reply.author_name}</span>
+												<span class="text-xs text-slate-700">{new Date(reply.created_at).toLocaleString()}</span>
 												{#if isEdited(reply)}
-													<span class="text-[10px] text-slate-600 italic">(edited)</span>
+													<span class="text-xs text-slate-600 italic">(edited)</span>
 												{/if}
 												{#if $currentUser?.sid === reply.author_sid}
 													<button
 														onclick={() => startEdit(reply)}
-														class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-600 hover:text-gold transition-all"
+														class="opacity-0 group-hover:opacity-100 text-xs text-slate-600 hover:text-gold transition-all"
 													>edit</button>
 													<button
 														onclick={() => remove(reply.id)}
-														class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-600 hover:text-red-400 transition-all ml-auto"
+														class="opacity-0 group-hover:opacity-100 text-xs text-slate-600 hover:text-red-400 transition-all ml-auto"
 													>delete</button>
 												{/if}
 											</div>
@@ -538,8 +538,8 @@
 														class="w-full bg-navy-800 border border-navy-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-gold/40 resize-none"
 													></textarea>
 													<div class="flex gap-2 mt-1">
-														<button onclick={() => saveEdit(reply.id)} class="text-[10px] px-2 py-0.5 bg-gold text-navy rounded">Save</button>
-														<button onclick={() => (editingId = null)} class="text-[10px] text-slate-500 hover:text-slate-300">Cancel</button>
+														<button onclick={() => saveEdit(reply.id)} class="text-xs px-2 py-0.5 bg-gold text-navy rounded">Save</button>
+														<button onclick={() => (editingId = null)} class="text-xs text-slate-500 hover:text-slate-300">Cancel</button>
 													</div>
 												</div>
 											{:else}
@@ -553,7 +553,7 @@
 												{#each Object.entries(reply.reactions ?? {}) as [emoji, sids] (emoji)}
 													<button
 														onclick={() => handleReaction(reply.id, emoji)}
-														class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border border-navy-600 hover:border-gold/30 transition-colors
+														class="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs border border-navy-600 hover:border-gold/30 transition-colors
 															{$currentUser && sids.includes($currentUser.sid) ? 'bg-gold/10 border-gold/30 text-gold' : 'text-slate-400'}"
 													>{emoji} {sids.length}</button>
 												{/each}
@@ -561,7 +561,7 @@
 													<div class="relative">
 														<button
 															onclick={() => (reactionPickerFor = reactionPickerFor === reply.id ? null : reply.id)}
-															class="text-[10px] text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
+															class="text-xs text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
 														>+</button>
 														{#if reactionPickerFor === reply.id}
 															<div class="absolute bottom-full left-0 mb-1 bg-navy-900 border border-navy-700 rounded-lg p-1.5 flex gap-1 z-30 shadow-xl">
@@ -587,7 +587,7 @@
 				<div class="mt-3 border-t border-navy-700/50 pt-3">
 					<!-- Context indicators -->
 					{#if currentAnchor}
-						<div class="flex items-start gap-1.5 mb-2 bg-gold/10 border border-gold/20 rounded px-2 py-1.5 text-[10px] text-gold">
+						<div class="flex items-start gap-1.5 mb-2 bg-gold/10 border border-gold/20 rounded px-2 py-1.5 text-xs text-gold">
 							<svg class="w-3 h-3 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
 								<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
 							</svg>
@@ -598,12 +598,12 @@
 						<div class="flex items-center gap-2 mb-2">
 							<button
 								onclick={() => { isSuggestion = !isSuggestion; }}
-								class="text-[10px] px-2 py-0.5 rounded border transition-colors {isSuggestion ? 'border-gold/40 text-gold bg-gold/10' : 'border-navy-700 text-slate-500 hover:text-slate-300'}"
+								class="text-xs px-2 py-0.5 rounded border transition-colors {isSuggestion ? 'border-gold/40 text-gold bg-gold/10' : 'border-navy-700 text-slate-500 hover:text-slate-300'}"
 							>{isSuggestion ? '✎ Suggestion mode' : 'Switch to suggestion'}</button>
 						</div>
 						{#if isSuggestion}
 							<div class="mb-2">
-								<label for="proposed-text" class="text-[10px] text-slate-500 mb-1 block">Proposed replacement text</label>
+								<label for="proposed-text" class="text-xs text-slate-500 mb-1 block">Proposed replacement text</label>
 								<textarea
 									id="proposed-text"
 									bind:value={proposedText}
@@ -616,7 +616,7 @@
 					{:else if replyingToId}
 						{@const parent = comments.find((c) => c.id === replyingToId)}
 						{#if parent}
-							<div class="flex items-center gap-1.5 mb-2 text-[10px] text-slate-500">
+							<div class="flex items-center gap-1.5 mb-2 text-xs text-slate-500">
 								<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
 								</svg>
@@ -627,7 +627,7 @@
 					{/if}
 
 					<div class="flex gap-2">
-						<div class="w-6 h-6 rounded-full bg-navy-700 flex items-center justify-center text-[10px] text-gold font-bold flex-shrink-0 mt-1">
+						<div class="w-6 h-6 rounded-full bg-navy-700 flex items-center justify-center text-xs text-gold font-bold flex-shrink-0 mt-1">
 							{$currentUser.display_name?.charAt(0).toUpperCase() ?? '?'}
 						</div>
 						<div class="flex-1 relative">
@@ -663,14 +663,14 @@
 											</div>
 											<div class="min-w-0">
 												<p class="text-xs text-slate-200 font-medium truncate">{user.display_name}</p>
-												<p class="text-[10px] text-slate-600 truncate">@{user.sid}</p>
+												<p class="text-xs text-slate-600 truncate">@{user.sid}</p>
 											</div>
 										</button>
 									{/each}
 								</div>
 							{:else if mentionVisible && mentionQuery.length > 0 && mentionUsersFetched && mentionUsers.length === 0}
 								<div class="absolute bottom-full left-0 mb-1 w-48 bg-navy-900 border border-navy-700 rounded-lg shadow-xl px-3 py-2 z-30">
-									<p class="text-[10px] text-slate-600">No team members found. Share this report with a team first.</p>
+									<p class="text-xs text-slate-600">No team members found. Share this report with a team first.</p>
 								</div>
 							{/if}
 
@@ -678,7 +678,7 @@
 								<p class="text-xs text-red-400 mt-1">{error}</p>
 							{/if}
 							<div class="flex items-center justify-between mt-1.5">
-								<span class="text-[10px] text-slate-700">⌘↵ to submit · Esc to cancel</span>
+								<span class="text-xs text-slate-700">⌘↵ to submit · Esc to cancel</span>
 								<button
 									onclick={submit}
 									disabled={!newBody.trim() || submitting}

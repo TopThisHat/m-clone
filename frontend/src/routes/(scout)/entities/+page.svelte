@@ -415,7 +415,7 @@
 				</div>
 				<div>
 					<label for="lib-ent-gwmid" class="block text-xs text-slate-400 mb-1">GWM ID</label>
-					<input id="lib-ent-gwmid" bind:value={newGwmId} placeholder="Optional identifier" class="input-field w-full" />
+					<input id="lib-ent-gwmid" bind:value={newGwmId} placeholder="e.g. GWM-12345" class="input-field w-full font-mono" />
 				</div>
 				<div>
 					<label for="lib-ent-desc" class="block text-xs text-slate-400 mb-1">Description</label>

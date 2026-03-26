@@ -463,7 +463,7 @@
 			{/if}
 
 			{#if createError}
-				<p class="text-red-400 text-sm">{createError}</p>
+				<p class="text-red-400 text-sm" role="alert">{createError}</p>
 			{/if}
 
 			<div class="flex gap-3 pt-1">
@@ -506,15 +506,15 @@
 						{addingEntity ? '...' : '+ Add'}
 					</button>
 				</form>
-				{#if entityError}<p class="text-red-400 text-xs mb-2">{entityError}</p>{/if}
+				{#if entityError}<p class="text-red-400 text-xs mb-2" role="alert">{entityError}</p>{/if}
 
 				<!-- Import options -->
 				<div class="flex items-center gap-4">
-					<button onclick={() => (showEntityUpload = !showEntityUpload)}
+					<button type="button" onclick={() => (showEntityUpload = !showEntityUpload)}
 						class="text-xs text-gold hover:text-gold-light underline transition-colors">
 						{showEntityUpload ? 'Hide' : 'Upload CSV / Excel instead'}
 					</button>
-					<button onclick={openEntityLibrary}
+					<button type="button" onclick={openEntityLibrary}
 						class="text-xs text-gold hover:text-gold-light underline transition-colors">
 						{showEntityLibrary ? 'Hide library' : 'Import from Library'}
 					</button>
@@ -538,7 +538,7 @@
 						<!-- Library panel header -->
 						<div class="flex items-center justify-between mb-3">
 							<h3 class="text-sm font-medium text-slate-300">Entity Library</h3>
-							<button onclick={() => { showEntityLibrary = false; }}
+							<button type="button" onclick={() => { showEntityLibrary = false; }}
 								class="text-slate-500 hover:text-slate-300 text-xs transition-colors">
 								Close
 							</button>
@@ -569,7 +569,7 @@
 							{#if showEntitySelectAllBanner}
 								<div class="bg-gold/10 border border-gold/20 rounded-lg px-3 py-2 text-center mb-2">
 									<span class="text-xs text-slate-300">All {libraryEntities.length} on this page selected.</span>
-									<button onclick={() => { selectAllEntitiesAcrossPages = true; }}
+									<button type="button" onclick={() => { selectAllEntitiesAcrossPages = true; }}
 										class="text-xs text-gold hover:text-gold-light font-medium ml-1">
 										Select all {libEntityTotal} items
 									</button>
@@ -577,7 +577,7 @@
 							{:else if selectAllEntitiesAcrossPages}
 								<div class="bg-gold/10 border border-gold/20 rounded-lg px-3 py-2 text-center mb-2">
 									<span class="text-xs text-gold font-medium">All {libEntityTotal} items selected.</span>
-									<button onclick={() => { selectAllEntitiesAcrossPages = false; libraryEntitySelectedIds = new SvelteSet(); }}
+									<button type="button" onclick={() => { selectAllEntitiesAcrossPages = false; libraryEntitySelectedIds = new SvelteSet(); }}
 										class="text-xs text-slate-400 hover:text-slate-300 ml-1">
 										Clear selection
 									</button>
@@ -597,18 +597,18 @@
 							</div>
 							{#if libEntityTotal > libPageSize}
 								<div class="flex items-center gap-2 mb-3">
-									<button onclick={() => { libEntityPage = Math.max(0, libEntityPage - 1); loadLibraryEntities(); }}
+									<button type="button" onclick={() => { libEntityPage = Math.max(0, libEntityPage - 1); loadLibraryEntities(); }}
 										disabled={libEntityPage === 0}
 										class="text-xs px-2 py-1 border border-navy-600 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30">← Prev</button>
 									<span class="text-xs text-slate-500">Page {libEntityPage + 1} of {Math.ceil(libEntityTotal / libPageSize)}</span>
-									<button onclick={() => { libEntityPage++; loadLibraryEntities(); }}
+									<button type="button" onclick={() => { libEntityPage++; loadLibraryEntities(); }}
 										disabled={libEntityPage >= Math.ceil(libEntityTotal / libPageSize) - 1}
 										class="text-xs px-2 py-1 border border-navy-600 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30">Next →</button>
 								</div>
 							{/if}
 							<!-- Sticky import button -->
 							<div class="sticky bottom-0 bg-navy-800 pt-2 border-t border-navy-700">
-								<button onclick={importFromEntityLibrary}
+								<button type="button" onclick={importFromEntityLibrary}
 									disabled={entityImportCount === 0 || importingEntityLib}
 									class="w-full bg-gold text-navy font-semibold px-3 py-2 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50 transition-colors">
 									{importingEntityLib ? 'Importing...' : `Import Selected (${entityImportCount})`}
@@ -622,8 +622,8 @@
 			<!-- Error banner after entity import -->
 			{#if entityImportError}
 				<div class="mt-4 bg-red-900/20 border border-red-800/40 rounded-xl px-5 py-4 flex items-center justify-between">
-					<p class="text-red-400 text-sm">{entityImportError}</p>
-					<button onclick={() => { entityImportError = ''; }} class="text-slate-500 hover:text-slate-300 text-xs ml-3">Dismiss</button>
+					<p class="text-red-400 text-sm" role="alert">{entityImportError}</p>
+					<button type="button" onclick={() => { entityImportError = ''; }} class="text-slate-500 hover:text-slate-300 text-xs ml-3">Dismiss</button>
 				</div>
 			{/if}
 
@@ -655,12 +655,12 @@
 				</div>
 				<div class="flex items-center gap-3">
 					{#if entityCount === 0}
-						<button onclick={() => (step = 3)}
+						<button type="button" onclick={() => (step = 3)}
 							class="text-slate-400 hover:text-slate-300 text-sm px-4 py-2 rounded-lg border border-navy-700 hover:border-navy-600 transition-colors">
 							Skip for now
 						</button>
 					{:else}
-						<button onclick={() => { lastEntityImportCount = 0; step = 3; }}
+						<button type="button" onclick={() => { lastEntityImportCount = 0; step = 3; }}
 							class="bg-gold text-navy font-semibold px-6 py-2.5 rounded-lg hover:bg-gold-light transition-colors text-sm shadow-lg shadow-gold/10">
 							Continue to Attributes →
 						</button>
@@ -703,11 +703,12 @@
 						</button>
 					</div>
 				</form>
-				{#if attrError}<p class="text-red-400 text-xs mb-2">{attrError}</p>{/if}
+				{#if attrError}<p class="text-red-400 text-xs mb-2" role="alert">{attrError}</p>{/if}
 
 				<!-- Templates -->
 				<div class="flex items-center gap-3 mb-3">
 					<button
+						type="button"
 						onclick={() => { showTemplates = !showTemplates; loadTemplates(); }}
 						class="text-xs text-gold hover:text-gold-light transition-colors underline"
 					>
@@ -716,7 +717,7 @@
 					{#if attrCount > 0}
 						<div class="flex items-center gap-1.5 ml-auto">
 							<input bind:value={templateName} placeholder="Template name..." aria-label="Template name" class="bg-navy-700 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-gold w-36" />
-							<button onclick={saveTemplate} disabled={savingTemplate || !templateName.trim()} class="text-xs text-slate-400 hover:text-gold border border-navy-600 px-2 py-1 rounded transition-colors disabled:opacity-50">
+							<button type="button" onclick={saveTemplate} disabled={savingTemplate || !templateName.trim()} class="text-xs text-slate-400 hover:text-gold border border-navy-600 px-2 py-1 rounded transition-colors disabled:opacity-50">
 								{savingTemplate ? '...' : 'Save as template'}
 							</button>
 						</div>
@@ -730,7 +731,7 @@
 						{:else}
 							<div class="space-y-1.5">
 								{#each templates as tpl (tpl.id)}
-									<button onclick={() => applyTemplate(tpl)} class="w-full flex items-center justify-between px-3 py-2 bg-navy-800 border border-navy-700 rounded-lg hover:border-gold/30 hover:text-gold text-left transition-all group">
+									<button type="button" onclick={() => applyTemplate(tpl)} class="w-full flex items-center justify-between px-3 py-2 bg-navy-800 border border-navy-700 rounded-lg hover:border-gold/30 hover:text-gold text-left transition-all group">
 										<div>
 											<p class="text-sm text-slate-200 group-hover:text-gold">{tpl.name}</p>
 											<p class="text-xs text-slate-500">{tpl.attributes.length} attributes</p>
@@ -745,11 +746,11 @@
 
 				<!-- Import options -->
 				<div class="flex items-center gap-4">
-					<button onclick={() => (showAttrUpload = !showAttrUpload)}
+					<button type="button" onclick={() => (showAttrUpload = !showAttrUpload)}
 						class="text-xs text-gold hover:text-gold-light underline transition-colors">
 						{showAttrUpload ? 'Hide' : 'Upload CSV / Excel instead'}
 					</button>
-					<button onclick={openAttrLibrary}
+					<button type="button" onclick={openAttrLibrary}
 						class="text-xs text-gold hover:text-gold-light underline transition-colors">
 						{showAttrLibrary ? 'Hide library' : 'Import from Library'}
 					</button>
@@ -773,7 +774,7 @@
 						<!-- Library panel header -->
 						<div class="flex items-center justify-between mb-3">
 							<h3 class="text-sm font-medium text-slate-300">Attribute Library</h3>
-							<button onclick={() => { showAttrLibrary = false; }}
+							<button type="button" onclick={() => { showAttrLibrary = false; }}
 								class="text-slate-500 hover:text-slate-300 text-xs transition-colors">
 								Close
 							</button>
@@ -804,7 +805,7 @@
 							{#if showAttrSelectAllBanner}
 								<div class="bg-gold/10 border border-gold/20 rounded-lg px-3 py-2 text-center mb-2">
 									<span class="text-xs text-slate-300">All {libraryAttrs.length} on this page selected.</span>
-									<button onclick={() => { selectAllAttrsAcrossPages = true; }}
+									<button type="button" onclick={() => { selectAllAttrsAcrossPages = true; }}
 										class="text-xs text-gold hover:text-gold-light font-medium ml-1">
 										Select all {libAttrTotal} items
 									</button>
@@ -812,7 +813,7 @@
 							{:else if selectAllAttrsAcrossPages}
 								<div class="bg-gold/10 border border-gold/20 rounded-lg px-3 py-2 text-center mb-2">
 									<span class="text-xs text-gold font-medium">All {libAttrTotal} items selected.</span>
-									<button onclick={() => { selectAllAttrsAcrossPages = false; libraryAttrSelectedIds = new SvelteSet(); }}
+									<button type="button" onclick={() => { selectAllAttrsAcrossPages = false; libraryAttrSelectedIds = new SvelteSet(); }}
 										class="text-xs text-slate-400 hover:text-slate-300 ml-1">
 										Clear selection
 									</button>
@@ -832,18 +833,18 @@
 							</div>
 							{#if libAttrTotal > libPageSize}
 								<div class="flex items-center gap-2 mb-3">
-									<button onclick={() => { libAttrPage = Math.max(0, libAttrPage - 1); loadLibraryAttrs(); }}
+									<button type="button" onclick={() => { libAttrPage = Math.max(0, libAttrPage - 1); loadLibraryAttrs(); }}
 										disabled={libAttrPage === 0}
 										class="text-xs px-2 py-1 border border-navy-600 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30">← Prev</button>
 									<span class="text-xs text-slate-500">Page {libAttrPage + 1} of {Math.ceil(libAttrTotal / libPageSize)}</span>
-									<button onclick={() => { libAttrPage++; loadLibraryAttrs(); }}
+									<button type="button" onclick={() => { libAttrPage++; loadLibraryAttrs(); }}
 										disabled={libAttrPage >= Math.ceil(libAttrTotal / libPageSize) - 1}
 										class="text-xs px-2 py-1 border border-navy-600 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30">Next →</button>
 								</div>
 							{/if}
 							<!-- Sticky import button -->
 							<div class="sticky bottom-0 bg-navy-800 pt-2 border-t border-navy-700">
-								<button onclick={importFromAttrLibrary}
+								<button type="button" onclick={importFromAttrLibrary}
 									disabled={attrImportCount === 0 || importingAttrLib}
 									class="w-full bg-gold text-navy font-semibold px-3 py-2 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50 transition-colors">
 									{importingAttrLib ? 'Importing...' : `Import Selected (${attrImportCount})`}
@@ -857,8 +858,8 @@
 			<!-- Error banner after attribute import -->
 			{#if attrImportError}
 				<div class="mt-4 bg-red-900/20 border border-red-800/40 rounded-xl px-5 py-4 flex items-center justify-between">
-					<p class="text-red-400 text-sm">{attrImportError}</p>
-					<button onclick={() => { attrImportError = ''; }} class="text-slate-500 hover:text-slate-300 text-xs ml-3">Dismiss</button>
+					<p class="text-red-400 text-sm" role="alert">{attrImportError}</p>
+					<button type="button" onclick={() => { attrImportError = ''; }} class="text-slate-500 hover:text-slate-300 text-xs ml-3">Dismiss</button>
 				</div>
 			{/if}
 
@@ -893,7 +894,7 @@
 			<!-- Enhanced bottom navigation for step 3 -->
 			<div class="mt-4 flex items-center justify-between bg-navy-800/50 border border-navy-700 rounded-xl px-5 py-4">
 				<div class="flex items-center gap-3">
-					<button onclick={() => { lastAttrImportCount = 0; step = 2; }} class="text-slate-500 hover:text-slate-400 text-sm transition-colors">← Back</button>
+					<button type="button" onclick={() => { lastAttrImportCount = 0; step = 2; }} class="text-slate-500 hover:text-slate-400 text-sm transition-colors">← Back</button>
 					{#if attrCount > 0}
 						<p class="text-xs text-slate-500">
 							<span class="text-slate-300 font-medium">{attrCount}</span> {attrCount === 1 ? 'attribute' : 'attributes'} ready
@@ -904,12 +905,12 @@
 				</div>
 				<div class="flex items-center gap-3">
 					{#if attrCount === 0}
-						<button onclick={finish}
+						<button type="button" onclick={finish}
 							class="text-slate-400 hover:text-slate-300 text-sm px-4 py-2 rounded-lg border border-navy-700 hover:border-navy-600 transition-colors">
 							Skip & Go to Campaign →
 						</button>
 					{:else}
-						<button onclick={finish}
+						<button type="button" onclick={finish}
 							class="bg-gold text-navy font-semibold px-6 py-2.5 rounded-lg hover:bg-gold-light transition-colors text-sm shadow-lg shadow-gold/10">
 							Done →
 						</button>

@@ -102,7 +102,7 @@
 				{#if onselect}
 					<button
 						onclick={(e) => toggleSelect(score.entity_id, e)}
-						class="pl-3 py-3 flex-shrink-0 text-slate-500 hover:text-gold transition-colors"
+						class="min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0 text-slate-500 hover:text-gold transition-colors"
 						title="Select for re-validation"
 					>
 						<div class="w-4 h-4 rounded border-2 flex items-center justify-center transition-all
@@ -128,16 +128,18 @@
 							<div class="flex items-center gap-1.5 ml-2 flex-shrink-0">
 								{#if score.score_stale}
 									<span
-										class="text-amber-400 text-[10px] px-1.5 py-0.5 rounded border border-amber-700 bg-amber-950 animate-pulse"
+										class="text-amber-400 text-xs px-1.5 py-0.5 rounded border border-amber-700 bg-amber-950 animate-pulse"
 										title="Score is being recalculated"
 										role="status"
+										tabindex="0"
+										aria-label="Score is being recalculated"
 									>recalculating</span>
 								{/if}
 								{#if hasCachedKnowledge(score.gwm_id)}
 									<span class="text-yellow-400 text-xs px-1 py-0.5 rounded border border-yellow-700 bg-yellow-950" title="Has cached knowledge">⚡</span>
 								{/if}
 								{#if score.last_updated}
-									<span class="text-[10px] {stalenessColor(score.last_updated)}" title="Last updated">{timeAgo(score.last_updated)}</span>
+									<span class="text-xs {stalenessColor(score.last_updated)}" title="Last updated">{timeAgo(score.last_updated)}</span>
 								{/if}
 							</div>
 						</div>

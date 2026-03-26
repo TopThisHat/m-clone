@@ -201,7 +201,7 @@
 		{#if selectedOption && !disabled}
 			<button
 				type="button"
-				class="text-slate-500 hover:text-slate-300 shrink-0 cursor-pointer p-1 rounded hover:bg-navy-700 transition-colors"
+				class="text-slate-500 hover:text-slate-300 shrink-0 cursor-pointer min-w-[44px] min-h-[44px] flex items-center justify-center rounded hover:bg-navy-700 transition-colors"
 				onclick={clearSelection}
 				aria-label="Clear selection"
 			>

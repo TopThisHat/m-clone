@@ -165,7 +165,7 @@
 				</button>
 				<button
 					onclick={onclose}
-					class="text-slate-500 hover:text-slate-300 p-1"
+					class="text-slate-500 hover:text-slate-300 min-w-[44px] min-h-[44px] flex items-center justify-center"
 					aria-label="Close detail panel"
 				>
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -192,15 +192,15 @@
 			<div class="grid grid-cols-3 gap-3 mb-3">
 				<div class="text-center">
 					<p class="text-2xl font-mono font-bold text-gold">{score.total_score.toFixed(2)}</p>
-					<p class="text-[10px] text-slate-500 mt-0.5">Score</p>
+					<p class="text-xs text-slate-500 mt-0.5">Score</p>
 				</div>
 				<div class="text-center">
 					<p class="text-2xl font-mono font-bold text-green-400">{score.attributes_present}</p>
-					<p class="text-[10px] text-slate-500 mt-0.5">Present</p>
+					<p class="text-xs text-slate-500 mt-0.5">Present</p>
 				</div>
 				<div class="text-center">
 					<p class="text-2xl font-mono font-bold text-slate-400">{coveragePct}<span class="text-sm text-slate-600">%</span></p>
-					<p class="text-[10px] text-slate-500 mt-0.5">Coverage</p>
+					<p class="text-xs text-slate-500 mt-0.5">Coverage</p>
 				</div>
 			</div>
 			<div class="h-1.5 bg-navy-700 rounded-full overflow-hidden">
@@ -218,7 +218,7 @@
 
 		<!-- Score breakdown table -->
 		<div class="flex-1 px-5 py-4">
-			<h3 class="text-[10px] text-slate-500 uppercase tracking-widest mb-3">
+			<h3 class="text-xs text-slate-500 uppercase tracking-widest mb-3">
 				Score Breakdown ({breakdown.length} attributes)
 			</h3>
 
@@ -226,7 +226,7 @@
 				<p class="text-slate-500 text-sm text-center py-8">No attributes configured.</p>
 			{:else}
 				<!-- Column headers -->
-				<div class="grid grid-cols-[auto_1fr_3.5rem_4rem_4.5rem] gap-x-2 px-3 py-1.5 text-[10px] text-slate-600 uppercase tracking-wider border-b border-navy-700 mb-1">
+				<div class="grid grid-cols-[auto_1fr_3.5rem_4rem_4.5rem] gap-x-2 px-3 py-1.5 text-xs text-slate-600 uppercase tracking-wider border-b border-navy-700 mb-1">
 					<span></span>
 					<span>Attribute</span>
 					<span class="text-right">Weight</span>
@@ -291,13 +291,13 @@
 								<div class="border-t border-navy-700 px-3 py-3 space-y-2">
 									{#if row.result.evidence}
 										<div>
-											<p class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Evidence</p>
+											<p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Evidence</p>
 											<p class="text-xs text-slate-300 leading-relaxed">{row.result.evidence}</p>
 										</div>
 									{/if}
 									{#if row.attribute.description}
 										<div>
-											<p class="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Attribute Description</p>
+											<p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Attribute Description</p>
 											<p class="text-xs text-slate-400 leading-relaxed">{row.attribute.description}</p>
 										</div>
 									{/if}

@@ -145,6 +145,7 @@
 		{ label: 'Attributes', href: 'attributes' },
 		{ label: 'Jobs', href: 'jobs' },
 		{ label: 'Results', href: 'results' },
+		{ label: 'Rankings', href: 'rankings' },
 		{ label: 'Knowledge', href: 'knowledge' },
 		{ label: 'Trends', href: 'trends' },
 		{ label: 'Failed Jobs', href: 'dead-jobs' },
