@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import TeamSwitcher from '$lib/components/TeamSwitcher.svelte';
+	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -21,6 +22,8 @@
 		{ label: 'Attributes', href: '/attributes' },
 	];
 
+	let searchOpen = $state(false);
+
 	let currentPath = $derived(page.url.pathname);
 
 	function isActive(href: string) {
@@ -34,7 +37,7 @@
 	<div class="flex items-center justify-between mb-5 flex-wrap gap-3">
 		<!-- Page nav -->
 		<nav aria-label="Scout" class="flex items-center gap-1">
-			{#each NAV as item}
+			{#each NAV as item (item.href)}
 				<a
 					href={item.href}
 					aria-current={isActive(item.href) ? 'page' : undefined}
@@ -54,3 +57,9 @@
 
 	{@render children()}
 </div>
+
+<SearchOverlay
+	open={searchOpen}
+	onopen={() => (searchOpen = true)}
+	onclose={() => (searchOpen = false)}
+/>

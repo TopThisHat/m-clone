@@ -110,19 +110,34 @@
 		}
 	}
 
-	function backdropClick(e: MouseEvent) {
-		if ((e.target as HTMLElement).dataset.backdrop) onClose();
+	let dialogEl: HTMLDialogElement | undefined = $state();
+	let triggerEl: HTMLElement | null = null;
+
+	$effect(() => {
+		if (dialogEl) {
+			triggerEl = document.activeElement as HTMLElement | null;
+			dialogEl.showModal();
+		}
+	});
+
+	function handleClose() {
+		queueMicrotask(() => triggerEl?.focus());
+		onClose();
+	}
+
+	function handleBackdropClick(e: MouseEvent) {
+		if (e.target === dialogEl) dialogEl?.close();
 	}
 </script>
 
-<!-- Backdrop -->
-<div
-	class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-	data-backdrop="true"
-	onmousedown={backdropClick}
-	role="presentation"
+<dialog
+	bind:this={dialogEl}
+	class="bg-transparent p-0 m-auto backdrop:bg-black/60 backdrop:backdrop-blur-sm max-w-md w-full"
+	aria-label="Share report"
+	onclose={handleClose}
+	onclick={handleBackdropClick}
 >
-	<div class="bg-navy-900 border border-navy-600 rounded-xl shadow-2xl w-full max-w-md mx-4" role="dialog" aria-modal="true" aria-label="Share report">
+	<div class="bg-navy-900 border border-navy-600 rounded-xl shadow-2xl w-full mx-4">
 		<!-- Header -->
 		<div class="flex items-center justify-between px-5 py-4 border-b border-navy-700">
 			<div>
@@ -144,7 +159,7 @@
 			{#if loading}
 				<div class="flex justify-center py-6">
 					<span class="flex gap-1">
-						{#each [0, 1, 2] as j}
+						{#each [0, 1, 2] as j (j)}
 							<span class="w-1.5 h-1.5 bg-gold/40 rounded-full animate-bounce" style="animation-delay: {j * 0.15}s"></span>
 						{/each}
 					</span>
@@ -152,7 +167,7 @@
 			{:else}
 				<!-- Visibility toggle -->
 				<div class="grid grid-cols-3 gap-2">
-					{#each [['private', 'Private', 'Only you'], ['team', 'Team', 'Shared teams'], ['public', 'Public', 'Anyone with link']] as [val, label, sub]}
+					{#each [['private', 'Private', 'Only you'], ['team', 'Team', 'Shared teams'], ['public', 'Public', 'Anyone with link']] as [val, label, sub] (val)}
 						<button
 							onclick={() => applyMode(val as Mode)}
 							disabled={saving}
@@ -176,7 +191,7 @@
 								</svg>
 							{/if}
 							<span class="text-xs font-medium">{label}</span>
-							<span class="text-[10px] opacity-60 leading-tight">{sub}</span>
+							<span class="text-xs opacity-60 leading-tight">{sub}</span>
 						</button>
 					{/each}
 				</div>
@@ -243,9 +258,9 @@
 							</button>
 						</div>
 						{#if mode === 'team'}
-							<p class="text-[11px] text-slate-600 mt-1.5">Team members with access can use this link to view and comment.</p>
+							<p class="text-xs text-slate-600 mt-1.5">Team members with access can use this link to view and comment.</p>
 						{:else}
-							<p class="text-[11px] text-slate-600 mt-1.5">Anyone with this link can view the report (read-only).</p>
+							<p class="text-xs text-slate-600 mt-1.5">Anyone with this link can view the report (read-only).</p>
 						{/if}
 					</div>
 				{/if}
@@ -256,4 +271,4 @@
 			{/if}
 		</div>
 	</div>
-</div>
+</dialog>
