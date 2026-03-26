@@ -7,6 +7,7 @@
 	let attributes = $state<LibraryAttribute[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let actionError = $state('');
 	let totalCount = $state(0);
 
 	// Pagination & search
@@ -170,7 +171,7 @@
 			attributes = attributes.map((a) => (a.id === id ? updated : a));
 			cancelEdit(id);
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to save');
+			actionError = err instanceof Error ? err.message : 'Failed to save';
 		}
 	}
 
@@ -180,7 +181,7 @@
 			await libraryAttributesApi.delete(id);
 			loadAttributes($scoutTeam, debouncedSearch, currentPage, pageSize, sortBy, sortDir);
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to delete');
+			actionError = err instanceof Error ? err.message : 'Failed to delete';
 		}
 	}
 
@@ -217,7 +218,7 @@
 			document.body.removeChild(a);
 			URL.revokeObjectURL(url);
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to export');
+			actionError = err instanceof Error ? err.message : 'Failed to export';
 		} finally {
 			exporting = false;
 		}
@@ -388,7 +389,14 @@
 	{/if}
 
 	<!-- Loading / Empty State -->
-	{#if loading}
+	{#if actionError}
+	<div class="bg-red-950 border border-red-700 rounded-xl px-4 py-3 text-red-300 text-sm mb-4 flex items-center justify-between" role="alert">
+		<span>{actionError}</span>
+		<button onclick={() => (actionError = '')} class="text-red-400 hover:text-red-200 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Dismiss error">✕</button>
+	</div>
+{/if}
+
+{#if loading}
 		<p class="text-slate-500">Loading…</p>
 	{:else if displayedAttributes().length === 0}
 		<div class="text-center py-12 text-slate-500">

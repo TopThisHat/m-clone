@@ -112,6 +112,12 @@
 		return entities.filter((e) => (e.label || '').toLowerCase().includes(q));
 	});
 
+	// Clamp focusRow when search filter changes row count
+	$effect(() => {
+		const maxRow = filteredEntities.length - 1;
+		if (focusRow > maxRow) focusRow = Math.max(0, maxRow);
+	});
+
 	// ── Selection ─────────────────────────────────────────────────────────
 	let canCompare = $derived(selectedEntityIds.size >= 2 && selectedEntityIds.size <= 5);
 	let selectionCount = $derived(selectedEntityIds.size);
@@ -276,6 +282,18 @@
 			localStorage.setItem(STORAGE_KEY_PREFIX + campaignId, JSON.stringify(colWidths));
 		}
 		resizingCol = null;
+	}
+
+	const RESIZE_STEP = 16;
+
+	function handleResizeKeydown(e: KeyboardEvent, attrId: string) {
+		if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+		e.preventDefault();
+		e.stopPropagation();
+		const delta = e.key === 'ArrowRight' ? RESIZE_STEP : -RESIZE_STEP;
+		const newWidth = Math.max(MIN_COL_WIDTH, getColWidth(attrId) + delta);
+		colWidths = { ...colWidths, [attrId]: newWidth };
+		if (campaignId) localStorage.setItem(STORAGE_KEY_PREFIX + campaignId, JSON.stringify(colWidths));
 	}
 
 	// ── Per-attribute fill rate ───────────────────────────────────────────
@@ -513,22 +531,27 @@
 				break;
 			case 'Tab': {
 				// Tab navigates columns; Shift+Tab goes backwards.
-				// When hitting an edge, wrap to next/prev row.
-				e.preventDefault();
+				// At grid edges, let focus escape naturally (don't trap).
 				if (e.shiftKey) {
 					if (focusCol > 0) {
+						e.preventDefault();
 						focusCol--;
 					} else if (focusRow > 0) {
+						e.preventDefault();
 						focusRow--;
 						focusCol = maxCol;
 					}
+					// else: Shift+Tab at first cell — let focus escape to previous element
 				} else {
 					if (focusCol < maxCol) {
+						e.preventDefault();
 						focusCol++;
 					} else if (focusRow < maxRow) {
+						e.preventDefault();
 						focusRow++;
 						focusCol = 0;
 					}
+					// else: Tab at last cell — let focus escape to next element
 				}
 				scrollToCell(focusRow, focusCol);
 				break;
@@ -536,7 +559,7 @@
 			case 'Enter':
 			case ' ': {
 				e.preventDefault();
-				const entity = entities[focusRow];
+				const entity = filteredEntities[focusRow];
 				const attr = orderedAttributes[focusCol];
 				if (entity && attr) {
 					handleClick(getCell(entity.id, attr.id));
@@ -546,7 +569,7 @@
 			case 'F2': {
 				// F2 = enter edit mode for entity label (standard spreadsheet shortcut)
 				e.preventDefault();
-				const entity = entities[focusRow];
+				const entity = filteredEntities[focusRow];
 				if (entity) startEntityEdit(entity);
 				break;
 			}
@@ -753,7 +776,7 @@
 					{@const w = getColWidth(attr.id)}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<th
-						class="relative px-1 py-2 text-slate-400 font-medium text-center whitespace-nowrap overflow-hidden text-ellipsis border-b border-navy-700 select-none {dragOverAttrId === attr.id && draggingAttrId !== attr.id ? 'border-l-2 border-l-gold' : ''} {draggingAttrId === attr.id ? 'opacity-40' : ''}"
+						class="group relative px-1 py-2 text-slate-400 font-medium text-center whitespace-nowrap overflow-hidden text-ellipsis border-b border-navy-700 select-none {dragOverAttrId === attr.id && draggingAttrId !== attr.id ? 'border-l-2 border-l-gold' : ''} {draggingAttrId === attr.id ? 'opacity-40' : ''}"
 						style="width: {w}px; min-width: {w}px"
 						title="{attr.label} (weight: {attr.weight})"
 						role="columnheader"
@@ -768,11 +791,16 @@
 						<span class="block truncate text-xs pr-2 pl-4 cursor-grab">{attr.label}</span>
 						<!-- Drag grip icon -->
 						<span class="absolute left-0.5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400 text-[10px] opacity-0 group-hover:opacity-100 pointer-events-none" aria-hidden="true">⠿</span>
-						<!-- Resize handle -->
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<!-- Resize handle (keyboard: Left/Right arrow keys) -->
+						<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+						<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 						<div
-							class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-gold/40 transition-colors {resizingCol === attr.id ? 'bg-gold/60' : ''}"
+							class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-gold/40 transition-colors focus-visible:bg-gold/60 outline-none {resizingCol === attr.id ? 'bg-gold/60' : ''}"
+							role="separator"
+							aria-label="Resize {attr.label} column"
+							tabindex="0"
 							onmousedown={(e) => startResize(attr.id, e)}
+							onkeydown={(e) => handleResizeKeydown(e, attr.id)}
 						></div>
 					</th>
 				{/each}

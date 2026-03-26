@@ -50,13 +50,17 @@
 	}
 
 	function save() {
-		if (cancelled) { cancelled = false; return; }
-		if (overLimit) return;
-		const trimmed = draft.trim();
-		editing = false;
-		if (trimmed !== value && onchange) {
-			onchange(trimmed);
-		}
+		// Use queueMicrotask to let cancel() run first if both fire in same tick
+		queueMicrotask(() => {
+			if (cancelled) { cancelled = false; return; }
+			if (!editing) return; // already cancelled
+			if (overLimit) return;
+			const trimmed = draft.trim();
+			editing = false;
+			if (trimmed !== value && onchange) {
+				onchange(trimmed);
+			}
+		});
 	}
 
 	function cancel() {

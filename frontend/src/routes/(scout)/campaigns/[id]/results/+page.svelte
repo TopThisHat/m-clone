@@ -49,6 +49,22 @@
 
 	// Evidence modal (matrix tab)
 	let modalResult = $state<Result | null>(null);
+	let evidenceDialogEl = $state<HTMLDialogElement | null>(null);
+	let evidenceTriggerEl: HTMLElement | null = null;
+
+	$effect(() => {
+		if (modalResult && evidenceDialogEl) {
+			evidenceTriggerEl = document.activeElement as HTMLElement | null;
+			evidenceDialogEl.showModal();
+		} else if (!modalResult && evidenceDialogEl && evidenceDialogEl.open) {
+			evidenceDialogEl.close();
+			queueMicrotask(() => evidenceTriggerEl?.focus());
+		}
+	});
+
+	function closeEvidenceModal() {
+		modalResult = null;
+	}
 
 	// Comparison view state
 	let comparisonData = $state<ComparisonOut | null>(null);
@@ -488,46 +504,41 @@
 	/>
 {/if}
 
-<!-- Evidence modal (matrix) -->
-{#if modalResult}
-	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-	<div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-		role="presentation"
-		onmousedown={() => (modalResult = null)}
-		onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); modalResult = null; } }}>
-		<div class="bg-navy-800 border border-navy-600 rounded-xl w-full max-w-lg shadow-2xl p-6 max-h-[80vh] overflow-y-auto"
-		role="dialog"
-		aria-modal="true"
-		aria-labelledby="evidence-modal-title"
-		tabindex="-1"
-		onmousedown={(e) => e.stopPropagation()}>
-			<div class="flex items-start justify-between mb-4">
-				<div>
-					<p id="evidence-modal-title" class="font-medium text-slate-200">{modalResult.entity_label}</p>
-					<p class="text-slate-400 text-sm">{modalResult.attribute_label}</p>
-				</div>
-				<button onclick={() => (modalResult = null)} aria-label="Close evidence panel" class="text-slate-500 hover:text-slate-300 min-w-[44px] min-h-[44px] flex items-center justify-center">✕</button>
+<!-- Evidence modal (matrix) — native <dialog> with focus trap and return-focus -->
+<dialog
+	bind:this={evidenceDialogEl}
+	class="bg-navy-800 border border-navy-600 rounded-xl w-full max-w-lg shadow-2xl p-6 max-h-[80vh] overflow-y-auto backdrop:bg-black/70"
+	aria-labelledby="evidence-modal-title"
+	onclose={closeEvidenceModal}
+	onclick={(e) => { if (e.target === e.currentTarget) closeEvidenceModal(); }}
+>
+	{#if modalResult}
+		<div class="flex items-start justify-between mb-4">
+			<div>
+				<p id="evidence-modal-title" class="font-medium text-slate-200">{modalResult.entity_label}</p>
+				<p class="text-slate-400 text-sm">{modalResult.attribute_label}</p>
 			</div>
-			<div class="flex items-center gap-3 mb-4">
-				<span class="font-semibold {modalResult.present ? 'text-green-400' : 'text-red-400'}">{modalResult.present ? '✓ Present' : '✗ Absent'}</span>
-				{#if modalResult.confidence != null}
-					<span class="text-slate-400 text-sm">({(modalResult.confidence * 100).toFixed(0)}% confidence)</span>
-				{/if}
-			</div>
-			{#if modalResult.evidence}
-				<div class="mb-4">
-					<p class="text-xs text-slate-500 mb-1 uppercase tracking-wide">Evidence</p>
-					<p class="text-slate-300 text-sm">{modalResult.evidence}</p>
-				</div>
-			{/if}
-			{#if modalResult.report_md}
-				<div>
-					<p class="text-xs text-slate-500 mb-1 uppercase tracking-wide">Research Report</p>
-					<div class="prose prose-sm prose-invert max-w-none bg-navy-900 rounded-lg p-3 max-h-64 overflow-y-auto">
-						{@html sanitizeHtml(marked.parse(modalResult.report_md) as string)}
-					</div>
-				</div>
+			<button onclick={closeEvidenceModal} aria-label="Close evidence panel" class="text-slate-500 hover:text-slate-300 min-w-[44px] min-h-[44px] flex items-center justify-center">✕</button>
+		</div>
+		<div class="flex items-center gap-3 mb-4">
+			<span class="font-semibold {modalResult.present ? 'text-green-400' : 'text-red-400'}">{modalResult.present ? '✓ Present' : '✗ Absent'}</span>
+			{#if modalResult.confidence != null}
+				<span class="text-slate-400 text-sm">({(modalResult.confidence * 100).toFixed(0)}% confidence)</span>
 			{/if}
 		</div>
-	</div>
-{/if}
+		{#if modalResult.evidence}
+			<div class="mb-4">
+				<p class="text-xs text-slate-500 mb-1 uppercase tracking-wide">Evidence</p>
+				<p class="text-slate-300 text-sm">{modalResult.evidence}</p>
+			</div>
+		{/if}
+		{#if modalResult.report_md}
+			<div>
+				<p class="text-xs text-slate-500 mb-1 uppercase tracking-wide">Research Report</p>
+				<div class="prose prose-sm prose-invert max-w-none bg-navy-900 rounded-lg p-3 max-h-64 overflow-y-auto">
+					{@html sanitizeHtml(marked.parse(modalResult.report_md) as string)}
+				</div>
+			</div>
+		{/if}
+	{/if}
+</dialog>

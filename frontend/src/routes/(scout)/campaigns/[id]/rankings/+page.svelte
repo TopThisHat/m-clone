@@ -74,17 +74,20 @@
 		return sortAsc ? ' \u2191' : ' \u2193';
 	}
 
+	// Thresholds aligned with Matrix.svelte scoreGradient
 	function scoreColor(score: number): string {
 		if (score >= 0.8) return 'text-green-400';
-		if (score >= 0.5) return 'text-gold';
-		if (score >= 0.3) return 'text-orange-400';
+		if (score >= 0.6) return 'text-emerald-400';
+		if (score >= 0.4) return 'text-gold';
+		if (score >= 0.2) return 'text-orange-400';
 		return 'text-red-400';
 	}
 
 	function scoreBg(score: number): string {
 		if (score >= 0.8) return 'bg-green-500';
-		if (score >= 0.5) return 'bg-gold';
-		if (score >= 0.3) return 'bg-orange-400';
+		if (score >= 0.6) return 'bg-emerald-500';
+		if (score >= 0.4) return 'bg-gold';
+		if (score >= 0.2) return 'bg-orange-400';
 		return 'bg-red-500';
 	}
 
@@ -163,32 +166,44 @@
 				<table class="w-full text-sm" role="grid" aria-label="Entity rankings">
 					<thead>
 						<tr class="border-b border-navy-700 bg-navy-900">
-							<th class="px-3 py-3 text-left text-xs text-slate-500 uppercase tracking-wider w-14">
+							<th class="px-3 py-3 text-left text-xs text-slate-500 uppercase tracking-wider w-14"
+								aria-sort={sortKey === 'rank' ? (sortAsc ? 'ascending' : 'descending') : 'none'}
+								scope="col">
 								<button type="button" onclick={() => toggleSort('rank')} class="hover:text-gold transition-colors min-h-[44px] flex items-center">
 									#{sortArrow('rank')}
 								</button>
 							</th>
-							<th class="px-3 py-3 text-left text-xs text-slate-500 uppercase tracking-wider">
+							<th class="px-3 py-3 text-left text-xs text-slate-500 uppercase tracking-wider"
+								aria-sort={sortKey === 'label' ? (sortAsc ? 'ascending' : 'descending') : 'none'}
+								scope="col">
 								<button type="button" onclick={() => toggleSort('label')} class="hover:text-gold transition-colors min-h-[44px] flex items-center">
 									Entity{sortArrow('label')}
 								</button>
 							</th>
-							<th class="px-3 py-3 text-right text-xs text-slate-500 uppercase tracking-wider w-28">
+							<th class="px-3 py-3 text-right text-xs text-slate-500 uppercase tracking-wider w-28"
+								aria-sort={sortKey === 'score' ? (sortAsc ? 'ascending' : 'descending') : 'none'}
+								scope="col">
 								<button type="button" onclick={() => toggleSort('score')} class="hover:text-gold transition-colors min-h-[44px] flex items-center justify-end w-full">
 									Score{sortArrow('score')}
 								</button>
 							</th>
-							<th class="px-3 py-3 text-right text-xs text-slate-500 uppercase tracking-wider w-24">
+							<th class="px-3 py-3 text-right text-xs text-slate-500 uppercase tracking-wider w-24"
+								aria-sort={sortKey === 'present' ? (sortAsc ? 'ascending' : 'descending') : 'none'}
+								scope="col">
 								<button type="button" onclick={() => toggleSort('present')} class="hover:text-gold transition-colors min-h-[44px] flex items-center justify-end w-full">
 									Present{sortArrow('present')}
 								</button>
 							</th>
-							<th class="px-3 py-3 text-right text-xs text-slate-500 uppercase tracking-wider w-24">
+							<th class="px-3 py-3 text-right text-xs text-slate-500 uppercase tracking-wider w-24"
+								aria-sort={sortKey === 'coverage' ? (sortAsc ? 'ascending' : 'descending') : 'none'}
+								scope="col">
 								<button type="button" onclick={() => toggleSort('coverage')} class="hover:text-gold transition-colors min-h-[44px] flex items-center justify-end w-full">
 									Coverage{sortArrow('coverage')}
 								</button>
 							</th>
-							<th class="px-3 py-3 text-right text-xs text-slate-500 uppercase tracking-wider w-24">
+							<th class="px-3 py-3 text-right text-xs text-slate-500 uppercase tracking-wider w-24"
+								aria-sort={sortKey === 'updated' ? (sortAsc ? 'ascending' : 'descending') : 'none'}
+								scope="col">
 								<button type="button" onclick={() => toggleSort('updated')} class="hover:text-gold transition-colors min-h-[44px] flex items-center justify-end w-full">
 									Updated{sortArrow('updated')}
 								</button>

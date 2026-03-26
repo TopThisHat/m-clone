@@ -12,6 +12,7 @@
 	let attributes = $state<Attribute[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let actionError = $state('');
 
 	// Status filter
 	let statusFilter = $state<string>('all');
@@ -61,7 +62,7 @@
 			await jobsApi.cancel(jobId);
 			jobs = jobs.map((j) => j.id === jobId ? { ...j, status: 'cancelled' as const } : j);
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to cancel');
+			actionError = err instanceof Error ? err.message : 'Failed to cancel';
 		} finally {
 			cancelling = new Set([...cancelling].filter((x) => x !== jobId));
 		}
@@ -79,7 +80,7 @@
 			selectedEntities = new Set();
 			selectedAttributes = new Set();
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to start job');
+			actionError = err instanceof Error ? err.message : 'Failed to start job';
 		} finally {
 			launching = false;
 		}
@@ -132,7 +133,7 @@
 		try {
 			diffResults = await jobsApi.compareJobs(campaignId, compareSelection[0], compareSelection[1]);
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to compare');
+			actionError = err instanceof Error ? err.message : 'Failed to compare';
 		} finally {
 			loadingDiff = false;
 		}
@@ -210,7 +211,14 @@
 
 	{#if error}<p class="text-red-400 mb-4" role="alert">{error}</p>{/if}
 
-	{#if loading}
+	{#if actionError}
+	<div class="bg-red-950 border border-red-700 rounded-xl px-4 py-3 text-red-300 text-sm mb-4 flex items-center justify-between" role="alert">
+		<span>{actionError}</span>
+		<button onclick={() => (actionError = '')} class="text-red-400 hover:text-red-200 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Dismiss error">✕</button>
+	</div>
+{/if}
+
+{#if loading}
 		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading…</p>
 	{:else if filteredJobs.length === 0}
 		<div class="text-center py-12 text-slate-500">

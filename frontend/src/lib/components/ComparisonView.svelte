@@ -54,10 +54,7 @@
 	// ── Keyboard handling ────────────────────────────────────────────────────
 
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
-			e.preventDefault();
-			ondismiss?.();
-		}
+		// Escape is handled natively by <dialog> — fires onclose which calls handleClose
 	}
 
 	function formatConfidence(val: ComparisonEntityValue | null): string {
@@ -81,23 +78,28 @@
 		return '';
 	}
 
-	// ── Auto-focus on mount ─────────────────────────────────────────────────
-	let panel: HTMLDivElement | undefined = $state();
+	// ── Auto-focus and return-focus on close ───────────────────────────────
+	let panel: HTMLDialogElement | undefined = $state();
+	let triggerEl: HTMLElement | null = null;
 
 	$effect(() => {
 		if (panel) {
-			panel.focus();
+			triggerEl = document.activeElement as HTMLElement | null;
+			panel.showModal();
 		}
 	});
+
+	function handleClose() {
+		queueMicrotask(() => triggerEl?.focus());
+		ondismiss?.();
+	}
 </script>
 
-<div
+<dialog
 	bind:this={panel}
-	class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden"
-	role="dialog"
+	class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden backdrop:bg-black/60 max-w-5xl w-full max-h-[90vh] p-0"
 	aria-label="Entity comparison view"
-	aria-modal="true"
-	tabindex="-1"
+	onclose={handleClose}
 	onkeydown={handleKeydown}
 >
 	<!-- Header -->
@@ -112,7 +114,7 @@
 		</div>
 		{#if ondismiss}
 			<button
-				onclick={ondismiss}
+				onclick={() => panel?.close()}
 				class="text-slate-400 hover:text-slate-200 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
 				aria-label="Close comparison (Escape)"
 				title="Close (Esc)"
@@ -235,4 +237,4 @@
 		</span>
 		<span class="ml-auto">Press <kbd class="bg-navy-700 px-1.5 py-0.5 rounded text-slate-400">Esc</kbd> to close</span>
 	</div>
-</div>
+</dialog>

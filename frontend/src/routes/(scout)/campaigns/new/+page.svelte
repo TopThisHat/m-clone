@@ -387,25 +387,27 @@
 	</div>
 
 	<!-- Step indicator -->
-	<div class="flex items-center gap-0 mb-8">
+	<nav aria-label="Campaign creation progress" class="flex items-center gap-0 mb-8">
+		<span class="sr-only">Step {step} of {STEP_LABELS.length}: {STEP_LABELS[step - 1]}</span>
 		{#each STEP_LABELS as label, i (label)}
 			{@const s = (i + 1) as Step}
 			{@const done = step > s}
 			{@const active = step === s}
 			<div class="flex items-center {i < STEP_LABELS.length - 1 ? 'flex-1' : ''}">
-				<div class="flex items-center gap-2 shrink-0">
+				<div class="flex items-center gap-2 shrink-0" aria-current={active ? 'step' : undefined}>
 					<div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors
-						{done ? 'bg-green-600 text-white' : active ? 'bg-gold text-navy' : 'bg-navy-700 text-slate-500 border border-navy-600'}">
+						{done ? 'bg-green-600 text-white' : active ? 'bg-gold text-navy' : 'bg-navy-700 text-slate-500 border border-navy-600'}"
+						aria-hidden="true">
 						{#if done}✓{:else}{s}{/if}
 					</div>
-					<span class="text-xs {active ? 'text-slate-200 font-medium' : done ? 'text-slate-400' : 'text-slate-600'}" aria-current={active ? 'step' : undefined}>{label}</span>
+					<span class="text-xs {active ? 'text-slate-200 font-medium' : done ? 'text-slate-400' : 'text-slate-600'}">{label}</span>
 				</div>
 				{#if i < STEP_LABELS.length - 1}
-					<div class="flex-1 h-px mx-3 {done ? 'bg-green-800' : 'bg-navy-700'}"></div>
+					<div class="flex-1 h-px mx-3 {done ? 'bg-green-800' : 'bg-navy-700'}" aria-hidden="true"></div>
 				{/if}
 			</div>
 		{/each}
-	</div>
+	</nav>
 
 	<!-- ── Step 1: Details ─────────────────────────────────────────────────── -->
 	{#if step === 1}

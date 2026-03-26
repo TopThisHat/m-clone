@@ -34,6 +34,8 @@ export class OptimisticStore<K extends string = string, V = unknown> {
 	 * Use to drive a brief yellow-flash animation.
 	 */
 	conflicts: SvelteSet<K> = new SvelteSet();
+	/** Per-key conflict clear timers — cleared on new update to avoid races */
+	private conflictTimers: Map<K, ReturnType<typeof setTimeout>> = new Map();
 
 	/** Effective value: pending takes priority over the server value. */
 	get(key: K, serverValue: V): V {
@@ -66,6 +68,12 @@ export class OptimisticStore<K extends string = string, V = unknown> {
 	 * @returns true on success, false on error
 	 */
 	async update(key: K, value: V, saveFn: () => Promise<V>): Promise<boolean> {
+		// Clear any pending conflict timer for this key to avoid stale cleanup
+		const existingTimer = this.conflictTimers.get(key);
+		if (existingTimer !== undefined) {
+			clearTimeout(existingTimer);
+			this.conflictTimers.delete(key);
+		}
 		this.pending.set(key, value);
 		this.errors.delete(key);
 		this.conflicts.delete(key);
@@ -79,11 +87,13 @@ export class OptimisticStore<K extends string = string, V = unknown> {
 			if (JSON.stringify(serverVal) !== JSON.stringify(value)) {
 				this.pending.set(key, serverVal as V);
 				this.conflicts.add(key);
-				setTimeout(() => {
+				const timer = setTimeout(() => {
 					this.conflicts.delete(key);
 					// Adopt server value permanently after flash
 					this.pending.delete(key);
+					this.conflictTimers.delete(key);
 				}, 2000);
+				this.conflictTimers.set(key, timer);
 			} else {
 				this.pending.delete(key);
 			}

@@ -5,9 +5,11 @@
 	let {
 		open = false,
 		onclose,
+		onopen,
 	}: {
 		open?: boolean;
 		onclose?: () => void;
+		onopen?: () => void;
 	} = $props();
 
 	// ── Search state ──────────────────────────────────────────────────────
@@ -227,6 +229,8 @@
 			e.preventDefault();
 			if (open) {
 				close();
+			} else {
+				onopen?.();
 			}
 		}
 	}

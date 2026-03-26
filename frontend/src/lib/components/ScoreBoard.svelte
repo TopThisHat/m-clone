@@ -163,8 +163,9 @@
 				{#if onopen}
 					<button
 						onclick={() => onopen?.(score)}
-						class="pr-3 py-3 text-slate-600 hover:text-gold transition-colors flex-shrink-0"
+						class="min-w-[44px] min-h-[44px] flex items-center justify-center pr-3 text-slate-600 hover:text-gold transition-colors flex-shrink-0"
 						title="Open detail panel"
+						aria-label="Open detail panel for {score.entity_label ?? score.entity_id}"
 					>
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>

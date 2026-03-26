@@ -7,6 +7,7 @@
 	let deadJobs = $state<DeadJob[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let actionError = $state('');
 	let retrying = $state<Set<string>>(new Set());
 	let retryingAll = $state(false);
 
@@ -26,7 +27,7 @@
 			await jobsApi.retryJob(jobId);
 			deadJobs = deadJobs.filter((j) => j.id !== jobId);
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to retry job');
+			actionError = err instanceof Error ? err.message : 'Failed to retry job';
 		} finally {
 			retrying = new Set([...retrying].filter((x) => x !== jobId));
 		}
@@ -38,7 +39,7 @@
 			await Promise.all(deadJobs.map((j) => jobsApi.retryJob(j.id)));
 			deadJobs = [];
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Some retries failed');
+			actionError = err instanceof Error ? err.message : 'Some retries failed';
 			deadJobs = await jobsApi.listDeadJobs(campaignId);
 		} finally {
 			retryingAll = false;
@@ -75,7 +76,14 @@
 
 	{#if error}<p class="text-red-400 mb-4" role="alert">{error}</p>{/if}
 
-	{#if loading}
+	{#if actionError}
+	<div class="bg-red-950 border border-red-700 rounded-xl px-4 py-3 text-red-300 text-sm mb-4 flex items-center justify-between" role="alert">
+		<span>{actionError}</span>
+		<button onclick={() => (actionError = '')} class="text-red-400 hover:text-red-200 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Dismiss error">✕</button>
+	</div>
+{/if}
+
+{#if loading}
 		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading...</p>
 	{:else if deadJobs.length === 0}
 		<div class="text-center py-12 text-slate-500">

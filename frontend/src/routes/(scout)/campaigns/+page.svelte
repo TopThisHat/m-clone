@@ -10,6 +10,7 @@
 	let error = $state('');
 	let cloning = $state<Set<string>>(new Set());
 	let runningIds = $state<Set<string>>(new Set());
+	let actionError = $state('');
 
 	// Filters
 	let statusFilter = $state<'all' | 'active' | 'paused'>('all');
@@ -65,7 +66,7 @@
 			campaigns = campaigns.map((c) => (c.id === id ? updated : c));
 			editingId = null;
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to save');
+			actionError = err instanceof Error ? err.message : 'Failed to save';
 		} finally {
 			savingEdit = false;
 		}
@@ -106,7 +107,7 @@
 			const job = await jobsApi.create(campaignId, {});
 			latestJobs[campaignId] = job;
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to start job');
+			actionError = err instanceof Error ? err.message : 'Failed to start job';
 		} finally {
 			runningIds = new Set([...runningIds].filter((x) => x !== campaignId));
 		}
@@ -119,7 +120,7 @@
 			const updated = await campaignsApi.update(c.id, { is_active: !c.is_active });
 			campaigns = campaigns.map((x) => (x.id === c.id ? updated : x));
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to update status');
+			actionError = err instanceof Error ? err.message : 'Failed to update status';
 		}
 	}
 
@@ -131,7 +132,7 @@
 			const newCampaign = await campaignsApi.clone(id);
 			campaigns = [newCampaign, ...campaigns];
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to clone');
+			actionError = err instanceof Error ? err.message : 'Failed to clone';
 		} finally {
 			cloning = new Set([...cloning].filter((x) => x !== id));
 		}
@@ -146,7 +147,7 @@
 			campaigns = campaigns.filter((c) => c.id !== id);
 			if (stats) stats = { ...stats, campaigns: stats.campaigns - 1 };
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to delete');
+			actionError = err instanceof Error ? err.message : 'Failed to delete';
 		}
 	}
 
@@ -212,7 +213,7 @@
 				<span>Status:</span>
 				<select
 					bind:value={statusFilter}
-					class="bg-navy-800 border border-navy-700 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-gold/40"
+					class="input-field text-xs py-1 px-2"
 				>
 					<option value="all">All</option>
 					<option value="active">Active</option>
@@ -224,7 +225,7 @@
 					<span>Program:</span>
 					<select
 						bind:value={programFilter}
-						class="bg-navy-800 border border-navy-700 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-gold/40"
+						class="input-field text-xs py-1 px-2"
 					>
 						<option value="all">All Programs</option>
 						{#each programNames as pName (pName)}
@@ -249,14 +250,21 @@
 				{ label: 'Jobs (7d)', value: stats.jobs_last_7_days, icon: '▶' },
 				{ label: 'Knowledge', value: stats.knowledge_entries, icon: '⚡' },
 			] as s}
-				<div class="bg-navy-800 border border-navy-700 rounded-lg px-4 py-3">
-					<div class="flex items-center gap-1.5 mb-1">
+				<dl class="bg-navy-800 border border-navy-700 rounded-lg px-4 py-3">
+					<dt class="flex items-center gap-1.5 mb-1">
 						<span class="text-slate-600 text-xs" aria-hidden="true">{s.icon}</span>
 						<span class="text-[10px] text-slate-500 uppercase tracking-widest">{s.label}</span>
-					</div>
-					<p class="text-xl font-mono font-semibold text-slate-200">{s.value.toLocaleString()}</p>
-				</div>
+					</dt>
+					<dd class="text-xl font-mono font-semibold text-slate-200">{s.value.toLocaleString()}</dd>
+				</dl>
 			{/each}
+		</div>
+	{/if}
+
+	{#if actionError}
+		<div class="bg-red-950 border border-red-700 rounded-xl px-4 py-3 text-red-300 text-sm mb-4 flex items-center justify-between" role="alert">
+			<span>{actionError}</span>
+			<button onclick={() => (actionError = '')} class="text-red-400 hover:text-red-200 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Dismiss error">✕</button>
 		</div>
 	{/if}
 
@@ -271,7 +279,12 @@
 			<div class="w-16 h-16 bg-navy-800 border border-navy-700 rounded-xl flex items-center justify-center mx-auto mb-4">
 				<span class="text-2xl text-slate-600" aria-hidden="true">◈</span>
 			</div>
-			<p class="text-lg mb-2">No campaigns yet.</p>
+			{#if $scoutTeam}
+				<p class="text-lg mb-1">This team has no campaigns yet.</p>
+				<p class="text-sm text-slate-600 mb-3">Campaigns created here will be shared with the team.</p>
+			{:else}
+				<p class="text-lg mb-2">No campaigns yet.</p>
+			{/if}
 			<a href="/campaigns/new" class="text-gold hover:underline text-sm">Create your first campaign →</a>
 		</div>
 	{:else if filteredCampaigns.length === 0}

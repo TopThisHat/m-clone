@@ -10,6 +10,7 @@
 	let attributes = $state<Attribute[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let actionError = $state('');
 	let totalCount = $state(0);
 
 	// Pagination & search
@@ -78,7 +79,7 @@
 			selectedIds = new Set();
 			load();
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to delete');
+			actionError = err instanceof Error ? err.message : 'Failed to delete';
 		} finally {
 			bulkDeleting = false;
 		}
@@ -187,7 +188,7 @@
 			attributes = attributes.map((a) => (a.id === id ? updated : a));
 			cancelEdit(id);
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to save');
+			actionError = err instanceof Error ? err.message : 'Failed to save';
 		}
 	}
 
@@ -200,7 +201,7 @@
 			selectedIds = next;
 			load();
 		} catch (err: unknown) {
-			alert(err instanceof Error ? err.message : 'Failed to delete');
+			actionError = err instanceof Error ? err.message : 'Failed to delete';
 		}
 	}
 
@@ -503,7 +504,14 @@
 		<p class="text-red-400 mb-4" role="alert">{error}</p>
 	{/if}
 
-	{#if loading}
+	{#if actionError}
+	<div class="bg-red-950 border border-red-700 rounded-xl px-4 py-3 text-red-300 text-sm mb-4 flex items-center justify-between" role="alert">
+		<span>{actionError}</span>
+		<button onclick={() => (actionError = '')} class="text-red-400 hover:text-red-200 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Dismiss error">✕</button>
+	</div>
+{/if}
+
+{#if loading}
 		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading...</p>
 	{:else if attributes.length === 0}
 		<div class="text-center py-12 text-slate-500">
