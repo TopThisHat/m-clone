@@ -4,7 +4,10 @@ Role hierarchy: owner > admin > member > viewer
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+
+import asyncpg
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.auth import get_current_user
@@ -23,6 +26,8 @@ from app.db import (
     db_update_team,
     db_record_activity,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/teams", tags=["teams"])
 
@@ -79,10 +84,11 @@ async def create_team(body: TeamCreate, user=Depends(get_current_user)):
         return team
     except DatabaseNotConfigured:
         raise _no_db()
-    except Exception as exc:
-        if "unique" in str(exc).lower():
-            raise HTTPException(status_code=409, detail="Team slug already taken")
-        raise HTTPException(status_code=500, detail=str(exc))
+    except asyncpg.UniqueViolationError:
+        raise HTTPException(status_code=409, detail="Team slug already taken")
+    except Exception:
+        logger.exception("Failed to create team")
+        raise HTTPException(status_code=500, detail="Failed to create team")
 
 
 @router.get("")

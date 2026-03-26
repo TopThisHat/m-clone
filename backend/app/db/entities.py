@@ -85,14 +85,17 @@ async def db_create_entity(
 ) -> dict[str, Any]:
     async with _acquire() as conn:
         await _check_label_unique(conn, campaign_id, label)
-        row = await conn.fetchrow(
-            """
-            INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
-            VALUES ($1::uuid, TRIM($2), $3, NULLIF(TRIM($4), ''), $5::jsonb)
-            RETURNING *
-            """,
-            campaign_id, label, description, gwm_id, json.dumps(metadata or {}),
-        )
+        try:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO playbook.entities (campaign_id, label, description, gwm_id, metadata)
+                VALUES ($1::uuid, TRIM($2), $3, NULLIF(TRIM($4), ''), $5::jsonb)
+                RETURNING *
+                """,
+                campaign_id, label, description, gwm_id, json.dumps(metadata or {}),
+            )
+        except asyncpg.UniqueViolationError:
+            raise DuplicateLabelError(label.strip(), campaign_id)
     return _entity_row_to_dict(row)
 
 
@@ -229,7 +232,10 @@ async def db_update_entity(entity_id: str, campaign_id: str, **kwargs: Any) -> d
             f"UPDATE playbook.entities SET {', '.join(set_parts)} "
             f"WHERE id = ${len(values) - 1}::uuid AND campaign_id = ${len(values)}::uuid RETURNING *"
         )
-        row = await conn.fetchrow(sql, *values)
+        try:
+            row = await conn.fetchrow(sql, *values)
+        except asyncpg.UniqueViolationError:
+            raise DuplicateLabelError(fields.get("label", "").strip(), campaign_id)
     return _entity_row_to_dict(row) if row else None
 
 
@@ -261,6 +267,28 @@ async def db_set_entity_metadata(entity_id: str, key: str, value: Any) -> dict[s
             """,
             entity_id, key, json.dumps(value),
         )
+    if row is None:
+        return {}
+    return json.loads(row) if isinstance(row, str) else dict(row)
+
+
+async def db_set_entity_metadata_batch(entity_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    """Atomically set multiple keys in the metadata JSONB column. Returns the full updated metadata."""
+    if not updates:
+        return {}
+    async with _acquire() as conn:
+        async with conn.transaction():
+            row: Any = None
+            for key, value in updates.items():
+                row = await conn.fetchval(
+                    """
+                    UPDATE playbook.entities
+                    SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), ARRAY[$2], $3::jsonb)
+                    WHERE id = $1::uuid
+                    RETURNING metadata
+                    """,
+                    entity_id, key, json.dumps(value),
+                )
     if row is None:
         return {}
     return json.loads(row) if isinstance(row, str) else dict(row)

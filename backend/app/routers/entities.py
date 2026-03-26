@@ -21,7 +21,7 @@ from app.db import (
     db_import_entities_from_library,
     db_is_team_member,
     db_list_entities,
-    db_set_entity_metadata,
+    db_set_entity_metadata_batch,
     db_set_external_id,
     db_unassign_entities_from_campaign,
     db_update_entity,
@@ -69,13 +69,13 @@ async def _get_owned_campaign(campaign_id: str, user_sid: str):
     return campaign
 
 
-async def _get_entity_or_404(entity_id: str) -> dict:
-    """Fetch entity or raise 404."""
+async def _get_entity_or_404(entity_id: str, campaign_id: str) -> dict:
+    """Fetch entity and verify it belongs to the given campaign, or raise 404."""
     try:
         entity = await db_get_entity(entity_id)
     except DatabaseNotConfigured:
         raise _no_db()
-    if not entity:
+    if not entity or entity.get("campaign_id") != campaign_id:
         raise HTTPException(status_code=404, detail="Entity not found")
     return entity
 
@@ -244,7 +244,7 @@ async def get_entity_metadata(
     campaign_id: str, entity_id: str, user=Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
-    await _get_entity_or_404(entity_id)
+    await _get_entity_or_404(entity_id, campaign_id)
     try:
         return await db_get_entity_metadata(entity_id)
     except DatabaseNotConfigured:
@@ -256,12 +256,9 @@ async def set_entity_metadata(
     campaign_id: str, entity_id: str, body: MetadataUpdate, user=Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
-    await _get_entity_or_404(entity_id)
+    await _get_entity_or_404(entity_id, campaign_id)
     try:
-        result: dict = {}
-        for key, value in body.metadata.items():
-            result = await db_set_entity_metadata(entity_id, key, value)
-        return result
+        return await db_set_entity_metadata_batch(entity_id, body.metadata)
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -271,7 +268,7 @@ async def delete_entity_metadata_key(
     campaign_id: str, entity_id: str, key: str, user=Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
-    await _get_entity_or_404(entity_id)
+    await _get_entity_or_404(entity_id, campaign_id)
     try:
         return await db_delete_entity_metadata(entity_id, key)
     except DatabaseNotConfigured:
@@ -285,7 +282,7 @@ async def get_external_ids(
     campaign_id: str, entity_id: str, user=Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
-    await _get_entity_or_404(entity_id)
+    await _get_entity_or_404(entity_id, campaign_id)
     try:
         return await db_get_external_ids(entity_id)
     except DatabaseNotConfigured:
@@ -297,7 +294,7 @@ async def set_external_id(
     campaign_id: str, entity_id: str, body: ExternalIdUpdate, user=Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
-    await _get_entity_or_404(entity_id)
+    await _get_entity_or_404(entity_id, campaign_id)
     try:
         return await db_set_external_id(entity_id, body.system, body.external_id)
     except DatabaseNotConfigured:
@@ -309,7 +306,7 @@ async def delete_external_id(
     campaign_id: str, entity_id: str, system: str, user=Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
-    await _get_entity_or_404(entity_id)
+    await _get_entity_or_404(entity_id, campaign_id)
     try:
         deleted = await db_delete_external_id(entity_id, system)
     except DatabaseNotConfigured:

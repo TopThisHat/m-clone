@@ -1,9 +1,64 @@
+from __future__ import annotations
+
 import asyncio
 from dataclasses import dataclass, field
+from typing import Any
 
 import wikipediaapi
+from fastapi import Cookie, HTTPException, Header, status
 
+from app.auth import decode_jwt
 from app.config import settings
+
+
+# ── HTTP Request Context (auth + team scope) ─────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class RequestContext:
+    """Per-request context with authenticated user and optional team scope.
+
+    Combines JWT auth and X-Team-Id header extraction into a single
+    dependency.  Pass ``ctx.team_id`` to DB functions using ``_acquire_team()``
+    for row-level security enforcement.
+    """
+
+    user: dict[str, Any]
+    team_id: str | None
+
+    @property
+    def user_sid(self) -> str:
+        return self.user["sub"]
+
+
+async def get_request_context(
+    jwt: str | None = Cookie(default=None, alias="jwt"),
+    x_team_id: str | None = Header(default=None, alias="X-Team-Id"),
+) -> RequestContext:
+    """Combined dependency: authenticate user + validate team membership.
+
+    If X-Team-Id is provided, verifies the user is a member of that team.
+    Raises 403 if the user is not a team member, preventing spoofing.
+    """
+    if not jwt:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    user = decode_jwt(jwt)
+
+    if x_team_id:
+        from app.db import db_is_team_member
+        if not await db_is_team_member(x_team_id, user["sub"]):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not a member of the specified team",
+            )
+
+    return RequestContext(user=user, team_id=x_team_id)
+
+
+# ── Agent Dependencies (research agent) ─────────────────────────────────────
 
 
 @dataclass

@@ -10,6 +10,7 @@ from app.db import (
     db_delete_campaign,
     db_get_campaign,
     db_get_campaign_stats,
+    db_get_campaign_status_audit,
     db_is_team_member,
     db_list_campaigns,
     db_transition_campaign_status,
@@ -19,6 +20,7 @@ from app.models.campaign import (
     CampaignCreate,
     CampaignOut,
     CampaignStatsOut,
+    CampaignStatusAuditOut,
     CampaignStatusUpdate,
     CampaignUpdate,
     CompareRequest,
@@ -146,6 +148,28 @@ async def transition_campaign_status(
         user_sid=user["sub"],
     )
     return updated
+
+
+@router.get("/{campaign_id}/status-history", response_model=list[CampaignStatusAuditOut])
+async def get_campaign_status_history(
+    campaign_id: str,
+    user=Depends(get_current_user),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict]:
+    """Return the status audit trail for a campaign, newest first."""
+    try:
+        campaign = await db_get_campaign(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    if not campaign:
+        raise _not_found()
+    await _assert_campaign_access(campaign, user["sub"])
+    try:
+        results = await db_get_campaign_status_audit(campaign_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    return results[offset : offset + limit]
 
 
 @router.post("/{campaign_id}/clone", response_model=CampaignOut, status_code=201)

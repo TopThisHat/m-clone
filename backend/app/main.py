@@ -26,6 +26,7 @@ from app.routers.knowledge_graph import router as kg_router
 from app.routers.programs import router as programs_router
 from app.routers.preferences import router as preferences_router
 from app.routers.matrix import router as matrix_router
+from app.routers.search import router as search_router
 
 app = FastAPI(
     title="m-clone Research Agent",
@@ -61,6 +62,7 @@ app.include_router(kg_router)
 app.include_router(programs_router)
 app.include_router(preferences_router)
 app.include_router(matrix_router)
+app.include_router(search_router)
 
 # ── A2A Protocol ─────────────────────────────────────────────────────────────
 from a2a.server.apps.jsonrpc.fastapi_app import A2AFastAPIApplication

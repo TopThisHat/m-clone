@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 # ── Campaign Status ────────────────────────────────────────────────────────────
@@ -30,6 +30,17 @@ class CampaignStatusUpdate(BaseModel):
     """Request body for PATCH /api/campaigns/{id}/status."""
 
     status: CampaignStatus
+
+
+class CampaignStatusAuditOut(BaseModel):
+    """A single entry in the campaign status audit trail."""
+
+    id: str
+    campaign_id: str
+    old_status: str | None = None
+    new_status: str
+    changed_by_sid: str | None = None
+    changed_at: str | None = None
 
 
 # ── Campaign ───────────────────────────────────────────────────────────────────
@@ -163,6 +174,13 @@ class AttributeCreate(BaseModel):
     numeric_max: float | None = None
     options: list[str] | None = None
 
+    @model_validator(mode="after")
+    def validate_numeric_range(self) -> AttributeCreate:
+        if self.numeric_min is not None and self.numeric_max is not None:
+            if self.numeric_min >= self.numeric_max:
+                raise ValueError("numeric_min must be less than numeric_max")
+        return self
+
 
 class AttributeUpdate(BaseModel):
     label: str | None = None
@@ -173,6 +191,13 @@ class AttributeUpdate(BaseModel):
     numeric_min: float | None = None
     numeric_max: float | None = None
     options: list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_numeric_range(self) -> AttributeUpdate:
+        if self.numeric_min is not None and self.numeric_max is not None:
+            if self.numeric_min >= self.numeric_max:
+                raise ValueError("numeric_min must be less than numeric_max")
+        return self
 
 
 class AttributeOut(BaseModel):
@@ -242,6 +267,7 @@ class ScoreOut(BaseModel):
     attributes_present: int = 0
     attributes_checked: int = 0
     last_updated: str | None = None
+    score_stale: bool = False
 
 
 # ── Knowledge Store ────────────────────────────────────────────────────────────

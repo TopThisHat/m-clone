@@ -348,20 +348,90 @@ def _build_system_content(deps: AgentDeps) -> str:
     return "\n\n".join(parts)
 
 
-# ── Max history ──────────────────────────────────────────────────────────────
+# ── Token-based history trimming ─────────────────────────────────────────────
 
-_MAX_HISTORY_MESSAGES = 60
+_MAX_HISTORY_TOKENS = 100_000
+
+try:
+    import tiktoken
+    _enc = tiktoken.encoding_for_model("gpt-4o")
+except Exception:
+    _enc = None
+
+
+def _estimate_tokens(message: dict[str, Any]) -> int:
+    """Estimate token count for a single message using tiktoken."""
+    text_parts: list[str] = []
+    content = message.get("content")
+    if isinstance(content, str):
+        text_parts.append(content)
+    elif isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text_parts.append(part.get("text", ""))
+    for tc in message.get("tool_calls", []):
+        func = tc.get("function", {})
+        text_parts.append(func.get("name", ""))
+        text_parts.append(func.get("arguments", ""))
+    combined = " ".join(text_parts)
+    if _enc is not None:
+        return len(_enc.encode(combined)) + 4  # per-message overhead
+    return len(combined) // 4 + 4
 
 
 def _trim_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if len(messages) <= _MAX_HISTORY_MESSAGES:
+    """Trim history to fit within _MAX_HISTORY_TOKENS.
+
+    Strategy: drop oldest tool-result messages first (removing both the
+    tool result and its matching tool_call from the assistant message),
+    then drop oldest messages of any role, cutting at a user-message boundary.
+    """
+    total = sum(_estimate_tokens(m) for m in messages)
+    if total <= _MAX_HISTORY_TOKENS:
         return messages
-    target = len(messages) - _MAX_HISTORY_MESSAGES
-    for i in range(target, len(messages)):
-        msg = messages[i]
-        if msg.get("role") == "user":
-            return messages[i:]
-    return messages[target:]
+
+    # Phase 1: remove oldest tool results until under budget
+    trimmed = list(messages)
+    drop_tool_call_ids: set[str] = set()
+    i = 0
+    while i < len(trimmed):
+        if total <= _MAX_HISTORY_TOKENS:
+            break
+        if trimmed[i].get("role") == "tool":
+            total -= _estimate_tokens(trimmed[i])
+            tool_call_id = trimmed[i].get("tool_call_id", "")
+            if tool_call_id:
+                drop_tool_call_ids.add(tool_call_id)
+            trimmed.pop(i)
+            continue
+        i += 1
+
+    # Remove orphaned tool_calls from assistant messages
+    if drop_tool_call_ids:
+        for msg in trimmed:
+            if msg.get("role") == "assistant" and "tool_calls" in msg:
+                original_calls = msg["tool_calls"]
+                filtered = [tc for tc in original_calls if tc.get("id") not in drop_tool_call_ids]
+                if filtered:
+                    msg["tool_calls"] = filtered
+                else:
+                    # All tool calls removed — convert to plain assistant message
+                    msg.pop("tool_calls")
+                    if not msg.get("content"):
+                        msg["content"] = ""
+
+    if total <= _MAX_HISTORY_TOKENS:
+        return trimmed
+
+    # Phase 2: drop oldest messages, cut at user-message boundary
+    while total > _MAX_HISTORY_TOKENS and len(trimmed) > 1:
+        total -= _estimate_tokens(trimmed[0])
+        trimmed.pop(0)
+    # Align to user-message boundary
+    while trimmed and trimmed[0].get("role") not in ("user", "system"):
+        total -= _estimate_tokens(trimmed[0])
+        trimmed.pop(0)
+    return trimmed
 
 
 # ── Orchestrator ─────────────────────────────────────────────────────────────

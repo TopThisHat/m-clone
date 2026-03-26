@@ -113,11 +113,12 @@ async def _acquire():
 async def _acquire_team(team_id: str | None):
     """Async context manager that yields a DB connection with team context set.
 
-    Sets ``SET LOCAL app.current_team_id`` for row-level security policies.
-    The SET LOCAL is transaction-scoped and automatically reverts when the
-    connection is released back to the pool.
+    Opens a transaction and runs ``SET LOCAL app.current_team_id`` so that
+    row-level security policies can read the setting.  ``SET LOCAL`` is
+    transaction-scoped: it automatically reverts when the transaction ends.
 
-    If team_id is None, the setting is not applied (useful for non-team queries).
+    If team_id is None, no setting is applied (useful for non-team queries).
+    The transaction commits on normal exit and rolls back on exception.
     """
     pool = await get_pool()
     try:
@@ -128,11 +129,19 @@ async def _acquire_team(team_id: str | None):
         pool = await get_pool()
         conn = await pool.acquire()
     try:
-        if team_id:
-            await conn.execute(
-                "SET LOCAL app.current_team_id = $1", team_id,
-            )
-        yield conn
+        tr = conn.transaction()
+        await tr.start()
+        try:
+            if team_id:
+                await conn.execute(
+                    "SET LOCAL app.current_team_id = $1", team_id,
+                )
+            yield conn
+        except Exception:
+            await tr.rollback()
+            raise
+        else:
+            await tr.commit()
     finally:
         await pool.release(conn)
 

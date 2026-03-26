@@ -119,12 +119,20 @@ from .entities import (
     db_update_entity,
     db_get_entity_metadata,
     db_set_entity_metadata,
+    db_set_entity_metadata_batch,
     db_delete_entity_metadata,
     db_set_external_id,
     db_get_external_ids,
     db_delete_external_id,
     db_assign_entities_to_campaign,
     db_unassign_entities_from_campaign,
+)
+
+# ── External IDs (lookup/find) ───────────────────────────────────────────────
+from .external_ids import (
+    db_find_entity_by_external_id,
+    db_find_entities_by_external_ids,
+    db_find_entity_by_gwm_id,
 )
 
 # ── Attributes ────────────────────────────────────────────────────────────────
@@ -192,8 +200,11 @@ from .knowledge_graph import (
 # ── Templates ─────────────────────────────────────────────────────────────────
 from .templates import (
     db_list_attribute_templates,
+    db_get_attribute_template,
     db_create_attribute_template,
     db_delete_attribute_template,
+    db_save_template_from_campaign,
+    db_apply_template_to_campaign,
 )
 
 # ── Library ───────────────────────────────────────────────────────────────────

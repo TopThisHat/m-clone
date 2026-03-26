@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -16,11 +18,13 @@ from app.db import (
     db_is_team_member,
     db_list_attributes,
     db_list_campaign_attributes,
+    db_recalculate_scores_from_matrix,
     db_reorder_campaign_attributes,
     db_unassign_attribute_from_campaign,
     db_update_attribute,
     db_update_campaign_attribute,
 )
+
 from app.models.campaign import (
     AttributeCreate,
     AttributeOut,
@@ -29,6 +33,8 @@ from app.models.campaign import (
     ImportAttributeResult,
     ImportBody,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ImportLibraryBody(BaseModel):
@@ -166,6 +172,12 @@ async def update_attribute(campaign_id: str, attribute_id: str, body: AttributeU
         raise _no_db()
     if not updated:
         raise HTTPException(status_code=404, detail="Attribute not found")
+    # Recalculate all entity scores if weight changed
+    if "weight" in patch:
+        try:
+            await db_recalculate_scores_from_matrix(campaign_id)
+        except Exception:
+            logger.exception("Batch score recalculation failed after attribute weight change")
     return updated
 
 
@@ -276,6 +288,12 @@ async def update_campaign_attribute_assignment(
         raise _no_db()
     if not updated:
         raise HTTPException(status_code=404, detail="Assignment not found")
+    # Recalculate all entity scores if weight changed
+    if body.weight_override is not None:
+        try:
+            await db_recalculate_scores_from_matrix(campaign_id)
+        except Exception:
+            logger.exception("Batch score recalculation failed after weight override change")
     return updated
 
 

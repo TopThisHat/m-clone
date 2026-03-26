@@ -5,6 +5,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+import logging
+
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
@@ -14,7 +16,10 @@ from app.db import (
     db_upsert_cell_value,
     db_delete_cell_value,
     db_bulk_upsert_cells,
+    db_recalculate_scores_from_matrix,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/campaigns", tags=["matrix"])
 
@@ -82,10 +87,10 @@ async def upsert_cell(
     body: CellUpsert,
     user=Depends(get_current_user),
 ):
-    """Upsert a single cell value. Returns the updated cell."""
+    """Upsert a single cell value and recalculate the entity's score."""
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
-        return await db_upsert_cell_value(
+        result = await db_upsert_cell_value(
             campaign_id,
             body.entity_id,
             body.attribute_id,
@@ -97,6 +102,11 @@ async def upsert_cell(
         raise HTTPException(status_code=404, detail=str(e))
     except DatabaseNotConfigured:
         raise _no_db()
+    try:
+        await db_recalculate_scores_from_matrix(campaign_id, entity_id=body.entity_id)
+    except Exception:
+        logger.exception("Score recalculation failed after cell upsert")
+    return result
 
 
 @router.put("/{campaign_id}/matrix/cells/bulk")
@@ -105,19 +115,27 @@ async def bulk_upsert_cells(
     body: BulkCellUpsert,
     user=Depends(get_current_user),
 ):
-    """Bulk upsert cell values. Returns all upserted cells."""
+    """Bulk upsert cell values and recalculate affected entities' scores."""
     await _get_owned_campaign(campaign_id, user["sub"])
     if not body.cells:
         return []
     cells = [c.model_dump() for c in body.cells]
     try:
-        return await db_bulk_upsert_cells(
+        result = await db_bulk_upsert_cells(
             campaign_id, cells, updated_by=user["sub"],
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except DatabaseNotConfigured:
         raise _no_db()
+    # Recalculate scores for each affected entity
+    affected_entity_ids = {c.entity_id for c in body.cells}
+    for eid in affected_entity_ids:
+        try:
+            await db_recalculate_scores_from_matrix(campaign_id, entity_id=eid)
+        except Exception:
+            logger.exception("Score recalculation failed for entity %s", eid)
+    return result
 
 
 @router.delete("/{campaign_id}/matrix/cells")
@@ -126,7 +144,7 @@ async def delete_cell(
     body: CellDelete,
     user=Depends(get_current_user),
 ):
-    """Clear a cell value."""
+    """Clear a cell value and recalculate the entity's score."""
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         deleted = await db_delete_cell_value(
@@ -136,4 +154,8 @@ async def delete_cell(
         raise _no_db()
     if not deleted:
         raise HTTPException(status_code=404, detail="Cell not found")
+    try:
+        await db_recalculate_scores_from_matrix(campaign_id, entity_id=body.entity_id)
+    except Exception:
+        logger.exception("Score recalculation failed after cell delete")
     return {"deleted": True}

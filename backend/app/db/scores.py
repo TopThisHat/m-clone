@@ -221,12 +221,14 @@ async def db_recalculate_scores_from_matrix(
     Uses the weighted-sum formula from the design:
       score = sum(normalized_value_i * effective_weight_i) / sum(effective_weight_i)
 
-    Normalization:
+    Normalization (currently implemented):
       - boolean: true=1.0, false=0.0
       - numeric (bounded): clamp((value - min) / (max - min), 0, 1)
-      - numeric (unbounded): value / max(all_values) (relative)
-      - select: ordinal_position / (total_options - 1)
       - text: excluded from scoring
+
+    Not yet implemented:
+      - numeric (unbounded): would need value / max(all_values) window function
+      - select: would need ordinal_position / (total_options - 1) join
 
     Steps: mark stale -> recalculate in transaction -> mark fresh on success.
     """

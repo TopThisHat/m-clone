@@ -3,13 +3,17 @@ Auth router: OIDC flow, dev-bypass, /me, /logout.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from app.auth import create_jwt, get_current_user
+from app.auth import create_jwt
 from app.config import settings
 from app.db import DatabaseNotConfigured, db_upsert_user, db_get_user, db_update_user_theme, db_is_super_admin
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -151,8 +155,9 @@ async def oidc_login(request: Request):
         response = RedirectResponse(auth_url)
         response.set_cookie("oidc_state", signed_state, httponly=True, samesite="lax", max_age=600)
         return response
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        logger.exception("OIDC login failed")
+        raise HTTPException(status_code=500, detail="OIDC login failed")
 
 
 # ── OIDC callback ─────────────────────────────────────────────────────────────
@@ -208,5 +213,6 @@ async def oidc_callback(request: Request, code: str, state: str):
 
     except HTTPException:
         raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        logger.exception("OIDC callback failed")
+        raise HTTPException(status_code=500, detail="OIDC callback failed")
