@@ -51,10 +51,10 @@
 		<!-- Right: navigation -->
 		{#if totalPages > 1}
 			<div class="flex items-center gap-1">
-				<button onclick={() => onPageChange(0)} disabled={currentPage === 0} class={navBtnClass} title="First page">
+				<button onclick={() => onPageChange(0)} disabled={currentPage === 0} class={navBtnClass} title="First page" aria-label="First page">
 					&laquo;
 				</button>
-				<button onclick={() => onPageChange(currentPage - 1)} disabled={currentPage === 0} class={navBtnClass}>
+				<button onclick={() => onPageChange(currentPage - 1)} disabled={currentPage === 0} class={navBtnClass} aria-label="Previous page">
 					&lsaquo; Prev
 				</button>
 
@@ -67,15 +67,15 @@
 						class="w-10 bg-navy-700 border border-navy-600 rounded px-1 py-0.5 text-center text-slate-300"
 						min="1"
 						max={totalPages}
-						title="Jump to page"
+						aria-label="Jump to page number"
 					/>
 					<span>/ {totalPages}</span>
 				</div>
 
-				<button onclick={() => onPageChange(currentPage + 1)} disabled={currentPage >= totalPages - 1} class={navBtnClass}>
+				<button onclick={() => onPageChange(currentPage + 1)} disabled={currentPage >= totalPages - 1} class={navBtnClass} aria-label="Next page">
 					Next &rsaquo;
 				</button>
-				<button onclick={() => onPageChange(totalPages - 1)} disabled={currentPage >= totalPages - 1} class={navBtnClass} title="Last page">
+				<button onclick={() => onPageChange(totalPages - 1)} disabled={currentPage >= totalPages - 1} class={navBtnClass} title="Last page" aria-label="Last page">
 					&raquo;
 				</button>
 			</div>

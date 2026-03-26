@@ -126,6 +126,13 @@
 						<div class="flex items-center justify-between mb-1">
 							<span class="font-medium text-slate-200 truncate">{score.entity_label ?? score.entity_id}</span>
 							<div class="flex items-center gap-1.5 ml-2 flex-shrink-0">
+								{#if score.score_stale}
+									<span
+										class="text-amber-400 text-[10px] px-1.5 py-0.5 rounded border border-amber-700 bg-amber-950 animate-pulse"
+										title="Score is being recalculated"
+										role="status"
+									>recalculating</span>
+								{/if}
 								{#if hasCachedKnowledge(score.gwm_id)}
 									<span class="text-yellow-400 text-xs px-1 py-0.5 rounded border border-yellow-700 bg-yellow-950" title="Has cached knowledge">⚡</span>
 								{/if}

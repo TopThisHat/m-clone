@@ -2,6 +2,7 @@
 	import type { Entity } from '$lib/api/entities';
 	import type { Attribute } from '$lib/api/attributes';
 	import type { Result, Knowledge } from '$lib/api/jobs';
+	import HeatmapOverlay from './HeatmapOverlay.svelte';
 
 	let {
 		entities,
@@ -10,7 +11,11 @@
 		knowledge = [],
 		campaignId = '',
 		minConfidence = 0,
+		selectable = false,
+		selectedEntityIds = new Set<string>(),
 		oncellclick,
+		onselectionchange,
+		oncompare,
 	}: {
 		entities: Entity[];
 		attributes: Attribute[];
@@ -18,7 +23,11 @@
 		knowledge?: Knowledge[];
 		campaignId?: string;
 		minConfidence?: number;
+		selectable?: boolean;
+		selectedEntityIds?: Set<string>;
 		oncellclick?: (result: Result) => void;
+		onselectionchange?: (ids: Set<string>) => void;
+		oncompare?: (ids: string[]) => void;
 	} = $props();
 
 	// Virtual scrolling constants
@@ -33,6 +42,36 @@
 	// Keyboard navigation
 	let focusRow = $state(0);
 	let focusCol = $state(0);
+
+	// Selection state
+	let canCompare = $derived(selectedEntityIds.size >= 2 && selectedEntityIds.size <= 5);
+	let selectionCount = $derived(selectedEntityIds.size);
+
+	function toggleEntity(entityId: string) {
+		const next = new Set(selectedEntityIds);
+		if (next.has(entityId)) {
+			next.delete(entityId);
+		} else if (next.size < 5) {
+			next.add(entityId);
+		}
+		onselectionchange?.(next);
+	}
+
+	function handleCompare() {
+		if (canCompare) {
+			oncompare?.([...selectedEntityIds]);
+		}
+	}
+
+	// Heatmap state
+	let activeHeatmaps = $state<Set<string>>(new Set());
+
+	function toggleHeatmap(attributeId: string) {
+		const next = new Set(activeHeatmaps);
+		if (next.has(attributeId)) next.delete(attributeId);
+		else next.add(attributeId);
+		activeHeatmaps = next;
+	}
 
 	// Build a lookup map: "entityId:attributeId" -> Result
 	let resultMap = $derived(
@@ -184,13 +223,52 @@
 	role="grid"
 	aria-label="Attribute validation matrix"
 	aria-rowcount={entities.length + 1}
-	aria-colcount={attributes.length + 1}
+	aria-colcount={attributes.length + (selectable ? 2 : 1)}
 	tabindex="0"
 	onkeydown={handleKeydown}
 >
+	<!-- Compare button bar -->
+	{#if selectable && selectionCount > 0}
+		<div class="flex items-center gap-3 mb-2 px-1">
+			<span class="text-xs text-slate-400">
+				{selectionCount} selected
+				{#if selectionCount < 2}
+					<span class="text-slate-500">(select {2 - selectionCount} more to compare)</span>
+				{:else if selectionCount > 5}
+					<span class="text-red-400">(max 5)</span>
+				{/if}
+			</span>
+			<button
+				onclick={handleCompare}
+				disabled={!canCompare}
+				class="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors
+					{canCompare
+						? 'bg-gold text-navy hover:bg-gold-light'
+						: 'bg-navy-700 text-slate-500 cursor-not-allowed'}"
+			>
+				Compare
+			</button>
+			<button
+				onclick={() => onselectionchange?.(new Set())}
+				class="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+			>
+				Clear
+			</button>
+		</div>
+	{/if}
+
 	<table class="text-sm border-collapse" style={useVirtualScroll ? `height: ${totalHeight + 40}px` : ''}>
 		<thead class="sticky top-0 z-20 bg-navy-900">
 			<tr aria-rowindex={1}>
+				{#if selectable}
+					<th
+						class="px-2 py-2 bg-navy-900 z-30 w-10"
+						role="columnheader"
+						scope="col"
+					>
+						<span class="sr-only">Select</span>
+					</th>
+				{/if}
 				<th
 					class="text-left px-3 py-2 text-slate-400 font-medium sticky left-0 bg-navy-900 z-30 min-w-40"
 					role="columnheader"
@@ -206,7 +284,17 @@
 						scope="col"
 						aria-colindex={ci + 2}
 					>
-						{attr.label}
+						<div class="flex flex-col items-center gap-1">
+							<span>{attr.label}</span>
+							<HeatmapOverlay
+								attributeId={attr.id}
+								attributeLabel={attr.label}
+								{entities}
+								{results}
+								active={activeHeatmaps.has(attr.id)}
+								ontoggle={toggleHeatmap}
+							/>
+						</div>
 					</th>
 				{/each}
 			</tr>
@@ -217,11 +305,30 @@
 			{/if}
 			{#each visibleEntities as entity, vi (entity.id)}
 				{@const rowIdx = startIndex + vi}
+				{@const isChecked = selectedEntityIds.has(entity.id)}
 				<tr
-					class="border-t border-navy-700 hover:bg-navy-800 {focusRow === rowIdx ? 'ring-1 ring-gold/30 ring-inset' : ''}"
+					class="border-t border-navy-700 hover:bg-navy-800 {focusRow === rowIdx ? 'ring-1 ring-gold/30 ring-inset' : ''} {isChecked ? 'bg-gold/5' : ''}"
 					aria-rowindex={rowIdx + 2}
 					style={useVirtualScroll ? `height: ${ROW_HEIGHT}px` : ''}
 				>
+					{#if selectable}
+						<td class="px-2 py-2 text-center">
+							<button
+								onclick={() => toggleEntity(entity.id)}
+								class="w-4 h-4 rounded border-2 flex items-center justify-center transition-all
+									{isChecked ? 'border-gold bg-gold' : 'border-navy-500 hover:border-gold/50'}"
+								aria-label="Select {entity.label || entity.id} for comparison"
+								aria-checked={isChecked}
+								role="checkbox"
+							>
+								{#if isChecked}
+									<svg class="w-2.5 h-2.5 text-navy" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+									</svg>
+								{/if}
+							</button>
+						</td>
+					{/if}
 					<td
 						class="px-3 py-2 text-slate-300 sticky left-0 bg-navy-900 font-medium"
 						role="rowheader"
@@ -252,7 +359,7 @@
 				</tr>
 			{:else}
 				<tr>
-					<td colspan={attributes.length + 1} class="text-slate-500 text-center py-8">
+					<td colspan={attributes.length + (selectable ? 2 : 1)} class="text-slate-500 text-center py-8">
 						No entities in this campaign.
 					</td>
 				</tr>

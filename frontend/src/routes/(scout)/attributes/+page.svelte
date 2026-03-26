@@ -148,6 +148,16 @@
 		editing = e;
 	}
 
+	function handleEditKeydown(e: KeyboardEvent, id: string) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			saveEdit(id);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			cancelEdit(id);
+		}
+	}
+
 	async function saveEdit(id: string) {
 		const e = editing[id];
 		if (!e) return;
@@ -412,15 +422,18 @@
 								<tr class="border-t border-navy-700 bg-navy-700/50">
 									<td class="px-4 py-2">
 										<label class="sr-only" for="lib-attr-label-{attr.id}">Label</label>
-										<input id="lib-attr-label-{attr.id}" bind:value={e.label} class="input-field w-full text-sm" />
+										<input id="lib-attr-label-{attr.id}" bind:value={e.label} class="input-field w-full text-sm"
+											onkeydown={(ev) => handleEditKeydown(ev, attr.id)} />
 									</td>
 									<td class="px-4 py-2 hidden md:table-cell">
 										<label class="sr-only" for="lib-attr-desc-{attr.id}">Description</label>
-										<input id="lib-attr-desc-{attr.id}" bind:value={e.description} class="input-field w-full text-sm" />
+										<input id="lib-attr-desc-{attr.id}" bind:value={e.description} class="input-field w-full text-sm"
+											onkeydown={(ev) => handleEditKeydown(ev, attr.id)} />
 									</td>
 									<td class="px-4 py-2">
 										<label class="sr-only" for="lib-attr-weight-{attr.id}">Weight</label>
-										<input id="lib-attr-weight-{attr.id}" type="number" bind:value={e.weight} min="0" step="0.1" class="input-field w-full text-sm" />
+										<input id="lib-attr-weight-{attr.id}" type="number" bind:value={e.weight} min="0" step="0.1" class="input-field w-full text-sm"
+											onkeydown={(ev) => handleEditKeydown(ev, attr.id)} />
 									</td>
 									<td class="px-4 py-2 text-slate-500 text-xs hidden sm:table-cell">{formatDate(attr.created_at)}</td>
 									<td class="px-4 py-2 text-right space-x-2">

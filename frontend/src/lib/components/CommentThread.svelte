@@ -14,6 +14,7 @@
 	import { currentUser } from '$lib/stores/authStore';
 	import { activeCommentId, pendingAnchor } from '$lib/stores/highlightStore';
 	import { sessionComments } from '$lib/stores/reportStore';
+	import { sanitizeHtml } from '$lib/utils/sanitize';
 
 	const REACTION_EMOJIS = ['👍', '❤️', '🔥', '💡', '✅', '❓'];
 
@@ -296,7 +297,7 @@
 	}
 
 	function highlightMentions(text: string): string {
-		return text.replace(/@([A-Za-z0-9_.\-]+)/g, '<span class="text-gold font-medium">@$1</span>');
+		return sanitizeHtml(text.replace(/@([A-Za-z0-9_.\-]+)/g, '<span class="text-gold font-medium">@$1</span>'));
 	}
 
 	function isEdited(comment: Comment): boolean {

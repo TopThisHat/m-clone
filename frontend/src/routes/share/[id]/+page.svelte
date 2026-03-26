@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { marked } from 'marked';
+	import { sanitizeHtml } from '$lib/utils/sanitize';
 	import type { PageData } from './$types';
 	import ResearchSwimlane from '$lib/components/ResearchSwimlane.svelte';
 	import ChartCard from '$lib/components/ChartCard.svelte';
@@ -208,7 +209,7 @@
 			usedIds.set(baseId, count + 1);
 			return `<h${depth} id="${id}">${text}</h${depth}>`;
 		};
-		return marked.parse(session.report_markdown, { renderer }) as string;
+		return sanitizeHtml(marked.parse(session.report_markdown, { renderer }) as string);
 	});
 
 	function scrollToHeading(id: string) {

@@ -10,7 +10,15 @@
 	import CSVUpload from '$lib/components/CSVUpload.svelte';
 	import AttributeCSVUpload from '$lib/components/AttributeCSVUpload.svelte';
 	import { templatesApi, type AttributeTemplate } from '$lib/api/templates';
+	import { apiFetch } from '$lib/api/apiFetch';
 	import type { PageData } from './$types';
+
+	interface Program {
+		id: string;
+		name: string;
+		campaign_count: number;
+		created_at: string;
+	}
 
 	let { data }: { data: PageData } = $props();
 
@@ -25,6 +33,28 @@
 	let selectedTeamId = $state<string | null>($scoutTeam);
 	let creating = $state(false);
 	let createError = $state('');
+	let selectedProgramId = $state<string | null>(null);
+	let programs = $state<Program[]>([]);
+
+	async function loadPrograms(teamId: string | null) {
+		const teamParam = teamId ? `?team_id=${encodeURIComponent(teamId)}` : '';
+		try {
+			programs = (await apiFetch(`/api/programs${teamParam}`)) ?? [];
+			if (selectedProgramId && !programs.some((p) => p.id === selectedProgramId)) {
+				selectedProgramId = null;
+			}
+		} catch {
+			programs = [];
+		}
+	}
+
+	function handleTeamChange(teamId: string | null) {
+		selectedTeamId = teamId;
+		loadPrograms(teamId);
+	}
+
+	// Load programs on mount
+	loadPrograms($scoutTeam);
 
 	// Step 2 — entities
 	let entityLabel = $state('');
@@ -106,6 +136,18 @@
 				schedule: schedule || undefined,
 				team_id: selectedTeamId ?? undefined,
 			});
+			// Assign to program if selected
+			if (selectedProgramId && campaign) {
+				try {
+					await apiFetch(`/api/programs/${encodeURIComponent(selectedProgramId)}/campaigns`, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ campaign_id: campaign.id }),
+					});
+				} catch {
+					// Non-blocking — campaign was created, program assignment is optional
+				}
+			}
 			step = 2;
 		} catch (err: unknown) {
 			createError = err instanceof Error ? err.message : 'Failed to create campaign';
@@ -363,14 +405,14 @@
 				<div>
 					<p class="text-sm text-slate-400 mb-2">Team <span class="text-slate-600">(optional)</span></p>
 					<div class="flex flex-wrap gap-2" role="group" aria-label="Select team">
-						<button type="button" onclick={() => (selectedTeamId = null)}
+						<button type="button" onclick={() => handleTeamChange(null)}
 							aria-pressed={selectedTeamId === null}
 							class="text-xs px-3 py-1.5 rounded-full border transition-colors
 								{selectedTeamId === null ? 'bg-gold text-navy border-gold font-semibold' : 'border-navy-600 text-slate-400 hover:border-navy-500'}">
 							Personal
 						</button>
 						{#each data.teams as team (team.id)}
-							<button type="button" onclick={() => (selectedTeamId = team.id)}
+							<button type="button" onclick={() => handleTeamChange(team.id)}
 								aria-pressed={selectedTeamId === team.id}
 								class="text-xs px-3 py-1.5 rounded-full border transition-colors
 									{selectedTeamId === team.id ? 'bg-gold text-navy border-gold font-semibold' : 'border-navy-600 text-slate-400 hover:border-navy-500'}">
@@ -402,6 +444,23 @@
 				<p class="text-sm text-slate-400 mb-2">Schedule <span class="text-slate-600">(optional)</span></p>
 				<SchedulePicker bind:value={schedule} />
 			</div>
+
+			{#if programs.length > 0}
+				<div>
+					<label class="block text-sm text-slate-400 mb-1" for="program">Program <span class="text-slate-600">(optional)</span></label>
+					<select
+						id="program"
+						bind:value={selectedProgramId}
+						class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-gold"
+					>
+						<option value={null}>No program</option>
+						{#each programs as prog (prog.id)}
+							<option value={prog.id}>{prog.name}</option>
+						{/each}
+					</select>
+					<p class="text-xs text-slate-500 mt-1">Group this campaign under an existing program.</p>
+				</div>
+			{/if}
 
 			{#if createError}
 				<p class="text-red-400 text-sm">{createError}</p>

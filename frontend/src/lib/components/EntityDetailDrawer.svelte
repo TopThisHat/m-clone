@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { marked } from 'marked';
+	import { sanitizeHtml } from '$lib/utils/sanitize';
 	import { jobsApi, type Score, type Result, type CrossCampaignResult } from '$lib/api/jobs';
 	import type { Attribute } from '$lib/api/attributes';
 
@@ -42,7 +43,7 @@
 	const scoreBarPct = $derived(Math.round(score.total_score * 100));
 
 	function renderMd(md: string | null) {
-		return md ? (marked.parse(md) as string) : '';
+		return md ? sanitizeHtml(marked.parse(md) as string) : '';
 	}
 
 	async function handleRevalidate() {

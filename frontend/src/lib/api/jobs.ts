@@ -44,6 +44,7 @@ export interface Score {
 	attributes_present: number;
 	attributes_checked: number;
 	last_updated: string | null;
+	score_stale?: boolean;
 }
 
 export interface Knowledge {

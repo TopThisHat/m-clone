@@ -4,10 +4,13 @@
 	import { jobsApi, type Score, type Result, type Knowledge } from '$lib/api/jobs';
 	import { entitiesApi, type Entity } from '$lib/api/entities';
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
+	import { campaignsApi, type ComparisonOut } from '$lib/api/campaigns';
 	import { marked } from 'marked';
+	import { sanitizeHtml } from '$lib/utils/sanitize';
 	import ScoreBoard from '$lib/components/ScoreBoard.svelte';
 	import AttributeMatrix from '$lib/components/AttributeMatrix.svelte';
-	import EntityDetailDrawer from '$lib/components/EntityDetailDrawer.svelte';
+	import ComparisonView from '$lib/components/ComparisonView.svelte';
+	import EntityDetailPanel from '$lib/components/EntityDetailPanel.svelte';
 	import JobProgress from '$lib/components/JobProgress.svelte';
 	import type { Job } from '$lib/api/jobs';
 
@@ -43,6 +46,13 @@
 
 	// Evidence modal (matrix tab)
 	let modalResult = $state<Result | null>(null);
+
+	// Comparison view state
+	let comparisonData = $state<ComparisonOut | null>(null);
+	let comparisonLoading = $state(false);
+	let comparisonError = $state('');
+	let matrixScrollTop = $state(0);
+	let matrixSelectedIds = $state<Set<string>>(new Set());
 
 	const filteredScores = $derived.by(() => {
 		let s = scores.filter((sc) => {
@@ -110,6 +120,35 @@
 
 	function exportCSV() {
 		window.location.href = `/api/campaigns/${campaignId}/export?format=csv`;
+	}
+
+	async function startComparison(entityIds: string[]) {
+		comparisonLoading = true;
+		comparisonError = '';
+		// Save scroll position before switching to comparison
+		const matrixContainer = document.querySelector('[data-matrix-scroll]');
+		if (matrixContainer) {
+			matrixScrollTop = matrixContainer.scrollTop;
+		}
+		try {
+			comparisonData = await campaignsApi.compare(campaignId, entityIds);
+		} catch (err: unknown) {
+			comparisonError = err instanceof Error ? err.message : 'Failed to load comparison';
+		} finally {
+			comparisonLoading = false;
+		}
+	}
+
+	function dismissComparison() {
+		comparisonData = null;
+		comparisonError = '';
+		// Restore scroll position after DOM update
+		queueMicrotask(() => {
+			const matrixContainer = document.querySelector('[data-matrix-scroll]');
+			if (matrixContainer) {
+				matrixContainer.scrollTop = matrixScrollTop;
+			}
+		});
 	}
 
 	let resultsTruncated = $state(false);
@@ -390,29 +429,46 @@
 			onopen={(score) => (drawerScore = score)}
 		/>
 	{:else}
-		<div class="bg-navy-800 border border-navy-700 rounded-xl p-4 overflow-auto">
-			<AttributeMatrix
-				entities={filteredEntities}
-				attributes={filteredAttributes}
-				{results}
-				{knowledge}
-				{campaignId}
-				{minConfidence}
-				oncellclick={(r) => (modalResult = r)}
-			/>
-		</div>
+		{#if comparisonLoading}
+			<div class="flex justify-center py-16" aria-live="polite" aria-busy="true" aria-label="Loading comparison">
+				<span class="flex gap-1" aria-hidden="true">{#each [0,1,2] as j}<span class="w-2 h-2 bg-gold/40 rounded-full animate-bounce" style="animation-delay:{j*0.15}s"></span>{/each}</span>
+			</div>
+		{:else if comparisonError}
+			<div class="bg-red-950 border border-red-700 rounded-xl px-4 py-3 text-red-300 text-sm mb-4" role="alert">
+				{comparisonError}
+				<button onclick={() => { comparisonError = ''; }} class="ml-2 text-red-400 hover:text-red-200">Dismiss</button>
+			</div>
+		{:else if comparisonData}
+			<ComparisonView data={comparisonData} ondismiss={dismissComparison} />
+		{:else}
+			<div class="bg-navy-800 border border-navy-700 rounded-xl p-4 overflow-auto" data-matrix-scroll>
+				<AttributeMatrix
+					entities={filteredEntities}
+					attributes={filteredAttributes}
+					{results}
+					{knowledge}
+					{campaignId}
+					{minConfidence}
+					selectable={true}
+					selectedEntityIds={matrixSelectedIds}
+					oncellclick={(r) => (modalResult = r)}
+					onselectionchange={(ids) => { matrixSelectedIds = ids; }}
+					oncompare={startComparison}
+				/>
+			</div>
+		{/if}
 	{/if}
 </div>
 
-<!-- Entity detail drawer -->
+<!-- Entity detail panel -->
 {#if drawerScore}
-	<EntityDetailDrawer
+	<EntityDetailPanel
 		score={drawerScore}
 		{results}
 		{attributes}
 		{campaignId}
-		onClose={() => (drawerScore = null)}
-		onRevalidate={(ids) => { drawerScore = null; startRevalidate(ids); }}
+		onclose={() => (drawerScore = null)}
+		onrevalidate={(ids) => { drawerScore = null; startRevalidate(ids); }}
 	/>
 {/if}
 
@@ -450,7 +506,7 @@
 				<div>
 					<p class="text-xs text-slate-500 mb-1 uppercase tracking-wide">Research Report</p>
 					<div class="prose prose-sm prose-invert max-w-none bg-navy-900 rounded-lg p-3 max-h-64 overflow-y-auto">
-						{@html marked.parse(modalResult.report_md)}
+						{@html sanitizeHtml(marked.parse(modalResult.report_md) as string)}
 					</div>
 				</div>
 			{/if}

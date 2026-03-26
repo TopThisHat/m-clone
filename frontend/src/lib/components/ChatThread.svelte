@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { marked } from 'marked';
+	import { sanitizeHtml } from '$lib/utils/sanitize';
 	import { tableExport } from '$lib/actions/tableExport';
 	import {
 		chatMessages,
@@ -72,7 +73,7 @@
 
 	// ── Markdown rendering ───────────────────────────────────────────────────
 	function renderMd(md: string): string {
-		return md ? (marked.parse(md) as string) : '';
+		return md ? sanitizeHtml(marked.parse(md) as string) : '';
 	}
 
 	// ── Copy ─────────────────────────────────────────────────────────────────

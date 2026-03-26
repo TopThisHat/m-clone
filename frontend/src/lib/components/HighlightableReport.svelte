@@ -9,6 +9,7 @@
 	 */
 	import { tick } from 'svelte';
 	import type { Comment } from '$lib/api/comments';
+	import { sanitizeHtml } from '$lib/utils/sanitize';
 	import { activeCommentId, pendingAnchor } from '$lib/stores/highlightStore';
 	import { injectButtons } from '$lib/actions/tableExport';
 
@@ -226,7 +227,7 @@
 	}
 
 	function highlightMentions(text: string): string {
-		return text.replace(/@([A-Za-z0-9_.\-]+)/g, '<span class="text-gold font-medium">@$1</span>');
+		return sanitizeHtml(text.replace(/@([A-Za-z0-9_.\-]+)/g, '<span class="text-gold font-medium">@$1</span>'));
 	}
 </script>
 
@@ -243,7 +244,7 @@
 >
 	<article class="prose prose-sm max-w-none">
 		<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-		{@html html}
+		{@html sanitizeHtml(html)}
 	</article>
 
 	<!-- Floating "Add comment" toolbar -->

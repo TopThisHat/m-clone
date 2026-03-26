@@ -148,6 +148,16 @@
 		editingId = null;
 	}
 
+	function handleEditKeydown(e: KeyboardEvent, entity: LibraryEntity) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			saveEdit(entity);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			cancelEdit();
+		}
+	}
+
 	async function saveEdit(entity: LibraryEntity) {
 		editSaving = true;
 		try {
@@ -477,15 +487,18 @@
 								{#if editingId === entity.id}
 									<td class="px-4 py-2">
 										<label class="sr-only" for="lib-edit-label-{entity.id}">Label</label>
-										<input id="lib-edit-label-{entity.id}" bind:value={editForm.label} class="input-field w-full" />
+										<input id="lib-edit-label-{entity.id}" bind:value={editForm.label} class="input-field w-full"
+											onkeydown={(e) => handleEditKeydown(e, entity)} />
 									</td>
 									<td class="px-4 py-2 hidden sm:table-cell">
 										<label class="sr-only" for="lib-edit-gwm-{entity.id}">GWM ID</label>
-										<input id="lib-edit-gwm-{entity.id}" bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs" />
+										<input id="lib-edit-gwm-{entity.id}" bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs"
+											onkeydown={(e) => handleEditKeydown(e, entity)} />
 									</td>
 									<td class="px-4 py-2 hidden md:table-cell">
 										<label class="sr-only" for="lib-edit-desc-{entity.id}">Description</label>
-										<input id="lib-edit-desc-{entity.id}" bind:value={editForm.description} class="input-field w-full" />
+										<input id="lib-edit-desc-{entity.id}" bind:value={editForm.description} class="input-field w-full"
+											onkeydown={(e) => handleEditKeydown(e, entity)} />
 									</td>
 									<td colspan="3" class="px-4 py-2 text-right whitespace-nowrap space-x-2">
 										<button onclick={() => saveEdit(entity)} disabled={editSaving}
