@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { jobsApi, type Knowledge } from '$lib/api/jobs';
+	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 
 	let campaignId = $derived(page.params.id as string);
 	let knowledge = $state<Knowledge[]>([]);
@@ -56,7 +57,7 @@
 	<h2 class="font-serif text-gold text-xl font-bold mb-6">Knowledge Cache</h2>
 
 	{#if loading}
-		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading…</p>
+		<LoadingSpinner />
 	{:else if error}
 		<p class="text-red-400" role="alert">{error}</p>
 	{:else if knowledge.length === 0}

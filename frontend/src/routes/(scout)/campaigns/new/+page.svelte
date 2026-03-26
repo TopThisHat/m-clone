@@ -441,15 +441,13 @@
 			<div>
 				<label class="block text-sm text-slate-400 mb-1" for="name">Campaign Name *</label>
 				<input id="name" type="text" bind:value={name} required placeholder="e.g. Q1 Portfolio Review"
-					class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-slate-200
-					       placeholder-slate-500 focus:outline-none focus:border-gold" />
+					class="w-full input-field px-3 py-2" />
 			</div>
 
 			<div>
 				<label class="block text-sm text-slate-400 mb-1" for="desc">Description <span class="text-slate-600">(optional)</span></label>
 				<textarea id="desc" bind:value={description} rows="2" placeholder="What is this campaign validating?"
-					class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-slate-200
-					       placeholder-slate-500 focus:outline-none focus:border-gold resize-none"></textarea>
+					class="w-full input-field px-3 py-2 resize-none"></textarea>
 			</div>
 
 			<div>
@@ -463,7 +461,7 @@
 					<select
 						id="program"
 						bind:value={selectedProgramId}
-						class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-gold"
+						class="w-full input-field px-3 py-2"
 					>
 						<option value={null}>No program</option>
 						{#each programs as prog (prog.id)}
@@ -480,10 +478,10 @@
 
 			<div class="flex gap-3 pt-1">
 				<button type="submit" disabled={creating}
-					class="bg-gold text-navy font-semibold px-5 py-2 rounded-lg hover:bg-gold-light transition-colors disabled:opacity-50">
+					class="btn-gold px-5 py-2">
 					{creating ? 'Creating...' : 'Create & Continue →'}
 				</button>
-				<a href="/campaigns" class="bg-navy-700 text-slate-300 px-5 py-2 rounded-lg hover:bg-navy-600 transition-colors border border-navy-600">
+				<a href="/campaigns" class="btn-secondary px-5 py-2">
 					Cancel
 				</a>
 			</div>
@@ -507,14 +505,12 @@
 				<form onsubmit={quickAddEntity} class="flex gap-2 mb-4">
 					<input bind:value={entityLabel} placeholder="Entity name *" required
 						aria-label="Entity name"
-						class="flex-1 bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
-						       placeholder-slate-500 focus:outline-none focus:border-gold" />
+						class="flex-1 input-field" />
 					<input bind:value={entityDesc} placeholder="Description (optional)"
 						aria-label="Entity description"
-						class="flex-1 bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
-						       placeholder-slate-500 focus:outline-none focus:border-gold" />
+						class="flex-1 input-field" />
 					<button type="submit" disabled={addingEntity || !entityLabel.trim()}
-						class="bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg text-sm hover:bg-navy-600 disabled:opacity-50 shrink-0">
+						class="btn-secondary px-3 py-1.5 text-sm shrink-0">
 						{addingEntity ? '...' : '+ Add'}
 					</button>
 				</form>
@@ -561,7 +557,7 @@
 							oninput={() => { libEntityPage = 0; _libEntitiesLoaded = false; loadLibraryEntities(); _libEntitiesLoaded = true; }}
 							placeholder="Search library entities..."
 							aria-label="Search library entities"
-							class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold mb-2"
+							class="w-full input-field text-xs mb-2"
 						/>
 						{#if libraryEntities.length === 0}
 							<p class="text-xs text-slate-500 italic">
@@ -622,7 +618,7 @@
 							<div class="sticky bottom-0 bg-navy-800 pt-2 border-t border-navy-700">
 								<button type="button" onclick={importFromEntityLibrary}
 									disabled={entityImportCount === 0 || importingEntityLib}
-									class="w-full bg-gold text-navy font-semibold px-3 py-2 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50 transition-colors">
+									class="btn-gold w-full px-3 py-2 text-xs">
 									{importingEntityLib ? 'Importing...' : `Import Selected (${entityImportCount})`}
 								</button>
 							</div>
@@ -673,7 +669,7 @@
 						</button>
 					{:else}
 						<button type="button" onclick={() => { lastEntityImportCount = 0; step = 3; }}
-							class="bg-gold text-navy font-semibold px-6 py-2.5 rounded-lg hover:bg-gold-light transition-colors text-sm shadow-lg shadow-gold/10">
+							class="btn-gold px-6 py-2.5 shadow-lg shadow-gold/10">
 							Continue to Attributes →
 						</button>
 					{/if}
@@ -734,17 +730,14 @@
 					<div class="flex gap-2">
 						<input bind:value={attrLabel} placeholder="Attribute name *" required
 							aria-label="Attribute name"
-							class="flex-1 bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
-							       placeholder-slate-500 focus:outline-none focus:border-gold" />
+							class="flex-1 input-field" />
 						<input bind:value={attrDesc} placeholder="Description / LLM prompt (optional)"
 							aria-label="Attribute description"
-							class="flex-1 bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-sm text-slate-200
-							       placeholder-slate-500 focus:outline-none focus:border-gold" />
+							class="flex-1 input-field" />
 						<input type="number" bind:value={attrWeight} min="0" step="0.1" placeholder="Weight"
-							class="w-20 bg-navy-700 border border-navy-600 rounded-lg px-2 py-1.5 text-sm text-slate-200
-							       focus:outline-none focus:border-gold" />
+							class="w-20 input-field px-2" />
 						<button type="submit" disabled={addingAttr || !attrLabel.trim()}
-							class="bg-navy-700 border border-navy-600 text-slate-300 px-3 py-1.5 rounded-lg text-sm hover:bg-navy-600 disabled:opacity-50 shrink-0">
+							class="btn-secondary px-3 py-1.5 text-sm shrink-0">
 							{addingAttr ? '...' : '+ Add'}
 						</button>
 					</div>
@@ -765,7 +758,7 @@
 							{#if templateSavedToast}
 								<span role="status" class="text-xs text-green-400">{templateSavedToast}</span>
 							{:else}
-								<input bind:value={templateName} placeholder="Template name..." aria-label="Template name" class="bg-navy-700 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-gold w-36" />
+								<input bind:value={templateName} placeholder="Template name..." aria-label="Template name" class="input-field px-2 py-1 text-xs placeholder-slate-600 w-36" />
 								<button type="button" onclick={saveTemplate} disabled={savingTemplate || !templateName.trim()} class="text-xs text-slate-400 hover:text-gold border border-navy-600 px-2 py-1 rounded transition-colors disabled:opacity-50">
 									{savingTemplate ? '...' : 'Save as template'}
 								</button>
@@ -835,7 +828,7 @@
 							oninput={() => { libAttrPage = 0; _libAttrsLoaded = false; loadLibraryAttrs(); _libAttrsLoaded = true; }}
 							placeholder="Search library attributes..."
 							aria-label="Search library attributes"
-							class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold mb-2"
+							class="w-full input-field text-xs mb-2"
 						/>
 						{#if libraryAttrs.length === 0}
 							<p class="text-xs text-slate-500 italic">
@@ -896,7 +889,7 @@
 							<div class="sticky bottom-0 bg-navy-800 pt-2 border-t border-navy-700">
 								<button type="button" onclick={importFromAttrLibrary}
 									disabled={attrImportCount === 0 || importingAttrLib}
-									class="w-full bg-gold text-navy font-semibold px-3 py-2 rounded-lg text-xs hover:bg-gold-light disabled:opacity-50 transition-colors">
+									class="btn-gold w-full px-3 py-2 text-xs">
 									{importingAttrLib ? 'Importing...' : `Import Selected (${attrImportCount})`}
 								</button>
 							</div>
@@ -961,7 +954,7 @@
 						</button>
 					{:else}
 						<button type="button" onclick={finish}
-							class="bg-gold text-navy font-semibold px-6 py-2.5 rounded-lg hover:bg-gold-light transition-colors text-sm shadow-lg shadow-gold/10">
+							class="btn-gold px-6 py-2.5 shadow-lg shadow-gold/10">
 							Done →
 						</button>
 					{/if}

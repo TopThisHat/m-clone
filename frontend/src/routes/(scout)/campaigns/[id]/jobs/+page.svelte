@@ -5,6 +5,7 @@
 	import { entitiesApi, type Entity } from '$lib/api/entities';
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
 	import JobProgress from '$lib/components/JobProgress.svelte';
+	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 
 	let campaignId = $derived(page.params.id as string);
 	let jobs = $state<Job[]>([]);
@@ -219,7 +220,7 @@
 {/if}
 
 {#if loading}
-		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading…</p>
+		<LoadingSpinner />
 	{:else if filteredJobs.length === 0}
 		<div class="text-center py-12 text-slate-500">
 			<p>{statusFilter === 'all' ? 'No jobs yet. Run one to get started.' : `No ${statusFilter} jobs.`}</p>

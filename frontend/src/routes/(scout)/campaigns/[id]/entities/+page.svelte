@@ -5,6 +5,7 @@
 	import { libraryEntitiesApi, type LibraryEntity } from '$lib/api/library';
 	import CSVUpload from '$lib/components/CSVUpload.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
+	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 
 	let campaignId = $derived(page.params.id as string);
 	let entities = $state<Entity[]>([]);
@@ -504,7 +505,7 @@
 {/if}
 
 {#if loading}
-		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading…</p>
+		<LoadingSpinner />
 	{:else if entities.length === 0}
 		<div class="text-center py-12 text-slate-500">
 			{#if debouncedSearch}

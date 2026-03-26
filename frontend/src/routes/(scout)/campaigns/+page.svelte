@@ -2,6 +2,7 @@
 	import { campaignsApi, type Campaign, type CampaignStats } from '$lib/api/campaigns';
 	import { jobsApi, type Job } from '$lib/api/jobs';
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
+	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 
 	let campaigns = $state<Campaign[]>([]);
 	let latestJobs = $state<Record<string, Job | null>>({});
@@ -269,9 +270,7 @@
 	{/if}
 
 	{#if loading}
-		<div class="flex justify-center py-16" aria-live="polite" aria-busy="true" aria-label="Loading campaigns">
-			<span class="flex gap-1" aria-hidden="true">{#each [0,1,2] as j}<span class="w-2 h-2 bg-gold/40 rounded-full animate-bounce" style="animation-delay:{j*0.15}s"></span>{/each}</span>
-		</div>
+		<LoadingSpinner text="Loading campaigns" />
 	{:else if error}
 		<p class="text-red-400" role="alert">{error}</p>
 	{:else if campaigns.length === 0}

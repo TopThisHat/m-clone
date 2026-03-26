@@ -3,6 +3,7 @@
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
 	import AttributeCSVUpload from '$lib/components/AttributeCSVUpload.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
+	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 
 	let attributes = $state<LibraryAttribute[]>([]);
 	let loading = $state(true);
@@ -397,7 +398,7 @@
 {/if}
 
 {#if loading}
-		<p class="text-slate-500">Loading…</p>
+		<LoadingSpinner />
 	{:else if displayedAttributes().length === 0}
 		<div class="text-center py-12 text-slate-500">
 			{#if debouncedSearch}

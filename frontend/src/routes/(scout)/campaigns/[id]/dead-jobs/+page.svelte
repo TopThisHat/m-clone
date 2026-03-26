@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { jobsApi, type DeadJob } from '$lib/api/jobs';
+	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 
 	let campaignId = $derived(page.params.id as string);
 	let deadJobs = $state<DeadJob[]>([]);
@@ -84,7 +85,7 @@
 {/if}
 
 {#if loading}
-		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading...</p>
+		<LoadingSpinner />
 	{:else if deadJobs.length === 0}
 		<div class="text-center py-12 text-slate-500">
 			<p>No failed jobs. All tasks completed successfully.</p>

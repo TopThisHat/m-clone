@@ -790,12 +790,12 @@
 					>
 						<span class="block truncate text-xs pr-2 pl-4 cursor-grab">{attr.label}</span>
 						<!-- Drag grip icon -->
-						<span class="absolute left-0.5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-slate-400 text-[10px] opacity-0 group-hover:opacity-100 pointer-events-none" aria-hidden="true">⠿</span>
+						<span class="absolute left-0.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs opacity-50 group-hover:opacity-100 pointer-events-none" aria-hidden="true">⠿</span>
 						<!-- Resize handle (keyboard: Left/Right arrow keys) -->
 						<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 						<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 						<div
-							class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-gold/40 transition-colors focus-visible:bg-gold/60 outline-none {resizingCol === attr.id ? 'bg-gold/60' : ''}"
+							class="absolute right-0 top-0 bottom-0 w-2.5 cursor-col-resize hover:bg-gold/40 transition-colors focus-visible:bg-gold/60 outline-none {resizingCol === attr.id ? 'bg-gold/60' : ''}"
 							role="separator"
 							aria-label="Resize {attr.label} column"
 							tabindex="0"

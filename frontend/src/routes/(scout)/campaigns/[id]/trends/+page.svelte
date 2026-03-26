@@ -4,6 +4,7 @@
 	import { jobsApi, type TrendPoint } from '$lib/api/jobs';
 	import { entitiesApi, type Entity } from '$lib/api/entities';
 	import { theme } from '$lib/stores/themeStore';
+	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 
 	let campaignId = $derived(page.params.id as string);
 
@@ -164,7 +165,7 @@
 	{#if error}<p class="text-red-400 mb-4" role="alert">{error}</p>{/if}
 
 	{#if loading}
-		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading...</p>
+		<LoadingSpinner />
 	{:else if trends.length === 0}
 		<div class="text-center py-12 text-slate-500">
 			<p>No completed jobs yet. Run jobs to see score trends over time.</p>

@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import { jobsApi, type Score } from '$lib/api/jobs';
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
+	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 
 	let campaignId = $derived(page.params.id as string);
 	let scores = $state<Score[]>([]);
@@ -147,13 +148,7 @@
 	{/if}
 
 	{#if loading}
-		<div class="flex justify-center py-16" aria-live="polite" aria-busy="true">
-			<span class="flex gap-1" aria-hidden="true">
-				{#each [0, 1, 2] as j (j)}
-					<span class="w-2 h-2 bg-gold/40 rounded-full animate-bounce" style="animation-delay:{j * 0.15}s"></span>
-				{/each}
-			</span>
-		</div>
+		<LoadingSpinner />
 	{:else if sortedScores.length === 0}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl p-8 text-center">
 			<p class="text-slate-500">
