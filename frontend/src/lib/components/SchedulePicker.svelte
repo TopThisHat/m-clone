@@ -60,24 +60,11 @@
 		return '';
 	}
 
-	let parsed = $derived(parseCron(value));
-	let freq = $state<Freq>('manual');
-	let hour = $state(9);
-	let dow = $state(1);
-	let dom = $state(1);
-
-	// Initialise from value once
-	let _initialised = false;
-	$effect(() => {
-		if (!_initialised) {
-			_initialised = true;
-			const p = parseCron(value);
-			freq = p.freq;
-			hour = p.hour;
-			dow = p.dow;
-			dom = p.dom;
-		}
-	});
+	const _initial = parseCron(value);
+	let freq = $state<Freq>(_initial.freq);
+	let hour = $state(_initial.hour);
+	let dow = $state(_initial.dow);
+	let dom = $state(_initial.dom);
 
 	// Push changes out
 	$effect(() => {

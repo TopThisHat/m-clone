@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { untrack } from 'svelte';
 	import { marked } from 'marked';
 	import { sanitizeHtml } from '$lib/utils/sanitize';
 	import { tableExport } from '$lib/actions/tableExport';
@@ -23,6 +23,7 @@
 	let threadEl = $state<HTMLDivElement | undefined>();
 	let isAtBottom = true;
 	let showScrollBtn = $state(false);
+	let scrollRafId = 0;
 
 	// Build URL → snippet map from trace store
 	const urlMap = $derived.by(() => {
@@ -61,12 +62,12 @@
 		if (lastMsg?.role === 'user') isAtBottom = true;
 
 		if (isAtBottom) {
-			tick().then(() => {
-				if (threadEl) {
-					threadEl.scrollTop = threadEl.scrollHeight;
-					const dist = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight;
-					showScrollBtn = dist > 50;
-				}
+			if (scrollRafId) cancelAnimationFrame(scrollRafId);
+			scrollRafId = requestAnimationFrame(() => {
+				if (!threadEl) return;
+				threadEl.scrollTop = threadEl.scrollHeight;
+				const dist = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight;
+				untrack(() => { showScrollBtn = dist > 50; });
 			});
 		}
 	});

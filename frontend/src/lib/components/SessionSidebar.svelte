@@ -13,19 +13,19 @@
 
 	// ── Search ────────────────────────────────────────────────────────────────
 	let searchQuery = $state('');
-	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+	let _searchTimer: ReturnType<typeof setTimeout> | undefined;
 
-	$effect(() => {
-		const q = searchQuery;
-		if (searchDebounce) clearTimeout(searchDebounce);
-		searchDebounce = setTimeout(async () => {
+	function handleSearchInput(e: Event) {
+		searchQuery = (e.target as HTMLInputElement).value;
+		clearTimeout(_searchTimer);
+		_searchTimer = setTimeout(async () => {
 			try {
-				sessionList.set(await listSessions(q.trim() || undefined));
+				sessionList.set(await listSessions(searchQuery.trim() || undefined));
 			} catch {
 				// ignore
 			}
 		}, 300);
-	});
+	}
 
 	// ── Rename ────────────────────────────────────────────────────────────────
 	let renamingId = $state<string | null>(null);
@@ -160,7 +160,8 @@
 	<!-- Search -->
 	<div class="px-3 pb-2 flex-shrink-0">
 		<input
-			bind:value={searchQuery}
+			value={searchQuery}
+			oninput={handleSearchInput}
 			type="text"
 			placeholder="Filter sessions..."
 			class="w-full bg-navy-800 border border-navy-700 rounded px-3 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-gold/40 transition-colors"

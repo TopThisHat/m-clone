@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../app.css';
+	import { untrack } from 'svelte';
 	import { theme, initTheme } from '$lib/stores/themeStore';
 	import { currentUser } from '$lib/stores/authStore';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
@@ -11,8 +12,15 @@
 
 	// Hydrate store from SSR — runs on every page in the app
 	$effect(() => {
-		currentUser.set(data.user ?? null);
-		initTheme((data.user as { theme?: string } | null)?.theme);
+		const incoming = data.user ?? null;
+		untrack(() => {
+			currentUser.update((prev) => {
+				if (prev === incoming) return prev;
+				if (prev && incoming && (prev as { sid?: string }).sid === (incoming as { sid?: string }).sid) return prev;
+				return incoming;
+			});
+			initTheme((incoming as { theme?: string } | null)?.theme);
+		});
 	});
 </script>
 

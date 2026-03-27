@@ -112,11 +112,7 @@
 		return entities.filter((e) => (e.label || '').toLowerCase().includes(q));
 	});
 
-	// Clamp focusRow when search filter changes row count
-	$effect(() => {
-		const maxRow = filteredEntities.length - 1;
-		if (focusRow > maxRow) focusRow = Math.max(0, maxRow);
-	});
+	let clampedFocusRow = $derived(Math.min(focusRow, Math.max(0, filteredEntities.length - 1)));
 
 	// ── Selection ─────────────────────────────────────────────────────────
 	let canCompare = $derived(selectedEntityIds.size >= 2 && selectedEntityIds.size <= 5);
@@ -458,7 +454,7 @@
 			} else {
 				focusRow = Math.min(focusRow + 1, maxRow);
 			}
-			scrollToCell(focusRow, focusCol);
+			scrollToCell(clampedFocusRow, focusCol);
 			scrollContainer?.focus();
 		}
 	}
@@ -512,22 +508,22 @@
 			case 'ArrowDown':
 				e.preventDefault();
 				focusRow = Math.min(focusRow + 1, maxRow);
-				scrollToCell(focusRow, focusCol);
+				scrollToCell(clampedFocusRow, focusCol);
 				break;
 			case 'ArrowUp':
 				e.preventDefault();
 				focusRow = Math.max(focusRow - 1, 0);
-				scrollToCell(focusRow, focusCol);
+				scrollToCell(clampedFocusRow, focusCol);
 				break;
 			case 'ArrowRight':
 				e.preventDefault();
 				focusCol = Math.min(focusCol + 1, maxCol);
-				scrollToCell(focusRow, focusCol);
+				scrollToCell(clampedFocusRow, focusCol);
 				break;
 			case 'ArrowLeft':
 				e.preventDefault();
 				focusCol = Math.max(focusCol - 1, 0);
-				scrollToCell(focusRow, focusCol);
+				scrollToCell(clampedFocusRow, focusCol);
 				break;
 			case 'Tab': {
 				// Tab navigates columns; Shift+Tab goes backwards.
@@ -553,13 +549,13 @@
 					}
 					// else: Tab at last cell — let focus escape to next element
 				}
-				scrollToCell(focusRow, focusCol);
+				scrollToCell(clampedFocusRow, focusCol);
 				break;
 			}
 			case 'Enter':
 			case ' ': {
 				e.preventDefault();
-				const entity = filteredEntities[focusRow];
+				const entity = filteredEntities[clampedFocusRow];
 				const attr = orderedAttributes[focusCol];
 				if (entity && attr) {
 					handleClick(getCell(entity.id, attr.id));
@@ -569,7 +565,7 @@
 			case 'F2': {
 				// F2 = enter edit mode for entity label (standard spreadsheet shortcut)
 				e.preventDefault();
-				const entity = filteredEntities[focusRow];
+				const entity = filteredEntities[clampedFocusRow];
 				if (entity) startEntityEdit(entity);
 				break;
 			}
@@ -586,7 +582,7 @@
 				} else {
 					focusCol = 0;
 				}
-				scrollToCell(focusRow, focusCol);
+				scrollToCell(clampedFocusRow, focusCol);
 				break;
 			case 'End':
 				e.preventDefault();
@@ -596,7 +592,7 @@
 				} else {
 					focusCol = maxCol;
 				}
-				scrollToCell(focusRow, focusCol);
+				scrollToCell(clampedFocusRow, focusCol);
 				break;
 		}
 	}
@@ -842,7 +838,7 @@
 				{@const labelConflict = labelStore.isConflicted(entity.id)}
 				<tr
 					class="border-t border-navy-700 hover:bg-navy-800
-						{gridFocused && focusRow === rowIdx ? 'ring-1 ring-gold/30 ring-inset' : ''}
+						{gridFocused && clampedFocusRow === rowIdx ? 'ring-1 ring-gold/30 ring-inset' : ''}
 						{isChecked ? 'bg-gold/5' : ''}"
 					aria-rowindex={rowIdx + 2}
 					style="height: {ROW_HEIGHT}px"
@@ -938,11 +934,11 @@
 							<button
 								class="w-11 h-11 rounded text-sm font-bold transition-all hover:opacity-80 {cellClass(cell, cached, lowConf)}
 									{cell || cached ? 'cursor-pointer' : 'cursor-default'}
-									{gridFocused && focusRow === rowIdx && focusCol === globalCol ? 'ring-2 ring-gold' : ''}"
+									{gridFocused && clampedFocusRow === rowIdx && focusCol === globalCol ? 'ring-2 ring-gold' : ''}"
 								onclick={() => handleClick(cell)}
 								title={cached ? `Cached from ${cached.source_campaign_name}` : (cell?.evidence ?? '')}
 								aria-label={cellAriaLabel(entity, attr, cell, cached)}
-								tabindex={focusRow === rowIdx && focusCol === globalCol ? 0 : -1}
+								tabindex={clampedFocusRow === rowIdx && focusCol === globalCol ? 0 : -1}
 							>
 								{cellLabel(cell, cached)}
 							</button>
