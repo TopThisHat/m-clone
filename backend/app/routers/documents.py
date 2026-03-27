@@ -9,6 +9,7 @@ from app.document_parser import (
     extract_text,
     get_extension,
     get_format_metadata,
+    validate_mime,
 )
 from app.redis_client import (
     DocumentSession,
@@ -56,6 +57,11 @@ async def upload_document(
             status_code=413,
             detail=f"File size ({size_mb:.1f}MB) exceeds the {settings.max_upload_size_mb}MB limit.",
         )
+
+    try:
+        validate_mime(contents, filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
 
     # Extract metadata and text in a single try/except — if metadata fails,
     # the same library would fail on text extraction too.
@@ -171,6 +177,11 @@ async def upload_to_kg(
             status_code=413,
             detail=f"File size ({size_mb:.1f}MB) exceeds the {settings.max_upload_size_mb}MB limit.",
         )
+
+    try:
+        validate_mime(contents, filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
 
     # Extract text from the document
     try:

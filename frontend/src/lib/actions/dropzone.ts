@@ -34,9 +34,9 @@ export function dropzone(node: HTMLElement, options: DropzoneOptions) {
 	}
 
 	function handleDragLeave(e: DragEvent) {
-		if (opts.disabled || !hasFiles(e)) return;
+		if (opts.disabled || !hasFiles(e) || enterCount === 0) return;
 		e.preventDefault();
-		enterCount = Math.max(0, enterCount - 1);
+		enterCount--;
 		if (enterCount === 0) opts.onLeave?.();
 	}
 

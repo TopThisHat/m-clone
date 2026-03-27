@@ -227,12 +227,15 @@ async def test_session_text_cap_truncation(mock_meta, mock_extract, mock_get, mo
 # ---------------------------------------------------------------------------
 
 
+_ZIP_BYTES = b"PK\x03\x04fake-xlsx-content"  # DOCX/XLSX magic bytes
+
+
 @pytest.mark.asyncio
 @patch("app.routers.documents.set_documents", new_callable=AsyncMock)
 @patch("app.routers.documents.extract_text", new_callable=AsyncMock, return_value=_EXTRACTED)
 @patch("app.routers.documents.get_format_metadata", return_value={"type": "xlsx", "sheets": 5})
 async def test_unified_response_schema(mock_meta, mock_extract, mock_set, client):
-    resp = await _upload(client, filename="data.xlsx")
+    resp = await _upload(client, filename="data.xlsx", contents=_ZIP_BYTES)
     assert resp.status_code == 200
     body = resp.json()
 

@@ -195,6 +195,7 @@
 		errorMessage.set(null);
 
 		if ($docSessionKey) {
+			revokePreviewUrls(documents);
 			documents = [];
 			if (fileInput) fileInput.value = '';
 			// docSessionKey is NOT cleared here — startResearch reads it from the store

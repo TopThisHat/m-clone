@@ -19,6 +19,47 @@ logger = logging.getLogger(__name__)
 
 # Maximum file size accepted before extraction (100 MB)
 _MAX_FILE_SIZE = 100 * 1024 * 1024
+
+# Magic byte signatures keyed by canonical MIME type.
+# Each value is a list of (offset, signature) tuples; ALL tuples in the list
+# must match for the format to be recognised (AND logic within one entry).
+# Multiple entries per MIME type means any entry is sufficient (OR logic).
+_MAGIC_SIGNATURES: dict[str, list[list[tuple[int, bytes]]]] = {
+    "application/pdf": [
+        [(0, b"%PDF")],
+    ],
+    # DOCX and XLSX are both ZIP-based (PK\x03\x04)
+    "application/zip": [
+        [(0, b"PK\x03\x04")],
+    ],
+    "image/png": [
+        [(0, b"\x89PNG\r\n\x1a\n")],
+    ],
+    "image/jpeg": [
+        [(0, b"\xff\xd8\xff")],
+    ],
+    "image/gif": [
+        [(0, b"GIF87a")],
+        [(0, b"GIF89a")],
+    ],
+    "image/webp": [
+        [(0, b"RIFF"), (8, b"WEBP")],
+    ],
+}
+
+# Map file extension → expected MIME type(s) for validate_mime().
+# CSV/TSV have no reliable magic bytes so they are left out intentionally.
+_EXT_TO_MIME: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".docx": "application/zip",
+    ".xlsx": "application/zip",
+    ".xls": "application/zip",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
 # Maximum pages processed per PDF
 _MAX_PDF_PAGES = 500
 # Maximum sheets processed per Excel workbook
@@ -219,6 +260,46 @@ def _table_to_markdown(rows: list[list[str | None]]) -> str:
         lines.append("| " + " | ".join(row) + " |")
 
     return "\n".join(lines)
+
+
+def validate_mime(contents: bytes, filename: str) -> None:
+    """Validate that *contents* match the magic bytes expected for *filename*'s extension.
+
+    Raises :class:`ValueError` when the file's binary signature does not match
+    the declared extension.  CSV/TSV files are skipped (no reliable magic bytes).
+    Unknown or unsupported extensions are also skipped silently so that the
+    extension check in the upload router remains the authoritative gate.
+
+    Args:
+        contents: Raw file bytes (at least the first 12 bytes are required for
+            WebP detection; fewer bytes are needed for most other formats).
+        filename: Original filename, used solely to derive the extension.
+
+    Raises:
+        ValueError: If the magic bytes do not match the expected signature for
+            the declared file extension.
+    """
+    ext = get_extension(filename)
+    expected_mime = _EXT_TO_MIME.get(ext)
+
+    # No entry → CSV/TSV or unknown extension; skip validation.
+    if expected_mime is None:
+        return
+
+    candidates = _MAGIC_SIGNATURES.get(expected_mime, [])
+    for entry in candidates:
+        # All (offset, signature) pairs in this entry must match.
+        if all(contents[offset : offset + len(sig)] == sig for offset, sig in entry):
+            return  # Signature matched — file is valid.
+
+    # Build a human-readable description of what was expected.
+    readable = " or ".join(
+        " + ".join(sig.hex() for _, sig in entry) for entry in candidates
+    )
+    raise ValueError(
+        f"File '{filename}' does not match expected magic bytes for '{ext}' "
+        f"(expected {readable}). The file may be corrupt or misnamed."
+    )
 
 
 # ── Format detection ──────────────────────────────────────────────────────────
