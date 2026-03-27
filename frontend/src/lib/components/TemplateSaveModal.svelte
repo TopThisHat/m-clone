@@ -77,6 +77,7 @@
 		onclose={handleClose}
 		onkeydown={handleKeydown}
 		onclick={handleBackdropClick}
+		aria-labelledby="template-save-title"
 		class="fixed inset-0 z-50 m-auto w-full max-w-md rounded-xl border border-navy-600 bg-navy-900 shadow-2xl backdrop:bg-black/60 backdrop:backdrop-blur-sm p-0"
 	>
 		<form onsubmit={handleSubmit} class="flex flex-col">

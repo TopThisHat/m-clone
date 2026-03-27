@@ -158,7 +158,7 @@ async def db_remove_member(team_id: str, sid: str) -> bool:
 
 async def db_share_session_to_team(session_id: str, team_id: str) -> dict[str, Any]:
     async with _acquire() as conn:
-        row = await conn.fetchrow(
+        await conn.fetchrow(
             """
             INSERT INTO playbook.session_teams (session_id, team_id)
             VALUES ($1::uuid, $2::uuid)

@@ -1,9 +1,10 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-
-from app.auth import get_current_user
 from pydantic import BaseModel, Field
 
+from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
     DuplicateLabelError,
@@ -85,7 +86,7 @@ async def _get_entity_or_404(entity_id: str, campaign_id: str) -> dict:
 @router.get("/{campaign_id}/entities")
 async def list_entities(
     campaign_id: str,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     limit: int = Query(default=50, ge=0, le=10000),
     offset: int = Query(default=0, ge=0),
     search: str | None = Query(default=None),
@@ -105,7 +106,7 @@ async def list_entities(
 # ── Create entity ────────────────────────────────────────────────────────────
 
 @router.post("/{campaign_id}/entities", response_model=EntityOut, status_code=201)
-async def create_entity(campaign_id: str, body: EntityCreate, user=Depends(get_current_user)):
+async def create_entity(campaign_id: str, body: EntityCreate, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         return await db_create_entity(
@@ -124,7 +125,7 @@ async def create_entity(campaign_id: str, body: EntityCreate, user=Depends(get_c
 # ── Bulk create entities ──────────────────────────────────────────────────────
 
 @router.post("/{campaign_id}/entities/bulk", response_model=BulkEntityResult, status_code=201)
-async def bulk_create_entities(campaign_id: str, body: list[EntityCreate], user=Depends(get_current_user)):
+async def bulk_create_entities(campaign_id: str, body: list[EntityCreate], user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     if not body:
         return {"inserted": [], "skipped": 0}
@@ -157,7 +158,7 @@ async def bulk_create_entities(campaign_id: str, body: list[EntityCreate], user=
 # ── Import entities ───────────────────────────────────────────────────────────
 
 @router.post("/{campaign_id}/entities/import", response_model=ImportResult, status_code=201)
-async def import_entities(campaign_id: str, body: ImportBody, user=Depends(get_current_user)):
+async def import_entities(campaign_id: str, body: ImportBody, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     await _get_owned_campaign(body.source_campaign_id, user["sub"])
     try:
@@ -170,7 +171,7 @@ async def import_entities(campaign_id: str, body: ImportBody, user=Depends(get_c
 
 
 @router.post("/{campaign_id}/entities/import-library", response_model=ImportResult, status_code=201)
-async def import_entities_from_library(campaign_id: str, body: ImportLibraryBody, user=Depends(get_current_user)):
+async def import_entities_from_library(campaign_id: str, body: ImportLibraryBody, user: dict[str, Any] = Depends(get_current_user)):
     campaign = await _get_owned_campaign(campaign_id, user["sub"])
     try:
         return await db_import_entities_from_library(
@@ -183,7 +184,7 @@ async def import_entities_from_library(campaign_id: str, body: ImportLibraryBody
 # ── Assign / Unassign entities ────────────────────────────────────────────────
 
 @router.post("/{campaign_id}/entities/assign", response_model=BulkEntityResult, status_code=201)
-async def assign_entities(campaign_id: str, body: EntityAssignBody, user=Depends(get_current_user)):
+async def assign_entities(campaign_id: str, body: EntityAssignBody, user: dict[str, Any] = Depends(get_current_user)):
     """Assign existing library entities to a campaign (copies them in)."""
     await _get_owned_campaign(campaign_id, user["sub"])
     if not body.entity_ids:
@@ -195,7 +196,7 @@ async def assign_entities(campaign_id: str, body: EntityAssignBody, user=Depends
 
 
 @router.post("/{campaign_id}/entities/unassign", status_code=200)
-async def unassign_entities(campaign_id: str, body: EntityUnassignBody, user=Depends(get_current_user)):
+async def unassign_entities(campaign_id: str, body: EntityUnassignBody, user: dict[str, Any] = Depends(get_current_user)):
     """Remove entities from a campaign."""
     await _get_owned_campaign(campaign_id, user["sub"])
     if not body.entity_ids:
@@ -210,7 +211,7 @@ async def unassign_entities(campaign_id: str, body: EntityUnassignBody, user=Dep
 # ── Update entity ────────────────────────────────────────────────────────────
 
 @router.patch("/{campaign_id}/entities/{entity_id}", response_model=EntityOut)
-async def update_entity(campaign_id: str, entity_id: str, body: EntityUpdate, user=Depends(get_current_user)):
+async def update_entity(campaign_id: str, entity_id: str, body: EntityUpdate, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         updated = await db_update_entity(entity_id, campaign_id, **body.model_dump(exclude_none=True))
@@ -226,7 +227,7 @@ async def update_entity(campaign_id: str, entity_id: str, body: EntityUpdate, us
 # ── Delete entity ────────────────────────────────────────────────────────────
 
 @router.delete("/{campaign_id}/entities/{entity_id}", status_code=204)
-async def delete_entity(campaign_id: str, entity_id: str, user=Depends(get_current_user)):
+async def delete_entity(campaign_id: str, entity_id: str, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         deleted = await db_delete_entity(entity_id=entity_id, campaign_id=campaign_id)
@@ -241,7 +242,7 @@ async def delete_entity(campaign_id: str, entity_id: str, user=Depends(get_curre
 
 @router.get("/{campaign_id}/entities/{entity_id}/metadata")
 async def get_entity_metadata(
-    campaign_id: str, entity_id: str, user=Depends(get_current_user),
+    campaign_id: str, entity_id: str, user: dict[str, Any] = Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
     await _get_entity_or_404(entity_id, campaign_id)
@@ -253,7 +254,7 @@ async def get_entity_metadata(
 
 @router.put("/{campaign_id}/entities/{entity_id}/metadata")
 async def set_entity_metadata(
-    campaign_id: str, entity_id: str, body: MetadataUpdate, user=Depends(get_current_user),
+    campaign_id: str, entity_id: str, body: MetadataUpdate, user: dict[str, Any] = Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
     await _get_entity_or_404(entity_id, campaign_id)
@@ -265,7 +266,7 @@ async def set_entity_metadata(
 
 @router.delete("/{campaign_id}/entities/{entity_id}/metadata/{key}", status_code=200)
 async def delete_entity_metadata_key(
-    campaign_id: str, entity_id: str, key: str, user=Depends(get_current_user),
+    campaign_id: str, entity_id: str, key: str, user: dict[str, Any] = Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
     await _get_entity_or_404(entity_id, campaign_id)
@@ -279,7 +280,7 @@ async def delete_entity_metadata_key(
 
 @router.get("/{campaign_id}/entities/{entity_id}/external-ids", response_model=list[ExternalIdOut])
 async def get_external_ids(
-    campaign_id: str, entity_id: str, user=Depends(get_current_user),
+    campaign_id: str, entity_id: str, user: dict[str, Any] = Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
     await _get_entity_or_404(entity_id, campaign_id)
@@ -291,7 +292,7 @@ async def get_external_ids(
 
 @router.put("/{campaign_id}/entities/{entity_id}/external-ids", response_model=ExternalIdOut)
 async def set_external_id(
-    campaign_id: str, entity_id: str, body: ExternalIdUpdate, user=Depends(get_current_user),
+    campaign_id: str, entity_id: str, body: ExternalIdUpdate, user: dict[str, Any] = Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
     await _get_entity_or_404(entity_id, campaign_id)
@@ -303,7 +304,7 @@ async def set_external_id(
 
 @router.delete("/{campaign_id}/entities/{entity_id}/external-ids/{system}", status_code=204)
 async def delete_external_id(
-    campaign_id: str, entity_id: str, system: str, user=Depends(get_current_user),
+    campaign_id: str, entity_id: str, system: str, user: dict[str, Any] = Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
     await _get_entity_or_404(entity_id, campaign_id)

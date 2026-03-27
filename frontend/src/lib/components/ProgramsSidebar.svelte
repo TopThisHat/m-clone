@@ -89,6 +89,7 @@
 					bind:value={searchQuery}
 					type="text"
 					placeholder="Filter programs..."
+					aria-label="Filter programs"
 					class="w-full bg-navy-800 border border-navy-700 rounded px-2.5 py-1 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-gold/40 transition-colors"
 				/>
 			</div>

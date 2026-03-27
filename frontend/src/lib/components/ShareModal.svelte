@@ -133,7 +133,7 @@
 <dialog
 	bind:this={dialogEl}
 	class="bg-transparent p-0 m-auto backdrop:bg-black/60 backdrop:backdrop-blur-sm max-w-md w-full"
-	aria-label="Share report"
+	aria-labelledby="share-modal-title"
 	onclose={handleClose}
 	onclick={handleBackdropClick}
 >
@@ -141,7 +141,7 @@
 		<!-- Header -->
 		<div class="flex items-center justify-between px-5 py-4 border-b border-navy-700">
 			<div>
-				<h2 class="text-sm font-medium text-slate-200">Share report</h2>
+				<h2 id="share-modal-title" class="text-sm font-medium text-slate-200">Share report</h2>
 				<p class="text-xs text-slate-500 mt-0.5">Control who can access this research report</p>
 			</div>
 			<button
@@ -171,6 +171,7 @@
 						<button
 							onclick={() => applyMode(val as Mode)}
 							disabled={saving}
+							aria-pressed={mode === val}
 							class="flex flex-col items-center gap-1 px-3 py-3 rounded-lg border text-center transition-all
 								{mode === val
 									? 'border-gold/60 bg-gold/5 text-gold'
@@ -245,6 +246,7 @@
 								type="text"
 								readonly
 								value={shareUrl}
+								aria-label="Share URL"
 								class="flex-1 bg-navy-800 border border-navy-600 rounded-lg px-3 py-2 text-xs text-slate-400 font-mono truncate"
 							/>
 							<button
@@ -266,7 +268,7 @@
 				{/if}
 
 				{#if error}
-					<p class="text-xs text-red-400">{error}</p>
+					<p role="alert" class="text-xs text-red-400">{error}</p>
 				{/if}
 			{/if}
 		</div>

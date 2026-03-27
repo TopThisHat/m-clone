@@ -97,7 +97,7 @@ async def list_entities(
     team_id: str | None = Query(default=None),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         resolved_team, include_master = await _resolve_team_access(user, team_id)
@@ -111,7 +111,7 @@ async def list_entities(
 
 
 @router.get("/entities/{entity_id}")
-async def get_entity(entity_id: str, user=Depends(get_current_user)):
+async def get_entity(entity_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         entity = await db_get_kg_entity(entity_id)
     except DatabaseNotConfigured:
@@ -135,7 +135,7 @@ async def get_entity_relationships(
     entity_id: str,
     direction: str = Query(default="both"),
     team_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         resolved_team, include_master = await _resolve_team_access(user, team_id)
@@ -154,7 +154,7 @@ async def get_entity_neighbors(
     limit: int = Query(default=50, ge=1, le=200),
     exclude_ids: str | None = Query(default=None, description="Comma-separated UUIDs to exclude"),
     team_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         resolved_team, include_master = await _resolve_team_access(user, team_id)
@@ -175,7 +175,7 @@ async def get_entity_neighbors(
 async def search_entities(
     q: str = Query(),
     team_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         resolved_team, include_master = await _resolve_team_access(user, team_id)
@@ -187,7 +187,7 @@ async def search_entities(
 @router.get("/stats")
 async def get_stats(
     team_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         resolved_team, include_master = await _resolve_team_access(user, team_id)
@@ -205,7 +205,7 @@ async def get_graph(
     metadata_key: str | None = Query(default=None),
     metadata_value: str | None = Query(default=None),
     limit: int = Query(default=500, le=2000),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         resolved_team, include_master = await _resolve_team_access(user, team_id)
@@ -225,7 +225,7 @@ async def get_graph(
 @router.get("/deal-partners")
 async def get_deal_partners(
     team_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         resolved_team, include_master = await _resolve_team_access(user, team_id)
@@ -241,7 +241,7 @@ async def list_conflicts(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0),
     team_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         resolved_team, include_master = await _resolve_team_access(user, team_id)
@@ -268,7 +268,7 @@ class EntityPatch(BaseModel):
 async def update_entity(
     entity_id: str,
     body: EntityPatch,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         entity = await db_get_kg_entity(entity_id)
@@ -285,7 +285,7 @@ async def update_entity(
 
 
 @router.delete("/entities/{entity_id}")
-async def delete_entity(entity_id: str, user=Depends(get_current_user)):
+async def delete_entity(entity_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         entity = await db_get_kg_entity(entity_id)
         if not entity:
@@ -310,7 +310,7 @@ class RelationshipPatch(BaseModel):
 async def update_relationship(
     rel_id: str,
     body: RelationshipPatch,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         rel = await db_get_kg_relationship(rel_id)
@@ -327,7 +327,7 @@ async def update_relationship(
 
 
 @router.delete("/relationships/{rel_id}")
-async def delete_relationship(rel_id: str, user=Depends(get_current_user)):
+async def delete_relationship(rel_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         rel = await db_get_kg_relationship(rel_id)
         if not rel:
@@ -347,7 +347,7 @@ async def delete_relationship(rel_id: str, user=Depends(get_current_user)):
 async def query_graph(
     q: str = Query(description="Natural language or keyword query"),
     team_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         resolved_team, include_master = await _resolve_team_access(user, team_id)
@@ -365,7 +365,7 @@ async def admin_get_team_graph(
     predicate_families: str | None = Query(default=None),
     search: str | None = Query(default=None),
     limit: int = Query(default=500, le=2000),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Super admin endpoint to view any team's knowledge graph."""
     try:

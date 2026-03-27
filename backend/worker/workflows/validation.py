@@ -162,7 +162,6 @@ class ValidationCampaignWorkflow(BaseWorkflow):
         )
 
         # Build lookup maps
-        entity_map = {str(e["id"]): e for e in entities}
         attr_map = {str(a["id"]): a for a in attributes}
 
         # ── Step 2: Batch staleness check ─────────────────────────────

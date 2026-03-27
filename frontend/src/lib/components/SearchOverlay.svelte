@@ -293,7 +293,7 @@
 		>
 			<!-- Search input -->
 			<div class="flex items-center gap-3 px-4 py-3 border-b border-navy-700">
-				<svg class="w-5 h-5 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<svg class="w-5 h-5 text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
 				</svg>
 				<input
@@ -308,7 +308,7 @@
 					spellcheck="false"
 				/>
 				{#if loading}
-					<div class="w-4 h-4 border-2 border-gold/30 border-t-gold rounded-full animate-spin"></div>
+					<div class="w-4 h-4 border-2 border-gold/30 border-t-gold rounded-full animate-spin" role="status" aria-label="Searching"></div>
 				{/if}
 				<kbd class="text-xs text-slate-500 bg-navy-700 border border-navy-600 px-1.5 py-0.5 rounded font-mono">ESC</kbd>
 			</div>

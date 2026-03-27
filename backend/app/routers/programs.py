@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
@@ -14,7 +16,12 @@ from app.db.programs import (
     db_unassign_campaign_from_program,
     db_update_program,
 )
-from app.models.program import ProgramCampaignAssign, ProgramCreate, ProgramOut, ProgramUpdate
+from app.models.program import (
+    ProgramCampaignAssign,
+    ProgramCreate,
+    ProgramOut,
+    ProgramUpdate,
+)
 
 router = APIRouter(prefix="/api/programs", tags=["programs"])
 
@@ -44,7 +51,7 @@ async def _assert_program_access(program: dict, user_sid: str) -> None:
 
 
 @router.post("", response_model=ProgramOut, status_code=201)
-async def create_program(body: ProgramCreate, user=Depends(get_current_user)):
+async def create_program(body: ProgramCreate, user: dict[str, Any] = Depends(get_current_user)):
     if body.team_id:
         if not await db_is_team_member(body.team_id, user["sub"]):
             raise _forbidden()
@@ -62,7 +69,7 @@ async def create_program(body: ProgramCreate, user=Depends(get_current_user)):
 @router.get("", response_model=list[ProgramOut])
 async def list_programs(
     team_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         return await db_list_programs(owner_sid=user["sub"], team_id=team_id)
@@ -71,7 +78,7 @@ async def list_programs(
 
 
 @router.get("/{program_id}", response_model=ProgramOut)
-async def get_program(program_id: str, user=Depends(get_current_user)):
+async def get_program(program_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         program = await db_get_program(program_id)
     except DatabaseNotConfigured:
@@ -83,7 +90,7 @@ async def get_program(program_id: str, user=Depends(get_current_user)):
 
 
 @router.put("/{program_id}", response_model=ProgramOut)
-async def update_program(program_id: str, body: ProgramUpdate, user=Depends(get_current_user)):
+async def update_program(program_id: str, body: ProgramUpdate, user: dict[str, Any] = Depends(get_current_user)):
     try:
         program = await db_get_program(program_id)
     except DatabaseNotConfigured:
@@ -100,7 +107,7 @@ async def update_program(program_id: str, body: ProgramUpdate, user=Depends(get_
 
 
 @router.delete("/{program_id}", status_code=204)
-async def delete_program(program_id: str, user=Depends(get_current_user)):
+async def delete_program(program_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         program = await db_get_program(program_id)
     except DatabaseNotConfigured:
@@ -115,7 +122,7 @@ async def delete_program(program_id: str, user=Depends(get_current_user)):
 # ── Program-Campaign Assignment ───────────────────────────────────────────────
 
 @router.get("/{program_id}/campaigns")
-async def list_program_campaigns(program_id: str, user=Depends(get_current_user)):
+async def list_program_campaigns(program_id: str, user: dict[str, Any] = Depends(get_current_user)):
     """List all campaigns assigned to a program."""
     try:
         program = await db_get_program(program_id)
@@ -131,7 +138,7 @@ async def list_program_campaigns(program_id: str, user=Depends(get_current_user)
 async def assign_campaign(
     program_id: str,
     body: ProgramCampaignAssign,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Assign a campaign to a program. A campaign can belong to at most one program."""
     try:
@@ -151,7 +158,7 @@ async def assign_campaign(
 async def unassign_campaign(
     program_id: str,
     campaign_id: str,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Remove a campaign from a program."""
     try:

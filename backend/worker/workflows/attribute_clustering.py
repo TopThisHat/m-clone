@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+
 
 from app.openai_factory import get_openai_client
 
@@ -135,7 +135,6 @@ async def get_or_create_clusters(
 
     # Build label→id map
     label_to_id = {a["label"]: str(a["id"]) for a in attributes}
-    id_to_label = {str(a["id"]): a["label"] for a in attributes}
 
     if existing_clusters:
         # Check if all current attributes are covered

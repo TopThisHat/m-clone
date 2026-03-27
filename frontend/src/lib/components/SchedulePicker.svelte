@@ -83,11 +83,12 @@
 
 <div class="space-y-3">
 	<!-- Frequency pills -->
-	<div class="flex flex-wrap gap-2">
+	<div class="flex flex-wrap gap-2" role="group" aria-label="Schedule frequency">
 		{#each FREQ_OPTIONS as opt}
 			<button
 				type="button"
 				onclick={() => (freq = opt.key)}
+				aria-pressed={freq === opt.key}
 				class="px-3 py-1.5 rounded-full text-sm border transition-colors
 					{freq === opt.key
 						? 'bg-gold text-navy border-gold font-semibold'
@@ -105,6 +106,7 @@
 				<span class="text-slate-500">Every</span>
 				<select
 					bind:value={dow}
+					aria-label="Day of week"
 					class="bg-navy-700 border border-navy-600 rounded-lg px-2 py-1 text-sm text-slate-200 focus:outline-none focus:border-gold"
 				>
 					{#each DAYS_OF_WEEK as d}
@@ -116,6 +118,7 @@
 				<span class="text-slate-500">On the</span>
 				<select
 					bind:value={dom}
+					aria-label="Day of month"
 					class="bg-navy-700 border border-navy-600 rounded-lg px-2 py-1 text-sm text-slate-200 focus:outline-none focus:border-gold"
 				>
 					{#each DAYS_OF_MONTH as d}
@@ -126,6 +129,7 @@
 			<span class="text-slate-500">{freq === 'monthly' || freq === 'weekly' ? 'at' : 'At'}</span>
 			<select
 				bind:value={hour}
+				aria-label="Time of day"
 				class="bg-navy-700 border border-navy-600 rounded-lg px-2 py-1 text-sm text-slate-200 focus:outline-none focus:border-gold"
 			>
 				{#each HOURS as h}

@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
@@ -27,7 +28,7 @@ SESSION_TEXT_CAP = 500_000
 @router.get("/status")
 async def document_status(
     session_key: str = Query(...),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Check whether a document session key still has content in Redis."""
     session = await get_documents(session_key)
@@ -39,7 +40,7 @@ async def document_status(
 async def upload_document(
     file: UploadFile = File(...),
     session_key: str | None = Query(None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Upload a document for use in research sessions."""
     filename = file.filename or ""
@@ -158,7 +159,7 @@ async def upload_document(
 async def upload_to_kg(
     file: UploadFile = File(...),
     team_id: str | None = Query(None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Upload a document and extract entities/relationships into the knowledge graph.
 

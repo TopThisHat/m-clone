@@ -1,6 +1,8 @@
 """Global search endpoint: full-text search across campaigns, entities, attributes, programs."""
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import get_current_user
@@ -22,7 +24,7 @@ def _no_db() -> HTTPException:
 async def search(
     q: str = Query(..., min_length=1, max_length=200, description="Search query"),
     limit: int = Query(default=20, ge=1, le=100),
-    user: dict = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ) -> dict:
     """Search across campaigns, entities, attributes, and programs.
 

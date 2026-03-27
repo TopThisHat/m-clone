@@ -69,12 +69,13 @@
 		onclose={handleClose}
 		onkeydown={handleKeydown}
 		onclick={handleBackdropClick}
+		aria-labelledby="program-modal-title"
 		class="fixed inset-0 z-50 m-auto w-full max-w-md rounded-xl border border-navy-600 bg-navy-900 shadow-2xl backdrop:bg-black/60 backdrop:backdrop-blur-sm p-0"
 	>
 		<form onsubmit={handleSubmit} class="flex flex-col">
 			<!-- Header -->
 			<div class="flex items-center justify-between px-5 py-4 border-b border-navy-700">
-				<h2 class="text-sm font-medium text-slate-200">{title}</h2>
+				<h2 id="program-modal-title" class="text-sm font-medium text-slate-200">{title}</h2>
 				<button
 					type="button"
 					onclick={handleClose}

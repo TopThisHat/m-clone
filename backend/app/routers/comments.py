@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -62,7 +63,7 @@ class SuggestionResolve(BaseModel):
 
 
 @router.get("/api/sessions/{session_id}/mentionable-users")
-async def list_mentionable_users(session_id: str, user=Depends(get_current_user)):
+async def list_mentionable_users(session_id: str, user: dict[str, Any] = Depends(get_current_user)):
     """Users that can be @mentioned — members of teams this session is shared with."""
     try:
         return await db_get_session_mentionable_users(session_id)
@@ -71,7 +72,7 @@ async def list_mentionable_users(session_id: str, user=Depends(get_current_user)
 
 
 @router.get("/api/sessions/{session_id}/comments")
-async def list_comments(session_id: str, user=Depends(get_current_user)):
+async def list_comments(session_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         return await db_list_comments(session_id)
     except DatabaseNotConfigured:
@@ -79,7 +80,7 @@ async def list_comments(session_id: str, user=Depends(get_current_user)):
 
 
 @router.post("/api/sessions/{session_id}/comments", status_code=201)
-async def create_comment(session_id: str, body: CommentCreate, user=Depends(get_current_user)):
+async def create_comment(session_id: str, body: CommentCreate, user: dict[str, Any] = Depends(get_current_user)):
     try:
         session = await db_get_session(session_id)
         if session is None:
@@ -185,7 +186,7 @@ async def create_comment(session_id: str, body: CommentCreate, user=Depends(get_
 
 
 @router.patch("/api/comments/{comment_id}")
-async def update_comment(comment_id: str, body: CommentUpdate, user=Depends(get_current_user)):
+async def update_comment(comment_id: str, body: CommentUpdate, user: dict[str, Any] = Depends(get_current_user)):
     try:
         comment = await db_get_comment(comment_id)
         if comment is None:
@@ -200,7 +201,7 @@ async def update_comment(comment_id: str, body: CommentUpdate, user=Depends(get_
 
 
 @router.delete("/api/comments/{comment_id}", status_code=204)
-async def delete_comment(comment_id: str, user=Depends(get_current_user)):
+async def delete_comment(comment_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         comment = await db_get_comment(comment_id)
         if comment is None:
@@ -213,7 +214,7 @@ async def delete_comment(comment_id: str, user=Depends(get_current_user)):
 
 
 @router.post("/api/comments/{comment_id}/reactions")
-async def toggle_reaction(comment_id: str, body: ReactionBody, user=Depends(get_current_user)):
+async def toggle_reaction(comment_id: str, body: ReactionBody, user: dict[str, Any] = Depends(get_current_user)):
     try:
         if body.emoji not in VALID_EMOJIS:
             raise HTTPException(status_code=400, detail=f"Invalid emoji. Must be one of: {', '.join(VALID_EMOJIS)}")
@@ -227,7 +228,7 @@ async def toggle_reaction(comment_id: str, body: ReactionBody, user=Depends(get_
 
 
 @router.patch("/api/comments/{comment_id}/suggestion")
-async def resolve_suggestion(comment_id: str, body: SuggestionResolve, user=Depends(get_current_user)):
+async def resolve_suggestion(comment_id: str, body: SuggestionResolve, user: dict[str, Any] = Depends(get_current_user)):
     try:
         if body.status not in ("accepted", "rejected"):
             raise HTTPException(status_code=400, detail="status must be 'accepted' or 'rejected'")

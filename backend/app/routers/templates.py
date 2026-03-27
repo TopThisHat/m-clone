@@ -1,6 +1,8 @@
 """Attribute template CRUD — save/load reusable attribute sets."""
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -65,7 +67,7 @@ async def _assert_team_membership(team_id: str | None, user_sid: str) -> None:
 
 
 @router.get("", response_model=list[AttributeTemplateOut])
-async def list_templates(user=Depends(get_current_user)):
+async def list_templates(user: dict[str, Any] = Depends(get_current_user)):
     try:
         return await db_list_attribute_templates(owner_sid=user["sub"])
     except DatabaseNotConfigured:
@@ -73,7 +75,7 @@ async def list_templates(user=Depends(get_current_user)):
 
 
 @router.post("", response_model=AttributeTemplateOut, status_code=201)
-async def create_template(body: AttributeTemplateCreate, user=Depends(get_current_user)):
+async def create_template(body: AttributeTemplateCreate, user: dict[str, Any] = Depends(get_current_user)):
     await _assert_team_membership(body.team_id, user["sub"])
     try:
         return await db_create_attribute_template(
@@ -87,7 +89,7 @@ async def create_template(body: AttributeTemplateCreate, user=Depends(get_curren
 
 
 @router.post("/save-from-campaign", response_model=AttributeTemplateOut, status_code=201)
-async def save_template_from_campaign(body: SaveTemplateBody, user=Depends(get_current_user)):
+async def save_template_from_campaign(body: SaveTemplateBody, user: dict[str, Any] = Depends(get_current_user)):
     """Snapshot a campaign's attributes into a reusable template."""
     await _get_owned_campaign(body.campaign_id, user["sub"])
     await _assert_team_membership(body.team_id, user["sub"])
@@ -104,7 +106,7 @@ async def save_template_from_campaign(body: SaveTemplateBody, user=Depends(get_c
 
 @router.post("/{template_id}/apply", status_code=201)
 async def apply_template_to_campaign(
-    template_id: str, body: ApplyTemplateBody, user=Depends(get_current_user),
+    template_id: str, body: ApplyTemplateBody, user: dict[str, Any] = Depends(get_current_user),
 ):
     """Apply a template's attributes to a campaign, skipping duplicates."""
     await _get_owned_campaign(body.campaign_id, user["sub"])
@@ -128,7 +130,7 @@ async def apply_template_to_campaign(
 
 
 @router.delete("/{template_id}", status_code=204)
-async def delete_template(template_id: str, user=Depends(get_current_user)):
+async def delete_template(template_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         deleted = await db_delete_attribute_template(template_id, user["sub"])
     except DatabaseNotConfigured:

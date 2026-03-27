@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
@@ -57,7 +59,7 @@ async def _assert_campaign_access(campaign: dict, user_sid: str) -> None:
 @router.get("/stats", response_model=CampaignStatsOut)
 async def get_campaign_stats(
     team_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         return await db_get_campaign_stats(owner_sid=user["sub"], team_id=team_id)
@@ -68,7 +70,7 @@ async def get_campaign_stats(
 @router.get("", response_model=list[CampaignOut])
 async def list_campaigns(
     team_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         return await db_list_campaigns(owner_sid=user["sub"], team_id=team_id)
@@ -77,7 +79,7 @@ async def list_campaigns(
 
 
 @router.post("", response_model=CampaignOut, status_code=201)
-async def create_campaign(body: CampaignCreate, user=Depends(get_current_user)):
+async def create_campaign(body: CampaignCreate, user: dict[str, Any] = Depends(get_current_user)):
     if body.team_id:
         if not await db_is_team_member(body.team_id, user["sub"]):
             raise _forbidden()
@@ -94,7 +96,7 @@ async def create_campaign(body: CampaignCreate, user=Depends(get_current_user)):
 
 
 @router.get("/{campaign_id}", response_model=CampaignOut)
-async def get_campaign(campaign_id: str, user=Depends(get_current_user)):
+async def get_campaign(campaign_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         campaign = await db_get_campaign(campaign_id)
     except DatabaseNotConfigured:
@@ -107,7 +109,7 @@ async def get_campaign(campaign_id: str, user=Depends(get_current_user)):
 
 @router.patch("/{campaign_id}", response_model=CampaignOut)
 async def update_campaign(
-    campaign_id: str, body: CampaignUpdate, user=Depends(get_current_user)
+    campaign_id: str, body: CampaignUpdate, user: dict[str, Any] = Depends(get_current_user)
 ):
     try:
         campaign = await db_get_campaign(campaign_id)
@@ -125,7 +127,7 @@ async def update_campaign(
 async def transition_campaign_status(
     campaign_id: str,
     body: CampaignStatusUpdate,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Transition a campaign's lifecycle status.
 
@@ -150,7 +152,7 @@ async def transition_campaign_status(
 @router.get("/{campaign_id}/status-history", response_model=list[CampaignStatusAuditOut])
 async def get_campaign_status_history(
     campaign_id: str,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[dict]:
@@ -170,7 +172,7 @@ async def get_campaign_status_history(
 
 
 @router.post("/{campaign_id}/clone", response_model=CampaignOut, status_code=201)
-async def clone_campaign(campaign_id: str, user=Depends(get_current_user)):
+async def clone_campaign(campaign_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         campaign = await db_get_campaign(campaign_id)
     except DatabaseNotConfigured:
@@ -185,7 +187,7 @@ async def clone_campaign(campaign_id: str, user=Depends(get_current_user)):
 
 
 @router.delete("/{campaign_id}", status_code=204)
-async def delete_campaign(campaign_id: str, user=Depends(get_current_user)):
+async def delete_campaign(campaign_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         deleted = await db_delete_campaign(
             campaign_id=campaign_id, owner_sid=user["sub"]
@@ -201,7 +203,7 @@ async def delete_campaign(campaign_id: str, user=Depends(get_current_user)):
 async def compare_entities(
     campaign_id: str,
     body: CompareRequest,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Compare 2-5 entities side-by-side within a campaign.
 

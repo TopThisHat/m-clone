@@ -1,6 +1,7 @@
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -27,7 +28,7 @@ class ClarifyRequest(BaseModel):
 
 
 @router.post("/research/clarify/{clarification_id}")
-async def clarify_endpoint(clarification_id: str, body: ClarifyRequest, user=Depends(get_current_user)) -> dict[str, str]:
+async def clarify_endpoint(clarification_id: str, body: ClarifyRequest, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, str]:
     """Resolve a pending clarification Future (works for both agent-level and tool-level paths)."""
     if not body.answer or not body.answer.strip():
         raise HTTPException(status_code=422, detail="answer must not be empty")
@@ -57,7 +58,7 @@ def available_models() -> list[dict[str, str]]:
 
 
 @router.post("/research")
-async def research_endpoint(body: ResearchRequest, request: Request, user=Depends(get_optional_user)) -> StreamingResponse:
+async def research_endpoint(body: ResearchRequest, request: Request, user: dict[str, Any] | None = Depends(get_optional_user)) -> StreamingResponse:
     """Stream a research session as Server-Sent Events."""
     doc_session = await get_document_text(body.doc_session_key)
 
@@ -152,7 +153,7 @@ async def _run_async_job(
             if chunk.startswith("event: final_report"):
                 try:
                     import json
-                    data_line = [l for l in chunk.split("\n") if l.startswith("data: ")]
+                    data_line = [line for line in chunk.split("\n") if line.startswith("data: ")]
                     if data_line:
                         payload = json.loads(data_line[0][6:])
                         markdown_parts.append(payload.get("markdown", ""))
@@ -194,9 +195,9 @@ async def _run_async_job(
 
 
 @router.post("/research/async", status_code=202)
-async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: BackgroundTasks, user=Depends(get_current_user)) -> dict[str, str]:
+async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: BackgroundTasks, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, str]:
     """Submit a research job asynchronously. Results POSTed to webhook_url when done."""
-    from app.db import db_create_job, DatabaseNotConfigured
+    from app.db import DatabaseNotConfigured, db_create_job
 
     job_id = str(uuid.uuid4())
     try:
@@ -228,9 +229,9 @@ async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: 
 
 
 @router.get("/research/jobs/{job_id}", response_model=JobStatus)
-async def get_job_status(job_id: str, user=Depends(get_current_user)) -> JobStatus:
+async def get_job_status(job_id: str, user: dict[str, Any] = Depends(get_current_user)) -> JobStatus:
     """Get status of an async research job."""
-    from app.db import db_get_job, DatabaseNotConfigured
+    from app.db import DatabaseNotConfigured, db_get_job
 
     try:
         job = await db_get_job(job_id)

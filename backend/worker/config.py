@@ -9,7 +9,6 @@ from __future__ import annotations
 from pydantic_settings import BaseSettings
 
 from app.streams import (
-    STREAM_ENTITY_EXTRACTION,
     STREAM_VALIDATION_CAMPAIGN,
     STREAM_VALIDATION_CLUSTER,
     STREAM_VALIDATION_PAIR,

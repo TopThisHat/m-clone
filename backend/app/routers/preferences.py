@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import get_current_user
@@ -17,7 +19,7 @@ def _no_db() -> HTTPException:
 @router.get("")
 async def get_preferences(
     campaign_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Return the current user's preferences, optionally scoped to a campaign."""
     try:
@@ -34,7 +36,7 @@ async def get_preferences(
 @router.put("", response_model=PreferencesOut)
 async def upsert_preferences(
     body: PreferencesUpsert,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Create or update the current user's preferences."""
     try:

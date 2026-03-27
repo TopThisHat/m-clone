@@ -210,7 +210,7 @@
 			<p class="text-slate-500 text-xs mb-3">CSV, TSV, Excel (.xlsx / .xls) supported</p>
 			<label class="cursor-pointer">
 				<span class="text-gold hover:text-gold-light underline text-sm">or browse files</span>
-				<input type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" class="hidden" onchange={onFileInput} />
+				<input type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" class="hidden" onchange={onFileInput} aria-label="Choose file to upload" />
 			</label>
 		</div>
 
@@ -273,7 +273,7 @@
 			</div>
 		</div>
 
-		{#if error}<p class="text-red-400 text-sm">{error}</p>{/if}
+		{#if error}<p class="text-red-400 text-sm" role="alert">{error}</p>{/if}
 
 	{:else if stage === 'mapping'}
 		<div class="flex items-center justify-between">
@@ -311,7 +311,7 @@
 				</div>
 			{/each}
 		</div>
-		{#if error}<p class="text-red-400 text-sm">{error}</p>{/if}
+		{#if error}<p class="text-red-400 text-sm" role="alert">{error}</p>{/if}
 		<div class="flex gap-2">
 			<button onclick={toPreview} class="btn-gold">Preview</button>
 			<button onclick={reset} class="btn-secondary">Cancel</button>
@@ -347,7 +347,7 @@
 				Large file — will be uploaded in {Math.ceil(rows.length / BATCH_SIZE)} batches of {BATCH_SIZE.toLocaleString()}.
 			</p>
 		{/if}
-		{#if error}<p class="text-red-400 text-sm">{error}</p>{/if}
+		{#if error}<p class="text-red-400 text-sm" role="alert">{error}</p>{/if}
 		<div class="flex gap-2">
 			<button onclick={upload} class="btn-gold">Upload {rows.length.toLocaleString()} entities</button>
 			<button onclick={() => (stage = 'mapping')} class="btn-secondary">Back</button>
@@ -360,7 +360,14 @@
 				<span class="text-slate-300 font-mono">{uploadedCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
 			</div>
 			<!-- Progress bar -->
-			<div class="h-2 bg-navy-700 rounded-full overflow-hidden">
+			<div
+				class="h-2 bg-navy-700 rounded-full overflow-hidden"
+				role="progressbar"
+				aria-valuenow={uploadedCount}
+				aria-valuemin={0}
+				aria-valuemax={totalCount}
+				aria-label="Uploading entities: {uploadPct}% complete"
+			>
 				<div
 					class="h-full bg-gold rounded-full transition-all duration-300"
 					style="width: {uploadPct}%"

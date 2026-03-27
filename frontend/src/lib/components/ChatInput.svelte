@@ -386,6 +386,7 @@
 				class="flex-shrink-0 cursor-pointer text-slate-500 hover:text-gold transition-colors pb-3
 				       {uploading ? 'pointer-events-none opacity-60' : ''}"
 				title="Attach documents"
+				aria-label="Attach documents"
 			>
 				{#if uploading}
 					<span class="flex gap-0.5 pb-0.5">
@@ -428,6 +429,7 @@
 			{placeholder}
 			rows="1"
 			disabled={$isStreaming}
+			aria-label="Research query"
 			class="input-base flex-1 px-4 py-3 text-sm resize-none font-light leading-relaxed"
 			style="min-height:48px; overflow:hidden;"
 		></textarea>
@@ -436,6 +438,7 @@
 		{#if $isStreaming}
 			<button
 				onclick={cancelResearch}
+				aria-label="Stop research"
 				class="flex-shrink-0 px-4 py-3 border border-navy-600 hover:border-red-700/50 text-slate-400
 					   hover:text-red-400 rounded-lg transition-all text-sm"
 			>
@@ -447,6 +450,7 @@
 				disabled={!query.trim() || uploading}
 				class="flex-shrink-0 btn-gold px-4 py-3"
 				title="Send (Enter)"
+				aria-label="Send research query"
 			>
 				<svg class="w-4 h-4" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path
@@ -464,10 +468,11 @@
 	{#if !$isStreaming}
 		<div class="flex items-center gap-3 flex-wrap">
 			<!-- Depth selector -->
-			<div class="flex rounded-lg border border-navy-600 overflow-hidden text-xs">
+			<div class="flex rounded-lg border border-navy-600 overflow-hidden text-xs" role="group" aria-label="Research depth">
 				{#each ['fast', 'balanced', 'deep'] as d (d)}
 					<button
 						onclick={() => (depth = d as 'fast' | 'balanced' | 'deep')}
+						aria-pressed={depth === d}
 						class="flex-1 px-3 py-1.5 transition-colors
 							{depth === d ? 'bg-navy-700 text-gold' : 'text-slate-500 hover:text-slate-300'}"
 					>
@@ -480,6 +485,7 @@
 			{#if models.length > 1}
 				<select
 					bind:value={selectedModel}
+					aria-label="AI model"
 					class="input-base text-xs py-1.5 px-3 w-auto"
 				>
 					{#each models as m (m.id)}

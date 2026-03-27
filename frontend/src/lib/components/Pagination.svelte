@@ -32,14 +32,14 @@
 </script>
 
 {#if total > 0}
-	<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs border-t border-navy-700 bg-navy-800">
+	<nav aria-label="Pagination" class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs border-t border-navy-700 bg-navy-800">
 		<!-- Left: showing X-Y of Z + page size -->
 		<div class="flex items-center gap-3">
 			<span class="text-slate-500">
 				<span class="text-slate-300 font-mono">{startItem}–{endItem}</span> of <span class="text-slate-300 font-mono">{total}</span>
 			</span>
 			{#if onPageSizeChange}
-				<select onchange={handlePageSizeChange} value={pageSize} class="bg-navy-700 border border-navy-600 rounded px-1.5 py-0.5 text-slate-300">
+				<select onchange={handlePageSizeChange} value={pageSize} aria-label="Items per page" class="bg-navy-700 border border-navy-600 rounded px-1.5 py-0.5 text-slate-300">
 					<option value={25}>25</option>
 					<option value={50}>50</option>
 					<option value={100}>100</option>
@@ -80,5 +80,5 @@
 				</button>
 			</div>
 		{/if}
-	</div>
+	</nav>
 {/if}

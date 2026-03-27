@@ -1,22 +1,23 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
-from typing import Any
 
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
-    db_is_team_member,
-    db_list_entity_library,
-    db_create_entity_library,
-    db_bulk_create_entity_library,
-    db_update_entity_library,
-    db_delete_entity_library,
-    db_list_attribute_library,
-    db_create_attribute_library,
     db_bulk_create_attribute_library,
-    db_update_attribute_library,
+    db_bulk_create_entity_library,
+    db_create_attribute_library,
+    db_create_entity_library,
     db_delete_attribute_library,
+    db_delete_entity_library,
+    db_is_team_member,
+    db_list_attribute_library,
+    db_list_entity_library,
+    db_update_attribute_library,
+    db_update_entity_library,
 )
 
 router = APIRouter(prefix="/api/library", tags=["library"])
@@ -86,7 +87,7 @@ async def list_library_entities(
     search: str | None = Query(default=None),
     sort_by: str = Query(default="created_at"),
     sort_dir: str = Query(default="asc"),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     await _assert_team_access(team_id, user["sub"])
     try:
@@ -98,7 +99,7 @@ async def list_library_entities(
 
 
 @router.post("/entities", status_code=201)
-async def create_library_entity(body: LibraryEntityCreate, user=Depends(get_current_user)):
+async def create_library_entity(body: LibraryEntityCreate, user: dict[str, Any] = Depends(get_current_user)):
     await _assert_team_access(body.team_id, user["sub"])
     try:
         return await db_create_entity_library(
@@ -114,7 +115,7 @@ async def create_library_entity(body: LibraryEntityCreate, user=Depends(get_curr
 
 
 @router.post("/entities/bulk", status_code=201)
-async def bulk_create_library_entities(body: BulkLibraryEntityBody, user=Depends(get_current_user)):
+async def bulk_create_library_entities(body: BulkLibraryEntityBody, user: dict[str, Any] = Depends(get_current_user)):
     await _assert_team_access(body.team_id, user["sub"])
     items = [i.model_dump(exclude={"team_id"}) for i in body.items]
     try:
@@ -124,7 +125,7 @@ async def bulk_create_library_entities(body: BulkLibraryEntityBody, user=Depends
 
 
 @router.patch("/entities/{item_id}")
-async def update_library_entity(item_id: str, body: LibraryEntityUpdate, user=Depends(get_current_user)):
+async def update_library_entity(item_id: str, body: LibraryEntityUpdate, user: dict[str, Any] = Depends(get_current_user)):
     try:
         updated = await db_update_entity_library(item_id, user["sub"], **body.model_dump(exclude_none=True))
     except DatabaseNotConfigured:
@@ -135,7 +136,7 @@ async def update_library_entity(item_id: str, body: LibraryEntityUpdate, user=De
 
 
 @router.delete("/entities/{item_id}", status_code=204)
-async def delete_library_entity(item_id: str, user=Depends(get_current_user)):
+async def delete_library_entity(item_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         deleted = await db_delete_entity_library(item_id, user["sub"])
     except DatabaseNotConfigured:
@@ -155,7 +156,7 @@ async def list_library_attributes(
     search: str | None = Query(default=None),
     sort_by: str = Query(default="created_at"),
     sort_dir: str = Query(default="asc"),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     await _assert_team_access(team_id, user["sub"])
     try:
@@ -167,7 +168,7 @@ async def list_library_attributes(
 
 
 @router.post("/attributes", status_code=201)
-async def create_library_attribute(body: LibraryAttributeCreate, user=Depends(get_current_user)):
+async def create_library_attribute(body: LibraryAttributeCreate, user: dict[str, Any] = Depends(get_current_user)):
     await _assert_team_access(body.team_id, user["sub"])
     try:
         return await db_create_attribute_library(
@@ -182,7 +183,7 @@ async def create_library_attribute(body: LibraryAttributeCreate, user=Depends(ge
 
 
 @router.post("/attributes/bulk", status_code=201)
-async def bulk_create_library_attributes(body: BulkLibraryAttributeBody, user=Depends(get_current_user)):
+async def bulk_create_library_attributes(body: BulkLibraryAttributeBody, user: dict[str, Any] = Depends(get_current_user)):
     await _assert_team_access(body.team_id, user["sub"])
     items = [i.model_dump(exclude={"team_id"}) for i in body.items]
     try:
@@ -192,7 +193,7 @@ async def bulk_create_library_attributes(body: BulkLibraryAttributeBody, user=De
 
 
 @router.patch("/attributes/{item_id}")
-async def update_library_attribute(item_id: str, body: LibraryAttributeUpdate, user=Depends(get_current_user)):
+async def update_library_attribute(item_id: str, body: LibraryAttributeUpdate, user: dict[str, Any] = Depends(get_current_user)):
     try:
         updated = await db_update_attribute_library(item_id, user["sub"], **body.model_dump(exclude_none=True))
     except DatabaseNotConfigured:
@@ -203,7 +204,7 @@ async def update_library_attribute(item_id: str, body: LibraryAttributeUpdate, u
 
 
 @router.delete("/attributes/{item_id}", status_code=204)
-async def delete_library_attribute(item_id: str, user=Depends(get_current_user)):
+async def delete_library_attribute(item_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         deleted = await db_delete_attribute_library(item_id, user["sub"])
     except DatabaseNotConfigured:

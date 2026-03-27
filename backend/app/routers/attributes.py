@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -24,7 +25,6 @@ from app.db import (
     db_update_attribute,
     db_update_campaign_attribute,
 )
-
 from app.models.campaign import (
     AttributeCreate,
     AttributeOut,
@@ -86,7 +86,7 @@ async def _get_owned_campaign(campaign_id: str, user_sid: str):
 @router.get("/{campaign_id}/attributes")
 async def list_attributes(
     campaign_id: str,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
     limit: int = Query(default=50, ge=0, le=10000),
     offset: int = Query(default=0, ge=0),
     search: str | None = Query(default=None),
@@ -102,7 +102,7 @@ async def list_attributes(
 
 
 @router.post("/{campaign_id}/attributes", response_model=AttributeOut, status_code=201)
-async def create_attribute(campaign_id: str, body: AttributeCreate, user=Depends(get_current_user)):
+async def create_attribute(campaign_id: str, body: AttributeCreate, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         return await db_create_attribute(
@@ -121,7 +121,7 @@ async def create_attribute(campaign_id: str, body: AttributeCreate, user=Depends
 
 
 @router.get("/{campaign_id}/attributes/{attribute_id}", response_model=AttributeOut)
-async def get_attribute(campaign_id: str, attribute_id: str, user=Depends(get_current_user)):
+async def get_attribute(campaign_id: str, attribute_id: str, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         attr = await db_get_attribute(attribute_id)
@@ -133,7 +133,7 @@ async def get_attribute(campaign_id: str, attribute_id: str, user=Depends(get_cu
 
 
 @router.post("/{campaign_id}/attributes/import-library", response_model=ImportAttributeResult, status_code=201)
-async def import_attributes_from_library(campaign_id: str, body: ImportLibraryBody, user=Depends(get_current_user)):
+async def import_attributes_from_library(campaign_id: str, body: ImportLibraryBody, user: dict[str, Any] = Depends(get_current_user)):
     campaign = await _get_owned_campaign(campaign_id, user["sub"])
     try:
         return await db_import_attributes_from_library(
@@ -145,7 +145,7 @@ async def import_attributes_from_library(campaign_id: str, body: ImportLibraryBo
 
 @router.patch("/{campaign_id}/attributes/{attribute_id}", response_model=AttributeOut)
 async def update_attribute(campaign_id: str, attribute_id: str, body: AttributeUpdate,
-                           user=Depends(get_current_user)):
+                           user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
 
     # Prohibit attribute_type changes on existing attributes
@@ -182,7 +182,7 @@ async def update_attribute(campaign_id: str, attribute_id: str, body: AttributeU
 
 
 @router.post("/{campaign_id}/attributes/bulk", response_model=BulkAttributeResult, status_code=201)
-async def bulk_create_attributes(campaign_id: str, body: list[AttributeCreate], user=Depends(get_current_user)):
+async def bulk_create_attributes(campaign_id: str, body: list[AttributeCreate], user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     if not body:
         return {"inserted": [], "skipped": 0}
@@ -210,7 +210,7 @@ async def bulk_create_attributes(campaign_id: str, body: list[AttributeCreate], 
 
 
 @router.post("/{campaign_id}/attributes/import", response_model=ImportAttributeResult, status_code=201)
-async def import_attributes(campaign_id: str, body: ImportBody, user=Depends(get_current_user)):
+async def import_attributes(campaign_id: str, body: ImportBody, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     await _get_owned_campaign(body.source_campaign_id, user["sub"])
     try:
@@ -223,7 +223,7 @@ async def import_attributes(campaign_id: str, body: ImportBody, user=Depends(get
 
 
 @router.delete("/{campaign_id}/attributes/{attribute_id}", status_code=204)
-async def delete_attribute(campaign_id: str, attribute_id: str, user=Depends(get_current_user)):
+async def delete_attribute(campaign_id: str, attribute_id: str, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         deleted = await db_delete_attribute(attribute_id=attribute_id, campaign_id=campaign_id)
@@ -239,7 +239,7 @@ async def delete_attribute(campaign_id: str, attribute_id: str, user=Depends(get
 @router.get("/{campaign_id}/attribute-assignments")
 async def list_campaign_attribute_assignments(
     campaign_id: str,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """List all attribute assignments for a campaign with effective weights."""
     await _get_owned_campaign(campaign_id, user["sub"])
@@ -253,7 +253,7 @@ async def list_campaign_attribute_assignments(
 async def assign_attribute_to_campaign(
     campaign_id: str,
     body: CampaignAttributeAssign,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Assign an attribute to a campaign with optional weight override."""
     await _get_owned_campaign(campaign_id, user["sub"])
@@ -273,7 +273,7 @@ async def update_campaign_attribute_assignment(
     campaign_id: str,
     attribute_id: str,
     body: CampaignAttributePatch,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Update weight_override and/or display_order for a campaign-attribute assignment."""
     await _get_owned_campaign(campaign_id, user["sub"])
@@ -301,7 +301,7 @@ async def update_campaign_attribute_assignment(
 async def unassign_attribute_from_campaign(
     campaign_id: str,
     attribute_id: str,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Remove an attribute assignment from a campaign."""
     await _get_owned_campaign(campaign_id, user["sub"])
@@ -318,7 +318,7 @@ async def unassign_attribute_from_campaign(
 async def reorder_campaign_attributes(
     campaign_id: str,
     body: CampaignAttributeReorder,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Update display_order for multiple attribute assignments at once."""
     await _get_owned_campaign(campaign_id, user["sub"])

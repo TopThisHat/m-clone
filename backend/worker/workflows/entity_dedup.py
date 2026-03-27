@@ -79,7 +79,6 @@ async def deduplicate_entity(
     from app.db.knowledge_graph import (
         db_find_or_create_entity,
         db_find_similar_entities,
-        db_merge_kg_entities,
     )
 
     normalized = name.lower().strip()

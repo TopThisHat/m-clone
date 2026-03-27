@@ -5,6 +5,7 @@ Role hierarchy: owner > admin > member > viewer
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,15 +17,15 @@ from app.db import (
     db_add_member,
     db_create_team,
     db_delete_team,
+    db_get_member_role,
     db_get_team,
     db_get_user,
-    db_get_member_role,
     db_list_team_members,
     db_list_user_teams,
+    db_record_activity,
     db_remove_member,
     db_update_member_role,
     db_update_team,
-    db_record_activity,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ class RoleUpdate(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("", status_code=201)
-async def create_team(body: TeamCreate, user=Depends(get_current_user)):
+async def create_team(body: TeamCreate, user: dict[str, Any] = Depends(get_current_user)):
     try:
         team = await db_create_team(body.slug, body.display_name, body.description, user["sub"])
         # Record activity (team just created, no team_id needed for the join activity)
@@ -92,7 +93,7 @@ async def create_team(body: TeamCreate, user=Depends(get_current_user)):
 
 
 @router.get("")
-async def list_teams(user=Depends(get_current_user)):
+async def list_teams(user: dict[str, Any] = Depends(get_current_user)):
     try:
         return await db_list_user_teams(user["sub"])
     except DatabaseNotConfigured:
@@ -100,7 +101,7 @@ async def list_teams(user=Depends(get_current_user)):
 
 
 @router.get("/{slug}")
-async def get_team(slug: str, user=Depends(get_current_user)):
+async def get_team(slug: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         team = await db_get_team(slug)
         if team is None:
@@ -115,9 +116,9 @@ async def get_team(slug: str, user=Depends(get_current_user)):
 
 
 @router.patch("/{slug}")
-async def update_team(slug: str, body: TeamUpdate, user=Depends(get_current_user)):
+async def update_team(slug: str, body: TeamUpdate, user: dict[str, Any] = Depends(get_current_user)):
     try:
-        team = await _require_role(slug, user["sub"], "admin")
+        await _require_role(slug, user["sub"], "admin")
         patch = body.model_dump(exclude_none=True)
         updated = await db_update_team(slug, patch)
         return updated
@@ -126,7 +127,7 @@ async def update_team(slug: str, body: TeamUpdate, user=Depends(get_current_user
 
 
 @router.delete("/{slug}", status_code=204)
-async def delete_team(slug: str, user=Depends(get_current_user)):
+async def delete_team(slug: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         await _require_role(slug, user["sub"], "owner")
         await db_delete_team(slug)
@@ -135,7 +136,7 @@ async def delete_team(slug: str, user=Depends(get_current_user)):
 
 
 @router.post("/{slug}/members", status_code=201)
-async def invite_member(slug: str, body: MemberInvite, user=Depends(get_current_user)):
+async def invite_member(slug: str, body: MemberInvite, user: dict[str, Any] = Depends(get_current_user)):
     try:
         team = await _require_role(slug, user["sub"], "admin")
         # SID must exist in users table
@@ -159,7 +160,7 @@ async def invite_member(slug: str, body: MemberInvite, user=Depends(get_current_
 
 
 @router.patch("/{slug}/members/{sid}")
-async def update_member_role(slug: str, sid: str, body: RoleUpdate, user=Depends(get_current_user)):
+async def update_member_role(slug: str, sid: str, body: RoleUpdate, user: dict[str, Any] = Depends(get_current_user)):
     try:
         team = await _require_role(slug, user["sub"], "admin")
         # Protect owner role
@@ -177,7 +178,7 @@ async def update_member_role(slug: str, sid: str, body: RoleUpdate, user=Depends
 
 
 @router.delete("/{slug}/members/{sid}", status_code=204)
-async def remove_member(slug: str, sid: str, user=Depends(get_current_user)):
+async def remove_member(slug: str, sid: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         team = await db_get_team(slug)
         if team is None:
@@ -195,7 +196,7 @@ async def remove_member(slug: str, sid: str, user=Depends(get_current_user)):
 
 
 @router.get("/{slug}/activity")
-async def get_team_activity(slug: str, limit: int = 50, offset: int = 0, user=Depends(get_current_user)):
+async def get_team_activity(slug: str, limit: int = 50, offset: int = 0, user: dict[str, Any] = Depends(get_current_user)):
     try:
         team = await db_get_team(slug)
         if team is None:
@@ -210,7 +211,7 @@ async def get_team_activity(slug: str, limit: int = 50, offset: int = 0, user=De
 
 
 @router.get("/{slug}/sessions")
-async def get_team_sessions(slug: str, limit: int = 50, offset: int = 0, user=Depends(get_current_user)):
+async def get_team_sessions(slug: str, limit: int = 50, offset: int = 0, user: dict[str, Any] = Depends(get_current_user)):
     try:
         team = await db_get_team(slug)
         if team is None:

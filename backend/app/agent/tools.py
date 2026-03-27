@@ -323,7 +323,7 @@ async def web_search(deps: AgentDeps, query: str) -> str:
     },
 )
 async def wiki_lookup(deps: AgentDeps, topic: str) -> str:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     cache_key = ("wiki_lookup", topic.strip().lower())
     if cache_key in deps.tool_cache:
@@ -370,7 +370,7 @@ async def get_financials(
     ticker: str,
     data_type: str = "overview",
 ) -> str:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _fetch() -> str:
         t = yf.Ticker(ticker.upper())

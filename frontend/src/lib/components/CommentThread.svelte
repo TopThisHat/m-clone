@@ -331,6 +331,8 @@
 <div bind:this={containerEl} class="border-t border-navy-700 mt-4 flex flex-col h-full">
 	<button
 		onclick={() => { open = !open; if (open) setLastSeen(sessionId); }}
+		aria-expanded={open}
+		aria-label="Comments ({comments.length}){unseenCount > 0 ? `, ${unseenCount} new` : ''}"
 		class="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-slate-500 hover:text-slate-300 transition-colors"
 	>
 		<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -377,13 +379,15 @@
 									{#if $currentUser?.sid === comment.author_sid}
 										<button
 											onclick={() => startEdit(comment)}
-											class="opacity-0 group-hover:opacity-100 text-xs text-slate-600 hover:text-gold transition-all"
+											aria-label="Edit comment"
+											class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-xs text-slate-600 hover:text-gold transition-all"
 										>
 											edit
 										</button>
 										<button
 											onclick={() => remove(comment.id)}
-											class="opacity-0 group-hover:opacity-100 text-xs text-slate-600 hover:text-red-400 transition-all ml-auto"
+											aria-label="Delete comment"
+											class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-xs text-slate-600 hover:text-red-400 transition-all ml-auto"
 										>
 											delete
 										</button>
@@ -479,14 +483,14 @@
 										<div class="relative">
 											<button
 												onclick={() => (reactionPickerFor = reactionPickerFor === comment.id ? null : comment.id)}
-												class="text-xs text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
+												aria-label="Add reaction" class="text-xs text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
 											>+</button>
 											{#if reactionPickerFor === comment.id}
 												<div class="absolute bottom-full left-0 mb-1 bg-navy-900 border border-navy-700 rounded-lg p-1.5 flex gap-1 z-30 shadow-xl">
 													{#each ['👍','❤️','🔥','💡','✅','❓'] as emoji}
 														<button
 															onclick={() => handleReaction(comment.id, emoji)}
-															class="text-sm hover:scale-125 transition-transform p-0.5"
+															aria-label="React with {emoji}" class="text-sm hover:scale-125 transition-transform p-0.5"
 														>{emoji}</button>
 													{/each}
 												</div>
@@ -497,6 +501,7 @@
 
 								<button
 									onclick={() => startReply(comment.id)}
+									aria-label="Reply to comment"
 									class="text-xs text-slate-600 hover:text-slate-400 mt-1 transition-colors"
 								>
 									Reply
@@ -522,11 +527,13 @@
 												{#if $currentUser?.sid === reply.author_sid}
 													<button
 														onclick={() => startEdit(reply)}
-														class="opacity-0 group-hover:opacity-100 text-xs text-slate-600 hover:text-gold transition-all"
+														aria-label="Edit reply"
+														class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-xs text-slate-600 hover:text-gold transition-all"
 													>edit</button>
 													<button
 														onclick={() => remove(reply.id)}
-														class="opacity-0 group-hover:opacity-100 text-xs text-slate-600 hover:text-red-400 transition-all ml-auto"
+														class="opacity-0 group-hover:opacity-100 focus:opacity-100 text-xs text-slate-600 hover:text-red-400 transition-all ml-auto"
+														aria-label="Delete reply"
 													>delete</button>
 												{/if}
 											</div>
@@ -561,12 +568,12 @@
 													<div class="relative">
 														<button
 															onclick={() => (reactionPickerFor = reactionPickerFor === reply.id ? null : reply.id)}
-															class="text-xs text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
+															aria-label="Add reaction" class="text-xs text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
 														>+</button>
 														{#if reactionPickerFor === reply.id}
 															<div class="absolute bottom-full left-0 mb-1 bg-navy-900 border border-navy-700 rounded-lg p-1.5 flex gap-1 z-30 shadow-xl">
 																{#each ['👍','❤️','🔥','💡','✅','❓'] as emoji}
-																	<button onclick={() => handleReaction(reply.id, emoji)} class="text-sm hover:scale-125 transition-transform p-0.5">{emoji}</button>
+																	<button aria-label="React with {emoji}" onclick={() => handleReaction(reply.id, emoji)} class="text-sm hover:scale-125 transition-transform p-0.5">{emoji}</button>
 																{/each}
 															</div>
 														{/if}

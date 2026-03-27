@@ -1,10 +1,10 @@
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from app.export import markdown_to_docx
 from app.auth import get_current_user, get_optional_user
 from app.db import (
     DatabaseNotConfigured,
@@ -13,26 +13,27 @@ from app.db import (
     db_delete_session,
     db_fork_session,
     db_get_active_viewers,
+    db_get_member_role,
     db_get_public_session,
     db_get_session,
     db_get_session_diff,
     db_get_session_teams,
     db_get_team_by_id,
-    db_get_member_role,
     db_heartbeat_presence,
     db_is_subscribed,
     db_list_sessions,
     db_list_team_member_sids,
     db_list_user_teams,
     db_pin_session,
+    db_record_activity,
     db_share_session_to_team,
     db_subscribe,
     db_unpin_session,
     db_unshare_session,
     db_unsubscribe,
     db_update_session,
-    db_record_activity,
 )
+from app.export import markdown_to_docx
 from app.models.session import SessionCreate, SessionFull, SessionSummary, SessionUpdate
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ def _no_db() -> HTTPException:
 
 
 @router.get("", response_model=list[SessionSummary])
-async def list_sessions(q: str | None = Query(None), user=Depends(get_optional_user)):
+async def list_sessions(q: str | None = Query(None), user: dict[str, Any] | None = Depends(get_optional_user)):
     try:
         owner_sid = user["sub"] if user else None
         return await db_list_sessions(owner_sid=owner_sid, search=q if q else None)
@@ -54,7 +55,7 @@ async def list_sessions(q: str | None = Query(None), user=Depends(get_optional_u
 
 
 @router.get("/{session_id}", response_model=SessionFull)
-async def get_session(session_id: str, user=Depends(get_optional_user)):
+async def get_session(session_id: str, user: dict[str, Any] | None = Depends(get_optional_user)):
     try:
         row = await db_get_session(session_id)
     except DatabaseNotConfigured:
@@ -76,7 +77,7 @@ async def get_session(session_id: str, user=Depends(get_optional_user)):
 
 
 @router.post("", response_model=SessionFull, status_code=201)
-async def create_session(body: SessionCreate, user=Depends(get_optional_user)):
+async def create_session(body: SessionCreate, user: dict[str, Any] | None = Depends(get_optional_user)):
     try:
         data = body.model_dump()
         if user:
@@ -87,7 +88,7 @@ async def create_session(body: SessionCreate, user=Depends(get_optional_user)):
 
 
 @router.patch("/{session_id}", response_model=SessionFull)
-async def update_session(session_id: str, body: SessionUpdate, user=Depends(get_current_user)):
+async def update_session(session_id: str, body: SessionUpdate, user: dict[str, Any] = Depends(get_current_user)):
     try:
         session = await db_get_session(session_id)
     except DatabaseNotConfigured:
@@ -101,7 +102,7 @@ async def update_session(session_id: str, body: SessionUpdate, user=Depends(get_
 
 
 @router.delete("/{session_id}", status_code=204)
-async def delete_session(session_id: str, user=Depends(get_current_user)):
+async def delete_session(session_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         session = await db_get_session(session_id)
     except DatabaseNotConfigured:
@@ -117,7 +118,7 @@ async def delete_session(session_id: str, user=Depends(get_current_user)):
 # ── Share endpoints ───────────────────────────────────────────────────────────
 
 @router.post("/{session_id}/share")
-async def share_session(session_id: str, user=Depends(get_current_user)):
+async def share_session(session_id: str, user: dict[str, Any] = Depends(get_current_user)):
     """Make a session publicly accessible via a share link."""
     try:
         session = await db_get_session(session_id)
@@ -132,7 +133,7 @@ async def share_session(session_id: str, user=Depends(get_current_user)):
 
 
 @router.delete("/{session_id}/share", status_code=204)
-async def unshare_session(session_id: str, user=Depends(get_current_user)):
+async def unshare_session(session_id: str, user: dict[str, Any] = Depends(get_current_user)):
     """Revoke public access to a session."""
     try:
         session = await db_get_session(session_id)
@@ -153,7 +154,7 @@ class TeamShareBody(BaseModel):
 
 
 @router.post("/{session_id}/teams", status_code=201)
-async def share_to_team(session_id: str, body: TeamShareBody, user=Depends(get_current_user)):
+async def share_to_team(session_id: str, body: TeamShareBody, user: dict[str, Any] = Depends(get_current_user)):
     try:
         session = await db_get_session(session_id)
         if session is None:
@@ -215,7 +216,7 @@ async def share_to_team(session_id: str, body: TeamShareBody, user=Depends(get_c
 
 
 @router.delete("/{session_id}/teams/{team_id}", status_code=204)
-async def unshare_from_team(session_id: str, team_id: str, user=Depends(get_current_user)):
+async def unshare_from_team(session_id: str, team_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         session = await db_get_session(session_id)
         if session is None:
@@ -236,7 +237,7 @@ class PinBody(BaseModel):
 
 
 @router.post("/{session_id}/pin", status_code=201)
-async def pin_session(session_id: str, body: PinBody, user=Depends(get_current_user)):
+async def pin_session(session_id: str, body: PinBody, user: dict[str, Any] = Depends(get_current_user)):
     try:
         role = await db_get_member_role(body.team_id, user["sub"])
         if role not in ("owner", "admin", "member"):
@@ -256,7 +257,7 @@ async def pin_session(session_id: str, body: PinBody, user=Depends(get_current_u
 
 
 @router.delete("/{session_id}/pin", status_code=204)
-async def unpin_session(session_id: str, team_id: str, user=Depends(get_current_user)):
+async def unpin_session(session_id: str, team_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         role = await db_get_member_role(team_id, user["sub"])
         if role not in ("owner", "admin", "member"):
@@ -269,7 +270,7 @@ async def unpin_session(session_id: str, team_id: str, user=Depends(get_current_
 # ── Fork ──────────────────────────────────────────────────────────────────────
 
 @router.post("/{session_id}/fork", status_code=201)
-async def fork_session(session_id: str, user=Depends(get_current_user)):
+async def fork_session(session_id: str, user: dict[str, Any] = Depends(get_current_user)):
     """Fork a session into a new private session owned by the current user."""
     try:
         row = await db_get_session(session_id)
@@ -293,7 +294,7 @@ async def fork_session(session_id: str, user=Depends(get_current_user)):
 # ── Subscribe ─────────────────────────────────────────────────────────────────
 
 @router.post("/{session_id}/subscribe", status_code=201)
-async def subscribe_session(session_id: str, user=Depends(get_current_user)):
+async def subscribe_session(session_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         await db_subscribe(session_id, user["sub"])
         return Response(status_code=201)
@@ -302,7 +303,7 @@ async def subscribe_session(session_id: str, user=Depends(get_current_user)):
 
 
 @router.delete("/{session_id}/subscribe", status_code=204)
-async def unsubscribe_session(session_id: str, user=Depends(get_current_user)):
+async def unsubscribe_session(session_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         await db_unsubscribe(session_id, user["sub"])
         return Response(status_code=204)
@@ -311,7 +312,7 @@ async def unsubscribe_session(session_id: str, user=Depends(get_current_user)):
 
 
 @router.get("/{session_id}/subscribe")
-async def get_subscription(session_id: str, user=Depends(get_current_user)):
+async def get_subscription(session_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         subscribed = await db_is_subscribed(session_id, user["sub"])
         return {"subscribed": subscribed}
@@ -322,7 +323,7 @@ async def get_subscription(session_id: str, user=Depends(get_current_user)):
 # ── Presence ──────────────────────────────────────────────────────────────────
 
 @router.post("/{session_id}/presence", status_code=204)
-async def heartbeat_presence(session_id: str, user=Depends(get_current_user)):
+async def heartbeat_presence(session_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         await db_heartbeat_presence(session_id, user["sub"])
         return Response(status_code=204)
@@ -331,7 +332,7 @@ async def heartbeat_presence(session_id: str, user=Depends(get_current_user)):
 
 
 @router.get("/{session_id}/presence")
-async def get_presence(session_id: str, user=Depends(get_current_user)):
+async def get_presence(session_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         viewers = await db_get_active_viewers(session_id, window_seconds=30)
         return viewers
@@ -342,7 +343,7 @@ async def get_presence(session_id: str, user=Depends(get_current_user)):
 # ── Diff ──────────────────────────────────────────────────────────────────────
 
 @router.get("/{session_id}/diff")
-async def get_session_diff(session_id: str, user=Depends(get_optional_user)):
+async def get_session_diff(session_id: str, user: dict[str, Any] | None = Depends(get_optional_user)):
     try:
         row = await db_get_session(session_id)
     except DatabaseNotConfigured:
@@ -376,7 +377,7 @@ async def get_session_diff(session_id: str, user=Depends(get_optional_user)):
 async def export_session(
     session_id: str,
     format: str = Query(default="md"),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         row = await db_get_session(session_id)
@@ -416,7 +417,7 @@ router_public = APIRouter(prefix="/api/share", tags=["share"])
 
 
 @router_public.get("/{session_id}", response_model=SessionFull)
-async def get_public_session(session_id: str, user=Depends(get_optional_user)):
+async def get_public_session(session_id: str, user: dict[str, Any] | None = Depends(get_optional_user)):
     """Retrieve a publicly shared session (read-only)."""
     try:
         # Case 1: publicly shared — no auth required

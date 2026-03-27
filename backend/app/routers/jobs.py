@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -23,9 +24,9 @@ from app.db import (
     db_get_scores,
     db_get_validation_job,
     db_is_team_member,
+    db_list_attributes,
     db_list_dead_jobs,
     db_list_entities,
-    db_list_attributes,
     db_list_results,
     db_list_validation_jobs,
     db_retry_dead_job,
@@ -71,7 +72,7 @@ async def _get_owned_campaign(campaign_id: str, user_sid: str):
 
 
 @router.post("/api/campaigns/{campaign_id}/jobs", response_model=JobOut, status_code=201)
-async def create_job(campaign_id: str, body: JobCreate, user=Depends(get_current_user)):
+async def create_job(campaign_id: str, body: JobCreate, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         entity_ids = body.entity_ids
@@ -98,7 +99,7 @@ async def create_job(campaign_id: str, body: JobCreate, user=Depends(get_current
 
 
 @router.get("/api/campaigns/{campaign_id}/jobs", response_model=list[JobOut])
-async def list_jobs(campaign_id: str, user=Depends(get_current_user)):
+async def list_jobs(campaign_id: str, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         return await db_list_validation_jobs(campaign_id)
@@ -107,7 +108,7 @@ async def list_jobs(campaign_id: str, user=Depends(get_current_user)):
 
 
 @router.get("/api/jobs/{job_id}", response_model=JobOut)
-async def get_job(job_id: str, user=Depends(get_current_user)):
+async def get_job(job_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         job = await db_get_validation_job(job_id)
     except DatabaseNotConfigured:
@@ -127,7 +128,7 @@ async def get_results(
     present: bool | None = Query(default=None),
     limit: int = Query(default=100, le=500),
     offset: int = Query(default=0),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
         job = await db_get_validation_job(job_id)
@@ -150,7 +151,7 @@ async def get_results(
 
 
 @router.get("/api/campaigns/{campaign_id}/scores", response_model=list[ScoreOut])
-async def get_scores(campaign_id: str, user=Depends(get_current_user)):
+async def get_scores(campaign_id: str, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         return await db_get_scores(campaign_id)
@@ -159,7 +160,7 @@ async def get_scores(campaign_id: str, user=Depends(get_current_user)):
 
 
 @router.get("/api/jobs/{job_id}/live-scores", response_model=list[ScoreOut])
-async def get_live_scores(job_id: str, user=Depends(get_current_user)):
+async def get_live_scores(job_id: str, user: dict[str, Any] = Depends(get_current_user)):
     """Compute scores on-the-fly from results already produced by an in-progress job."""
     try:
         job = await db_get_validation_job(job_id)
@@ -175,7 +176,7 @@ async def get_live_scores(job_id: str, user=Depends(get_current_user)):
 
 
 @router.post("/api/jobs/{job_id}/cancel")
-async def cancel_job(job_id: str, user=Depends(get_current_user)):
+async def cancel_job(job_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         job = await db_get_validation_job(job_id)
     except DatabaseNotConfigured:
@@ -194,7 +195,7 @@ async def cancel_job(job_id: str, user=Depends(get_current_user)):
 async def get_score_trends(
     campaign_id: str,
     entity_id: str | None = Query(default=None),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
@@ -208,7 +209,7 @@ async def compare_jobs(
     campaign_id: str,
     job_id_a: str = Query(),
     job_id_b: str = Query(),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
@@ -221,7 +222,7 @@ async def compare_jobs(
 async def export_campaign_results(
     campaign_id: str,
     format: str = Query(default="csv"),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
@@ -257,7 +258,7 @@ async def export_campaign_results(
 
 
 @router.get("/api/campaigns/{campaign_id}/dead-jobs")
-async def list_dead_jobs(campaign_id: str, user=Depends(get_current_user)):
+async def list_dead_jobs(campaign_id: str, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         return await db_list_dead_jobs(campaign_id)
@@ -266,7 +267,7 @@ async def list_dead_jobs(campaign_id: str, user=Depends(get_current_user)):
 
 
 @router.post("/api/jobs/{job_id}/retry")
-async def retry_dead_job(job_id: str, user=Depends(get_current_user)):
+async def retry_dead_job(job_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         row = await db_get_queue_job_owner(job_id)
     except DatabaseNotConfigured:
@@ -282,7 +283,7 @@ async def retry_dead_job(job_id: str, user=Depends(get_current_user)):
 
 
 @router.post("/api/campaigns/{campaign_id}/retry-dead")
-async def bulk_retry_dead_jobs(campaign_id: str, user=Depends(get_current_user)):
+async def bulk_retry_dead_jobs(campaign_id: str, user: dict[str, Any] = Depends(get_current_user)):
     """Reset all dead jobs for a campaign back to pending for retry."""
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
@@ -301,7 +302,7 @@ async def bulk_retry_dead_jobs(campaign_id: str, user=Depends(get_current_user))
 
 
 @router.get("/api/campaigns/{campaign_id}/knowledge", response_model=list[KnowledgeOut])
-async def get_knowledge(campaign_id: str, user=Depends(get_current_user)):
+async def get_knowledge(campaign_id: str, user: dict[str, Any] = Depends(get_current_user)):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         return await db_get_knowledge_for_campaign(campaign_id)
@@ -310,7 +311,7 @@ async def get_knowledge(campaign_id: str, user=Depends(get_current_user)):
 
 
 @router.get("/api/entities/cross-campaign/{gwm_id}")
-async def get_entity_cross_campaign(gwm_id: str, user=Depends(get_current_user)):
+async def get_entity_cross_campaign(gwm_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         return await db_get_entity_cross_campaign(gwm_id)
     except DatabaseNotConfigured:

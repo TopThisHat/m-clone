@@ -4,6 +4,8 @@ Polled by frontend every 30 seconds.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth import get_current_user
@@ -18,7 +20,7 @@ router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
 
 @router.get("")
-async def list_notifications(user=Depends(get_current_user)):
+async def list_notifications(user: dict[str, Any] = Depends(get_current_user)):
     try:
         return await db_list_notifications(user["sub"])
     except DatabaseNotConfigured:
@@ -26,7 +28,7 @@ async def list_notifications(user=Depends(get_current_user)):
 
 
 @router.patch("/{notification_id}/read")
-async def mark_read(notification_id: str, user=Depends(get_current_user)):
+async def mark_read(notification_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
         ok = await db_mark_notification_read(notification_id)
         if not ok:
@@ -37,7 +39,7 @@ async def mark_read(notification_id: str, user=Depends(get_current_user)):
 
 
 @router.post("/read-all")
-async def mark_all_read(user=Depends(get_current_user)):
+async def mark_all_read(user: dict[str, Any] = Depends(get_current_user)):
     try:
         await db_mark_all_notifications_read(user["sub"])
         return {"ok": True}

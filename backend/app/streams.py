@@ -16,6 +16,8 @@ import logging
 import socket
 from typing import Any
 
+from redis.exceptions import RedisError
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -63,7 +65,7 @@ async def close_redis() -> None:
     if _redis is not None:
         try:
             await _redis.aclose()
-        except Exception:
+        except (RedisError, OSError):
             pass
         _redis = None
 
@@ -82,7 +84,7 @@ async def create_consumer_group(stream: str, group: str) -> None:
         r = await get_redis()
         await r.xgroup_create(stream, group, id="0", mkstream=True)
         logger.info("Created consumer group '%s' on stream '%s'", group, stream)
-    except Exception as exc:
+    except RedisError as exc:
         if "BUSYGROUP" in str(exc):
             logger.debug("Consumer group '%s' already exists on '%s'", group, stream)
         else:
@@ -125,7 +127,7 @@ async def consume_jobs(
             return []
         _stream_name, messages = results[0]
         return messages
-    except Exception as exc:
+    except RedisError as exc:
         logger.warning("consume_jobs error on %s: %s", stream, exc)
         return []
 
@@ -135,7 +137,7 @@ async def ack_job(stream: str, group: str, msg_id: str) -> None:
     try:
         r = await get_redis()
         await r.xack(stream, group, msg_id)
-    except Exception as exc:
+    except RedisError as exc:
         logger.warning("xack failed for %s/%s msg=%s: %s", stream, group, msg_id, exc)
 
 
@@ -168,7 +170,7 @@ async def publish_for_extraction(
             fields["is_document"] = "true"
         await r.xadd(STREAM_ENTITY_EXTRACTION, fields, maxlen=1000, approximate=True)
         logger.debug("Published extraction task for session_id=%s", session_id)
-    except Exception as exc:
+    except RedisError as exc:
         logger.warning("Failed to publish extraction task for session_id=%s: %s", session_id, exc)
 
 

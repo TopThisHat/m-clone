@@ -11,7 +11,13 @@ from pydantic import BaseModel
 
 from app.auth import create_jwt
 from app.config import settings
-from app.db import DatabaseNotConfigured, db_upsert_user, db_get_user, db_update_user_theme, db_is_super_admin
+from app.db import (
+    DatabaseNotConfigured,
+    db_get_user,
+    db_is_super_admin,
+    db_update_user_theme,
+    db_upsert_user,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,9 +138,10 @@ async def oidc_login(request: Request):
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="OIDC not configured")
 
     try:
+        import secrets
+
         from authlib.integrations.starlette_client import OAuth
         from itsdangerous import URLSafeTimedSerializer
-        import secrets
 
         oauth = OAuth()
         oauth.register(
@@ -170,7 +177,7 @@ async def oidc_callback(request: Request, code: str, state: str):
 
     try:
         from authlib.integrations.starlette_client import OAuth
-        from itsdangerous import URLSafeTimedSerializer, BadSignature
+        from itsdangerous import BadSignature, URLSafeTimedSerializer
 
         # Verify state
         signed_state = request.cookies.get("oidc_state", "")
@@ -192,7 +199,6 @@ async def oidc_callback(request: Request, code: str, state: str):
             client_kwargs={"scope": "openid profile email"},
         )
 
-        redirect_uri = f"{settings.app_base_url}/api/auth/callback"
         token = await oauth.oidc.authorize_access_token(request)
         userinfo = token.get("userinfo") or await oauth.oidc.userinfo(token=token)
 

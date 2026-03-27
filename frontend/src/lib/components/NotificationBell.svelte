@@ -30,16 +30,24 @@
 		}
 	}
 
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape' && open) {
+			open = false;
+		}
+	}
+
 	const recentNotifs = $derived($notifications.slice(0, 8));
 </script>
 
-<svelte:window onclick={close} />
+<svelte:window onclick={close} onkeydown={handleKeydown} />
 
 <div class="notif-bell relative">
 	<button
 		onclick={toggle}
 		class="relative p-1.5 rounded hover:bg-navy-800 transition-colors text-slate-400 hover:text-gold"
-		aria-label="Notifications"
+		aria-label="Notifications{$unreadCount > 0 ? ` (${$unreadCount} unread)` : ''}"
+		aria-expanded={open}
+		aria-haspopup="true"
 	>
 		<!-- Bell SVG -->
 		<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -54,7 +62,7 @@
 	</button>
 
 	{#if open}
-		<div class="absolute right-0 top-8 w-80 bg-navy-900 border border-navy-700 rounded-lg shadow-xl z-50 overflow-hidden">
+		<div class="absolute right-0 top-8 w-80 bg-navy-900 border border-navy-700 rounded-lg shadow-xl z-50 overflow-hidden" role="region" aria-label="Notifications panel">
 			<div class="flex items-center justify-between px-4 py-2.5 border-b border-navy-700">
 				<span class="text-xs font-medium text-slate-300 uppercase tracking-wide">Notifications</span>
 				{#if $unreadCount > 0}

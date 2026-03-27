@@ -12,21 +12,21 @@ import io
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
-    db_bulk_create_entities,
     db_bulk_create_attributes,
+    db_bulk_create_entities,
     db_bulk_upsert_cells,
     db_get_campaign,
     db_get_matrix_data,
     db_is_team_member,
-    db_list_entities,
     db_list_attributes,
+    db_list_entities,
     db_recalculate_scores_from_matrix,
 )
 
@@ -225,7 +225,7 @@ def _validate_upload(
 async def upload_import(
     campaign_id: str,
     file: UploadFile = File(...),
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Parse an uploaded CSV/TSV file and return a validated preview.
 
@@ -279,7 +279,7 @@ async def upload_import(
 async def commit_import(
     campaign_id: str,
     body: ImportCommitRequest,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Persist previously previewed import data.
 
@@ -358,7 +358,7 @@ async def commit_import(
 async def download_error_report(
     campaign_id: str,
     body: ErrorReportRequest,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ) -> StreamingResponse:
     """Generate a CSV error report for failed import rows.
 
@@ -414,7 +414,7 @@ async def download_error_report(
 @router.get("/{campaign_id}/export")
 async def export_matrix_csv(
     campaign_id: str,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ) -> StreamingResponse:
     """Export the campaign matrix as a CSV file.
 

@@ -1,22 +1,21 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-import logging
-
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
+    db_bulk_upsert_cells,
+    db_delete_cell_value,
     db_get_campaign,
     db_get_matrix_data,
     db_is_team_member,
-    db_upsert_cell_value,
-    db_delete_cell_value,
-    db_bulk_upsert_cells,
     db_recalculate_scores_from_matrix,
+    db_upsert_cell_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,7 +71,7 @@ async def _get_owned_campaign(campaign_id: str, user_sid: str) -> dict[str, Any]
 
 
 @router.get("/{campaign_id}/matrix")
-async def get_matrix(campaign_id: str, user=Depends(get_current_user)):
+async def get_matrix(campaign_id: str, user: dict[str, Any] = Depends(get_current_user)):
     """Return the full entity x attribute matrix for a campaign."""
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
@@ -85,7 +84,7 @@ async def get_matrix(campaign_id: str, user=Depends(get_current_user)):
 async def upsert_cell(
     campaign_id: str,
     body: CellUpsert,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Upsert a single cell value and recalculate the entity's score."""
     campaign = await _get_owned_campaign(campaign_id, user["sub"])
@@ -117,7 +116,7 @@ async def upsert_cell(
 async def bulk_upsert_cells(
     campaign_id: str,
     body: BulkCellUpsert,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Bulk upsert cell values and recalculate affected entities' scores."""
     campaign = await _get_owned_campaign(campaign_id, user["sub"])
@@ -149,7 +148,7 @@ async def bulk_upsert_cells(
 async def delete_cell(
     campaign_id: str,
     body: CellDelete,
-    user=Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_current_user),
 ):
     """Clear a cell value and recalculate the entity's score."""
     campaign = await _get_owned_campaign(campaign_id, user["sub"])

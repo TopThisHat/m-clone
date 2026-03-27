@@ -84,7 +84,7 @@ class WorkflowConsumer:
     # ── Consume loop ──────────────────────────────────────────────────────
 
     async def _consume_loop(self, stream: str) -> None:
-        from app.streams import GROUP_WORKERS, ack_job, consume_jobs
+        from app.streams import GROUP_WORKERS, consume_jobs
 
         while not self._shutdown.is_set():
             try:

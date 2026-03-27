@@ -164,6 +164,7 @@
 			oninput={handleSearchInput}
 			type="text"
 			placeholder="Filter sessions..."
+			aria-label="Filter sessions"
 			class="w-full bg-navy-800 border border-navy-700 rounded px-3 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-gold/40 transition-colors"
 		/>
 	</div>
@@ -175,8 +176,12 @@
 			<div
 				role="button"
 				tabindex="0"
+				aria-label="Session: {session.title}"
 				onclick={() => loadSession(session.id)}
-				onkeydown={(e) => e.key === 'Enter' && loadSession(session.id)}
+				onkeydown={(e) => {
+					if (e.key === 'Enter') loadSession(session.id);
+					if (e.key === 'F2') { e.preventDefault(); startRename(session.id, session.title, e); }
+				}}
 				class="group relative flex flex-col gap-0.5 px-3 py-2.5 rounded cursor-pointer transition-colors
 					{isActive
 						? 'bg-navy-800 border-l-2 border-gold'
@@ -195,14 +200,12 @@
 						onclick={(e) => e.stopPropagation()}
 					/>
 				{:else}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<span
 						class="text-xs font-medium leading-snug truncate pr-5
 							{isActive ? 'text-gold' : 'text-slate-300 group-hover:text-slate-100'}"
-						title={session.title}
-						role="button"
-					tabindex="0"
-					ondblclick={(e) => startRename(session.id, session.title, e)}
-					onkeydown={(e) => { if (e.key === 'Enter') startRename(session.id, session.title, e); }}
+						title="Double-click or F2 to rename: {session.title}"
+						ondblclick={(e) => startRename(session.id, session.title, e)}
 					>
 						{session.title}
 					</span>
