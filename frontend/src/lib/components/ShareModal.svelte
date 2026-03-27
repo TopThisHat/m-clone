@@ -214,6 +214,7 @@
 									<button
 										onclick={() => toggleTeam(team.id)}
 										disabled={saving}
+										aria-pressed={sharedTeamIds.includes(team.id)}
 										class="w-full flex items-center gap-3 px-3 py-2 rounded-lg border transition-all
 											{sharedTeamIds.includes(team.id)
 												? 'border-gold/40 bg-gold/5'
@@ -259,6 +260,7 @@
 								{copied ? 'Copied!' : 'Copy'}
 							</button>
 						</div>
+						<span class="sr-only" aria-live="polite">{copied ? 'Link copied to clipboard' : ''}</span>
 						{#if mode === 'team'}
 							<p class="text-xs text-slate-600 mt-1.5">Team members with access can use this link to view and comment.</p>
 						{:else}

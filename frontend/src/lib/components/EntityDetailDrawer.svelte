@@ -162,7 +162,14 @@
 				</div>
 			</div>
 			<!-- Score bar -->
-			<div class="h-1.5 bg-navy-700 rounded-full">
+			<div
+				class="h-1.5 bg-navy-700 rounded-full"
+				role="progressbar"
+				aria-valuenow={scoreBarPct}
+				aria-valuemin={0}
+				aria-valuemax={100}
+				aria-label="Entity score: {scoreRaw} ({scoreBarPct}%)"
+			>
 				<div class="h-1.5 rounded-full bg-gold transition-all" style="width:{scoreBarPct}%"></div>
 			</div>
 		</div>

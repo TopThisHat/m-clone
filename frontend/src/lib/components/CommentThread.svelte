@@ -599,7 +599,7 @@
 								<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
 							</svg>
 							<span class="truncate">Commenting on: "{currentAnchor.quote.slice(0, 60)}{currentAnchor.quote.length > 60 ? '…' : ''}"</span>
-							<button onclick={cancelCompose} class="ml-auto flex-shrink-0 hover:text-red-400">✕</button>
+							<button onclick={cancelCompose} class="ml-auto flex-shrink-0 hover:text-red-400" aria-label="Cancel comment">✕</button>
 						</div>
 						<!-- Suggestion toggle (only when anchor is set) -->
 						<div class="flex items-center gap-2 mb-2">
@@ -628,7 +628,7 @@
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
 								</svg>
 								Replying to <span class="text-slate-300 font-medium">{parent.author_name}</span>
-								<button onclick={cancelCompose} class="ml-auto hover:text-red-400">✕</button>
+								<button onclick={cancelCompose} class="ml-auto hover:text-red-400" aria-label="Cancel reply">✕</button>
 							</div>
 						{/if}
 					{/if}
@@ -649,20 +649,33 @@
 									? 'Write a reply… @mention teammates'
 									: 'Add a comment… @mention teammates'}
 								rows="2"
+								role="combobox"
+								aria-expanded={mentionVisible && mentionFiltered.length > 0}
+								aria-controls={mentionVisible && mentionFiltered.length > 0 ? 'mention-listbox' : undefined}
+								aria-activedescendant={mentionVisible && mentionFiltered.length > 0 ? `mention-option-${mentionIndex}` : undefined}
+								aria-autocomplete="list"
 								class="w-full bg-navy-800 border border-navy-700 rounded px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-gold/40 resize-none transition-colors"
 							></textarea>
 
 							<!-- @mention autocomplete dropdown -->
 							{#if mentionVisible && mentionFiltered.length > 0}
-								<div class="absolute bottom-full left-0 mb-1 w-56 bg-navy-900 border border-navy-600 rounded-lg shadow-xl overflow-hidden z-30">
+								<div
+									id="mention-listbox"
+									role="listbox"
+									aria-label="Mentionable team members"
+									class="absolute bottom-full left-0 mb-1 w-56 bg-navy-900 border border-navy-600 rounded-lg shadow-xl overflow-hidden z-30"
+								>
 									<p class="text-[9px] text-slate-600 uppercase tracking-wider px-3 pt-2 pb-1">Team members</p>
 									{#each mentionFiltered as user, idx (user.sid)}
 										<!-- svelte-ignore a11y_mouse_events_have_key_events -->
-										<button
-											type="button"
+										<div
+											id="mention-option-{idx}"
+											role="option"
+											tabindex="-1"
+											aria-selected={mentionIndex === idx}
 											onmousedown={(e) => { e.preventDefault(); insertMention(user); }}
 											onmouseover={() => (mentionIndex = idx)}
-											class="w-full flex items-center gap-2.5 px-3 py-1.5 text-left transition-colors
+											class="w-full flex items-center gap-2.5 px-3 py-1.5 text-left transition-colors cursor-pointer
 												{mentionIndex === idx ? 'bg-navy-700' : 'hover:bg-navy-800'}"
 										>
 											<div class="w-5 h-5 rounded-full bg-navy-600 flex items-center justify-center text-[9px] text-gold font-bold flex-shrink-0">
@@ -672,7 +685,7 @@
 												<p class="text-xs text-slate-200 font-medium truncate">{user.display_name}</p>
 												<p class="text-xs text-slate-600 truncate">@{user.sid}</p>
 											</div>
-										</button>
+										</div>
 									{/each}
 								</div>
 							{:else if mentionVisible && mentionQuery.length > 0 && mentionUsersFetched && mentionUsers.length === 0}

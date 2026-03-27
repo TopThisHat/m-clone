@@ -382,9 +382,12 @@
 	<div class="flex items-end gap-2">
 		<!-- Attach icon -->
 		{#if showAttach}
-			<label
+			<button
+				type="button"
+				onclick={() => fileInput?.click()}
+				disabled={uploading}
 				class="flex-shrink-0 cursor-pointer text-slate-500 hover:text-gold transition-colors pb-3
-				       {uploading ? 'pointer-events-none opacity-60' : ''}"
+				       disabled:pointer-events-none disabled:opacity-60"
 				title="Attach documents"
 				aria-label="Attach documents"
 			>
@@ -407,16 +410,16 @@
 						/>
 					</svg>
 				{/if}
-				<input
-					bind:this={fileInput}
-					type="file"
-					accept={ACCEPT_STRING}
-					multiple
-					onchange={handleFileSelect}
-					class="hidden"
-					disabled={uploading}
-				/>
-			</label>
+			</button>
+			<input
+				bind:this={fileInput}
+				type="file"
+				accept={ACCEPT_STRING}
+				multiple
+				onchange={handleFileSelect}
+				class="hidden"
+				disabled={uploading}
+			/>
 		{/if}
 
 		<!-- Textarea -->

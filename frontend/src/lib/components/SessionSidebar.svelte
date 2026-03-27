@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { traceStore } from '$lib/stores/traceStore';
 	import { chatMessages, reportMarkdown, errorMessage, messageHistory, chartData, docSessionKey, docContextExpired } from '$lib/stores/reportStore';
 	import { checkDocSessionAlive } from '$lib/api/documents';
@@ -30,6 +30,15 @@
 	// ── Rename ────────────────────────────────────────────────────────────────
 	let renamingId = $state<string | null>(null);
 	let renameValue = $state('');
+	let confirmDeleteId = $state<string | null>(null);
+	let confirmDialogEl = $state<HTMLDivElement | null>(null);
+
+	// Focus the alertdialog when delete confirmation appears
+	$effect(() => {
+		if (confirmDeleteId && confirmDialogEl) {
+			tick().then(() => confirmDialogEl?.focus());
+		}
+	});
 
 	function startRename(id: string, currentTitle: string, e: MouseEvent | KeyboardEvent) {
 		e.stopPropagation();
@@ -118,8 +127,19 @@
 		}
 	}
 
-	async function removeSession(id: string, e: MouseEvent) {
+	function requestDelete(id: string, e: MouseEvent | KeyboardEvent) {
 		e.stopPropagation();
+		confirmDeleteId = id;
+	}
+
+	function cancelDelete(e: MouseEvent | KeyboardEvent) {
+		e.stopPropagation();
+		confirmDeleteId = null;
+	}
+
+	async function confirmDelete(id: string, e: MouseEvent | KeyboardEvent) {
+		e.stopPropagation();
+		confirmDeleteId = null;
 		try {
 			await deleteSession(id);
 			if ($activeSessionId === id) newResearch();
@@ -174,61 +194,92 @@
 		{#each $sessionList as session (session.id)}
 			{@const isActive = $activeSessionId === session.id}
 			<div
-				role="button"
-				tabindex="0"
-				aria-label="Session: {session.title}"
-				onclick={() => loadSession(session.id)}
-				onkeydown={(e) => {
-					if (e.key === 'Enter') loadSession(session.id);
-					if (e.key === 'F2') { e.preventDefault(); startRename(session.id, session.title, e); }
-				}}
-				class="group relative flex flex-col gap-0.5 px-3 py-2.5 rounded cursor-pointer transition-colors
+				class="group relative flex flex-col rounded transition-colors
 					{isActive
 						? 'bg-navy-800 border-l-2 border-gold'
 						: 'border-l-2 border-transparent hover:bg-navy-800/50'}
 					{$isStreaming ? 'opacity-50 pointer-events-none' : ''}"
 			>
-				<!-- Title or rename input -->
 				{#if renamingId === session.id}
-				<!-- svelte-ignore a11y_autofocus -->
-					<input
-						bind:value={renameValue}
-						onblur={() => submitRename(session.id)}
-						onkeydown={(e) => handleRenameKey(e, session.id)}
-						class="text-xs bg-navy-700 border border-gold/40 rounded px-1.5 py-0.5 text-slate-100 focus:outline-none w-full pr-5"
-						autofocus
-						onclick={(e) => e.stopPropagation()}
-					/>
-				{:else}
-					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<span
-						class="text-xs font-medium leading-snug truncate pr-5
-							{isActive ? 'text-gold' : 'text-slate-300 group-hover:text-slate-100'}"
-						title="Double-click or F2 to rename: {session.title}"
-						ondblclick={(e) => startRename(session.id, session.title, e)}
+					<!-- Rename mode -->
+					<div class="px-3 py-2.5 flex flex-col gap-0.5">
+						<!-- svelte-ignore a11y_autofocus -->
+						<input
+							bind:value={renameValue}
+							onblur={() => submitRename(session.id)}
+							onkeydown={(e) => handleRenameKey(e, session.id)}
+							class="text-xs bg-navy-700 border border-gold/40 rounded px-1.5 py-0.5 text-slate-100 focus:outline-none w-full"
+							aria-label="Rename session"
+							autofocus
+						/>
+						<span class="text-xs text-slate-600 flex items-center gap-1">
+							{relativeTime(session.updated_at)}
+						</span>
+					</div>
+				{:else if confirmDeleteId === session.id}
+					<!-- Delete confirmation -->
+					<div
+						bind:this={confirmDialogEl}
+						class="flex items-center justify-between px-3 py-2.5"
+						role="alertdialog"
+						tabindex="-1"
+						aria-label="Confirm deletion of {session.title}"
+						onkeydown={(e) => { if (e.key === 'Escape') cancelDelete(e); }}
 					>
-						{session.title}
-					</span>
+						<span class="text-xs text-slate-300 truncate mr-2">Delete this session?</span>
+						<div class="flex items-center gap-1.5 flex-shrink-0">
+							<button
+								onclick={(e) => confirmDelete(session.id, e)}
+								class="text-xs text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded hover:bg-navy-800"
+							>
+								Delete
+							</button>
+							<button
+								onclick={(e) => cancelDelete(e)}
+								class="text-xs text-slate-400 hover:text-slate-300 px-1.5 py-0.5 rounded hover:bg-navy-800"
+							>
+								Cancel
+							</button>
+						</div>
+					</div>
+				{:else}
+					<!-- Normal mode: proper button, no nested interactives -->
+					<button
+						onclick={() => loadSession(session.id)}
+						ondblclick={(e) => startRename(session.id, session.title, e)}
+						onkeydown={(e) => {
+							if (e.key === 'F2') { e.preventDefault(); startRename(session.id, session.title, e); }
+						}}
+						class="w-full text-left flex flex-col gap-0.5 px-3 py-2.5 cursor-pointer"
+						aria-label="Session: {session.title}"
+						aria-current={isActive ? 'true' : undefined}
+					>
+						<span
+							class="text-xs font-medium leading-snug truncate pr-5
+								{isActive ? 'text-gold' : 'text-slate-300 group-hover:text-slate-100'}"
+							title="Double-click or F2 to rename: {session.title}"
+						>
+							{session.title}
+						</span>
+						<span class="text-xs text-slate-600 flex items-center gap-1">
+							{relativeTime(session.updated_at)}
+							{#if session.doc_session_key}
+								<svg class="w-3 h-3 text-slate-500 inline-block" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+								</svg>
+							{/if}
+						</span>
+					</button>
+					<!-- Delete button — sibling of session button, not nested -->
+					<button
+						onclick={(e) => requestDelete(session.id, e)}
+						class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus:opacity-100 text-slate-600 hover:text-red-400 transition-all text-xs leading-none p-1"
+						title="Delete session"
+						aria-label="Delete session: {session.title}"
+					>
+						✕
+					</button>
 				{/if}
-
-				<span class="text-xs text-slate-600 flex items-center gap-1">
-					{relativeTime(session.updated_at)}
-					{#if session.doc_session_key}
-						<svg class="w-3 h-3 text-slate-500 inline-block" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-						</svg>
-					{/if}
-				</span>
-
-				<!-- Delete button -->
-				<button
-					onclick={(e) => removeSession(session.id, e)}
-					class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-400 transition-all text-xs leading-none p-1"
-					title="Delete session"
-					aria-label="Delete session"
-				>
-					✕
-				</button>
 			</div>
 		{/each}
 

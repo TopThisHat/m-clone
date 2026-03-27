@@ -368,7 +368,14 @@
 								<span class="text-[10px] text-slate-600">Coverage</span>
 								<span class="text-[10px] text-slate-500 font-mono">{c.result_count}/{total}</span>
 							</div>
-							<div class="h-1 bg-navy-700 rounded-full">
+							<div
+								class="h-1 bg-navy-700 rounded-full"
+								role="progressbar"
+								aria-valuenow={c.result_count}
+								aria-valuemin={0}
+								aria-valuemax={total}
+								aria-label="Coverage: {c.result_count} of {total} results"
+							>
 								<div class="h-1 rounded-full bg-gold transition-all" style="width:{pct}%"></div>
 							</div>
 						</div>

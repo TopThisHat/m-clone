@@ -1,9 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { notifications, unreadCount } from '$lib/stores/notifStore';
 	import { markRead, markAllRead } from '$lib/api/notifications';
 
 	let open = $state(false);
+	let toggleBtnEl = $state<HTMLButtonElement | null>(null);
+	let dropdownEl = $state<HTMLDivElement | null>(null);
 
 	onMount(() => {
 		notifications.startPolling();
@@ -33,8 +35,37 @@
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape' && open) {
 			open = false;
+			toggleBtnEl?.focus();
 		}
 	}
+
+	function handleDropdownKeydown(e: KeyboardEvent) {
+		if (e.key === 'Tab' && dropdownEl) {
+			const focusable = dropdownEl.querySelectorAll<HTMLElement>(
+				'button, a, [tabindex]:not([tabindex="-1"])'
+			);
+			if (focusable.length === 0) return;
+			const first = focusable[0];
+			const last = focusable[focusable.length - 1];
+			if (e.shiftKey && document.activeElement === first) {
+				e.preventDefault();
+				last.focus();
+			} else if (!e.shiftKey && document.activeElement === last) {
+				e.preventDefault();
+				first.focus();
+			}
+		}
+	}
+
+	// Auto-focus first element when dropdown opens
+	$effect(() => {
+		if (open && dropdownEl) {
+			tick().then(() => {
+				const first = dropdownEl?.querySelector<HTMLElement>('button, a');
+				first?.focus();
+			});
+		}
+	});
 
 	const recentNotifs = $derived($notifications.slice(0, 8));
 </script>
@@ -43,11 +74,12 @@
 
 <div class="notif-bell relative">
 	<button
+		bind:this={toggleBtnEl}
 		onclick={toggle}
 		class="relative p-1.5 rounded hover:bg-navy-800 transition-colors text-slate-400 hover:text-gold"
 		aria-label="Notifications{$unreadCount > 0 ? ` (${$unreadCount} unread)` : ''}"
 		aria-expanded={open}
-		aria-haspopup="true"
+		aria-haspopup="dialog"
 	>
 		<!-- Bell SVG -->
 		<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -62,7 +94,14 @@
 	</button>
 
 	{#if open}
-		<div class="absolute right-0 top-8 w-80 bg-navy-900 border border-navy-700 rounded-lg shadow-xl z-50 overflow-hidden" role="region" aria-label="Notifications panel">
+		<div
+			bind:this={dropdownEl}
+			role="dialog"
+			tabindex="-1"
+			aria-label="Notifications"
+			onkeydown={handleDropdownKeydown}
+			class="absolute right-0 top-8 w-80 bg-navy-900 border border-navy-700 rounded-lg shadow-xl z-50 overflow-hidden"
+		>
 			<div class="flex items-center justify-between px-4 py-2.5 border-b border-navy-700">
 				<span class="text-xs font-medium text-slate-300 uppercase tracking-wide">Notifications</span>
 				{#if $unreadCount > 0}
