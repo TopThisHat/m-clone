@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -16,6 +17,8 @@ from app.models.job import AsyncResearchRequest, JobStatus
 from app.models.request import ResearchRequest
 from app.routers.documents import get_document_text
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api", tags=["research"])
 
 
@@ -24,7 +27,7 @@ class ClarifyRequest(BaseModel):
 
 
 @router.post("/research/clarify/{clarification_id}")
-async def clarify_endpoint(clarification_id: str, body: ClarifyRequest, user=Depends(get_current_user)):
+async def clarify_endpoint(clarification_id: str, body: ClarifyRequest, user=Depends(get_current_user)) -> dict[str, str]:
     """Resolve a pending clarification Future (works for both agent-level and tool-level paths)."""
     if not body.answer or not body.answer.strip():
         raise HTTPException(status_code=422, detail="answer must not be empty")
@@ -38,7 +41,7 @@ async def clarify_endpoint(clarification_id: str, body: ClarifyRequest, user=Dep
 
 
 @router.get("/config/models")
-def available_models():
+def available_models() -> list[dict[str, str]]:
     """Return the list of available AI models."""
     models = [
         {"id": "openai:gpt-4o", "label": "GPT-4o", "description": "Flagship"},
@@ -54,7 +57,7 @@ def available_models():
 
 
 @router.post("/research")
-async def research_endpoint(body: ResearchRequest, request: Request, user=Depends(get_optional_user)):
+async def research_endpoint(body: ResearchRequest, request: Request, user=Depends(get_optional_user)) -> StreamingResponse:
     """Stream a research session as Server-Sent Events."""
     doc_session = await get_document_text(body.doc_session_key)
 
@@ -64,7 +67,7 @@ async def research_endpoint(body: ResearchRequest, request: Request, user=Depend
         from app.agent.memory import retrieve_memories
         memory_ctx = await retrieve_memories(body.query)
     except Exception:
-        pass
+        logger.warning("Failed to retrieve memories for research query", exc_info=True)
 
     # Resolve team context from authenticated user
     team_ids: list[str] = []
@@ -113,14 +116,14 @@ async def _run_async_job(
     doc_session_key: str | None,
     team_ids: list[str] | None = None,
     include_master: bool = False,
-):
+) -> None:
     """Background task: run research and POST results to webhook."""
     from app.db import db_update_job
 
     try:
         await db_update_job(job_id, {"status": "running"})
     except Exception:
-        pass
+        logger.warning("Failed to update job %s status to 'running'", job_id, exc_info=True)
 
     try:
         doc_session = await get_document_text(doc_session_key)
@@ -129,7 +132,7 @@ async def _run_async_job(
             from app.agent.memory import retrieve_memories
             memory_ctx = await retrieve_memories(query)
         except Exception:
-            pass
+            logger.warning("Failed to retrieve memories for async job %s", job_id, exc_info=True)
 
         deps = get_agent_deps(
             doc_context=doc_session.text,
@@ -155,7 +158,7 @@ async def _run_async_job(
                         markdown_parts.append(payload.get("markdown", ""))
                         usage_data = payload.get("usage", {})
                 except Exception:
-                    pass
+                    logger.warning("Failed to parse final_report SSE chunk for job %s", job_id, exc_info=True)
 
         final_markdown = "\n".join(markdown_parts)
 
@@ -177,7 +180,7 @@ async def _run_async_job(
                 "completed_at": datetime.now(timezone.utc),
             })
         except Exception:
-            pass
+            logger.warning("Failed to update job %s status to 'done'", job_id, exc_info=True)
 
     except Exception as exc:
         try:
@@ -187,11 +190,11 @@ async def _run_async_job(
                 "completed_at": datetime.now(timezone.utc),
             })
         except Exception:
-            pass
+            logger.warning("Failed to update job %s status to 'failed'", job_id, exc_info=True)
 
 
 @router.post("/research/async", status_code=202)
-async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: BackgroundTasks, user=Depends(get_current_user)):
+async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: BackgroundTasks, user=Depends(get_current_user)) -> dict[str, str]:
     """Submit a research job asynchronously. Results POSTed to webhook_url when done."""
     from app.db import db_create_job, DatabaseNotConfigured
 
@@ -225,7 +228,7 @@ async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: 
 
 
 @router.get("/research/jobs/{job_id}", response_model=JobStatus)
-async def get_job_status(job_id: str, user=Depends(get_current_user)):
+async def get_job_status(job_id: str, user=Depends(get_current_user)) -> JobStatus:
     """Get status of an async research job."""
     from app.db import db_get_job, DatabaseNotConfigured
 

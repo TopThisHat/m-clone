@@ -5,8 +5,6 @@ import re
 from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
-logger = logging.getLogger(__name__)
-
 from app.agent.agent import (
     FinalResult,
     ResearchOrchestrator,
@@ -16,6 +14,8 @@ from app.agent.agent import (
 )
 from app.agent.clarification import clarification_store
 from app.dependencies import AgentDeps
+
+logger = logging.getLogger(__name__)
 
 _MAX_HISTORY_MESSAGES = 60
 
@@ -334,7 +334,7 @@ async def stream_research(
                             db_update_session(session_id, {"usage_tokens": usage_data["total_tokens"]})
                         )
                     except Exception:
-                        pass
+                        logger.warning("Failed to save token usage for session %s", session_id, exc_info=True)
 
                 cited_urls = re.findall(r'\[.*?\]\((https?://[^)]+)\)', final_text)
                 citation_warnings: list[str] = []
@@ -379,7 +379,7 @@ async def stream_research(
                     if suggestions:
                         yield _sse("suggestions", {"suggestions": suggestions})
                 except Exception:
-                    pass
+                    logger.warning("Failed to generate follow-up suggestions for research stream", exc_info=True)
 
                 # Trigger memory extraction non-blocking
                 if session_id and final_text:
@@ -388,7 +388,7 @@ async def stream_research(
                         original_query = query.removeprefix("[FOLLOW-UP] ")
                         asyncio.create_task(extract_memories(session_id, original_query, final_text))
                     except Exception:
-                        pass
+                        logger.warning("Failed to trigger memory extraction for session %s", session_id, exc_info=True)
 
                 # Publish report to knowledge graph extraction pipeline
                 if session_id and final_text:
@@ -396,7 +396,7 @@ async def stream_research(
                         from app.streams import publish_for_extraction
                         asyncio.create_task(publish_for_extraction(session_id, final_text))
                     except Exception:
-                        pass
+                        logger.warning("Failed to publish report to knowledge graph extraction for session %s", session_id, exc_info=True)
 
     except Exception as exc:
         # Flush buffered text before emitting the error
