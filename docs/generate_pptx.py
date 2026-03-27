@@ -399,7 +399,7 @@ for i, (num, label, color, desc) in enumerate(phases):
 # SSE Events strip
 hline(sl, 0.38, 4.5, 12.57, color=BORD)
 t(sl, "Real-time SSE Events", 0.38, 4.6, 3.0, 0.28, color=GOLD, size=10, bold=True)
-events = ["start", "tool_call_start", "tool_executing", "tool_result",
+events = ["start", "tool_call_start", "tool_result",
           "text_delta", "chart_data", "conflict_warning", "final_report", "done"]
 for i, ev in enumerate(events):
     x = 0.38 + i * 1.38

@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 _MAX_HISTORY_MESSAGES = 60
 
-# Token batching configuration
-TEXT_DELTA_BATCH_SIZE_CHARS: int = 80
-TEXT_DELTA_FLUSH_INTERVAL_MS: int = 80
+# Token batching configuration — target ~30 fps for smooth typing UX
+TEXT_DELTA_BATCH_SIZE_CHARS: int = 30
+TEXT_DELTA_FLUSH_INTERVAL_MS: int = 33
 
 
 class TextDeltaBatcher:
@@ -184,6 +184,7 @@ def _convert_legacy_history(message_history: list[Any]) -> list[dict[str, Any]] 
                 result.append(msg)
         return result if result else None
     except Exception:
+        logger.debug("Failed to convert legacy message history (%d messages)", len(message_history), exc_info=True)
         return None
 
 
@@ -244,6 +245,7 @@ async def stream_research(
                 try:
                     args = json.loads(event.arguments_json) if event.arguments_json else {}
                 except Exception:
+                    logger.debug("Failed to parse arguments_json for tool %s (call_id=%s): %s", event.name, event.call_id, event.arguments_json, exc_info=True)
                     args = event.arguments_json
 
                 # Agent-level clarification: register Future before tool body runs

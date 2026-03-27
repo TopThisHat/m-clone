@@ -348,7 +348,7 @@
 												canComment={!!$currentUser}
 											/>
 										{:else}
-											<article use:tableExport class="prose prose-sm max-w-none">
+											<article use:tableExport class="prose prose-sm max-w-none{msg.isStreaming ? ' streaming-content' : ''}">
 												<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 												{@html renderMd(msg.content)}
 											</article>
@@ -458,3 +458,15 @@
 		}}
 	/>
 {/if}
+
+<style>
+	@keyframes fadeInChunk {
+		from { opacity: 0.7; transform: translateY(1px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+	@media (prefers-reduced-motion: no-preference) {
+		:global(.streaming-content > *:last-child) {
+			animation: fadeInChunk 120ms ease-out;
+		}
+	}
+</style>
