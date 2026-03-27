@@ -48,12 +48,15 @@ _MAGIC_SIGNATURES: dict[str, list[list[tuple[int, bytes]]]] = {
 }
 
 # Map file extension → expected MIME type(s) for validate_mime().
-# CSV/TSV have no reliable magic bytes so they are left out intentionally.
+# Extensions NOT listed here skip magic-byte validation (like CSV/TSV).
+# .xls is intentionally excluded: it uses OLE Compound Document format
+# (\xD0\xCF\x11\xE0...), not ZIP, so mapping it to application/zip would
+# reject every legitimate .xls upload. openpyxl only handles ZIP-based XLSX
+# anyway, so a real OLE .xls would fail at extraction regardless.
 _EXT_TO_MIME: dict[str, str] = {
     ".pdf": "application/pdf",
     ".docx": "application/zip",
     ".xlsx": "application/zip",
-    ".xls": "application/zip",
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",

@@ -124,7 +124,7 @@ class TestAppendDocument:
         ]
         loop.run_until_complete(set_documents("k2", initial))
 
-        result = loop.run_until_complete(
+        result, truncated = loop.run_until_complete(
             append_document("k2", "b.docx", "second", char_count=6)
         )
 
@@ -134,6 +134,7 @@ class TestAppendDocument:
         assert result[1]["filename"] == "b.docx"
         assert result[1]["type"] == "docx"
         assert result[1]["char_count"] == 6
+        assert truncated is False
 
     @_no_redis
     def test_append_to_old_tuple_format(self, _mock):
@@ -141,7 +142,7 @@ class TestAppendDocument:
         _memory_store["k3"] = ("old text", "old.pdf")
 
         loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(
+        result, truncated = loop.run_until_complete(
             append_document("k3", "new.csv", "new text")
         )
 
@@ -150,23 +151,25 @@ class TestAppendDocument:
         assert result[0]["type"] == "pdf"
         assert result[0]["char_count"] == 8  # len("old text")
         assert result[1]["filename"] == "new.csv"
+        assert truncated is False
 
     @_no_redis
     def test_append_return_no_text(self, _mock):
         """Returned metadata entries must not include 'text'."""
         loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(
+        result, truncated = loop.run_until_complete(
             append_document("fresh", "a.pdf", "content here")
         )
         assert len(result) == 1
         assert "text" not in result[0]
         assert result[0]["filename"] == "a.pdf"
+        assert truncated is False
 
     @_no_redis
     def test_append_char_count_auto(self, _mock):
         """char_count defaults to len(text) when not explicitly provided."""
         loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(
+        result, _truncated = loop.run_until_complete(
             append_document("cc", "x.pdf", "abcde")
         )
         assert result[0]["char_count"] == 5
@@ -174,7 +177,7 @@ class TestAppendDocument:
     @_no_redis
     def test_append_with_metadata_fields(self, _mock):
         loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(
+        result, _truncated = loop.run_until_complete(
             append_document(
                 "mf", "sheet.xlsx", "data",
                 metadata_fields={"sheets": 3, "rows": 100},
@@ -182,6 +185,63 @@ class TestAppendDocument:
         )
         assert result[0]["sheets"] == 3
         assert result[0]["rows"] == 100
+
+    @_no_redis
+    def test_concurrent_appends_no_document_loss(self, _mock):
+        """Simulates 3 simultaneous in-memory appends; all docs must be present.
+
+        The in-memory path is synchronous (no await points) so it can't
+        interleave, but this test documents the expected invariant: N
+        concurrent appends to the same key must produce N documents.
+        """
+        import asyncio as _asyncio
+
+        loop = _asyncio.get_event_loop()
+        key = "concurrent-key"
+
+        async def _upload(name: str) -> tuple[list[dict], bool]:
+            return await append_document(key, f"{name}.pdf", f"text-{name}")
+
+        async def _run() -> list[tuple[list[dict], bool]]:
+            return await _asyncio.gather(
+                _upload("a"),
+                _upload("b"),
+                _upload("c"),
+            )
+
+        results = loop.run_until_complete(_run())
+
+        # The final state must contain all 3 documents.
+        from app.redis_client import get_documents
+        session = loop.run_until_complete(get_documents(key))
+        assert session is not None
+        assert len(session.filenames) == 3, (
+            f"Expected 3 documents after concurrent appends, got {len(session.filenames)}: "
+            f"{session.filenames}"
+        )
+        filenames = set(session.filenames)
+        assert filenames == {"a.pdf", "b.pdf", "c.pdf"}
+
+    @_no_redis
+    def test_session_cap_enforced_atomically(self, _mock):
+        """session_cap truncation inside append_document must be respected."""
+        loop = asyncio.get_event_loop()
+        key = "cap-key"
+
+        # Pre-seed with 90 chars
+        loop.run_until_complete(
+            set_documents(key, [{"filename": "seed.pdf", "text": "x" * 90,
+                                  "type": "pdf", "char_count": 90}])
+        )
+
+        # Try to append 50 chars with a cap of 100 → only 10 should fit
+        result, truncated = loop.run_until_complete(
+            append_document(key, "new.pdf", "y" * 50, session_cap=100)
+        )
+
+        assert truncated is True
+        new_doc = next(d for d in result if d["filename"] == "new.pdf")
+        assert new_doc["char_count"] == 10
 
 
 # ------------------------------------------------------------------

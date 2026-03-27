@@ -163,10 +163,13 @@ async def test_upload_with_session_key_append(mock_meta, mock_extract, mock_get,
         filenames=["old.pdf"],
         metadata=[{"filename": "old.pdf", "type": "pdf", "char_count": 8}],
     )
-    mock_append.return_value = [
-        {"filename": "old.pdf", "type": "pdf", "char_count": 8},
-        {"filename": "new.pdf", "type": "pdf", "char_count": len(_EXTRACTED), "pages": 3},
-    ]
+    mock_append.return_value = (
+        [
+            {"filename": "old.pdf", "type": "pdf", "char_count": 8},
+            {"filename": "new.pdf", "type": "pdf", "char_count": len(_EXTRACTED), "pages": 3},
+        ],
+        False,  # not truncated
+    )
     resp = await _upload(client, filename="new.pdf", session_key=existing_key)
     assert resp.status_code == 200
     body = resp.json()
@@ -210,10 +213,13 @@ async def test_session_text_cap_truncation(mock_meta, mock_extract, mock_get, mo
     )
     new_text = "A" * 500  # 500 chars — would exceed cap
     mock_extract.return_value = new_text
-    mock_append.return_value = [
-        {"filename": "big.pdf", "type": "pdf", "char_count": existing_chars},
-        {"filename": "extra.pdf", "type": "pdf", "char_count": 100, "pages": 3},
-    ]
+    mock_append.return_value = (
+        [
+            {"filename": "big.pdf", "type": "pdf", "char_count": existing_chars},
+            {"filename": "extra.pdf", "type": "pdf", "char_count": 100, "pages": 3},
+        ],
+        True,  # truncated
+    )
 
     resp = await _upload(client, filename="extra.pdf", session_key=existing_key)
     assert resp.status_code == 200

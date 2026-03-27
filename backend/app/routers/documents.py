@@ -102,15 +102,10 @@ async def upload_document(
             is_append = True
 
     if is_append:
-        # Compute existing session char total from stored metadata
-        session_total = sum(m.get("char_count", 0) for m in existing.metadata)
-        if session_total + len(text) > SESSION_TEXT_CAP:
-            allowed = max(0, SESSION_TEXT_CAP - session_total)
-            text = text[:allowed]
-            doc_meta["char_count"] = len(text)
-            truncated = True
-
-        docs_list = await append_document(
+        # session_total and truncation are computed *inside* append_document's
+        # atomic WATCH/MULTI/EXEC block, eliminating the TOCTOU window that
+        # existed when we read-then-wrote outside the transaction.
+        docs_list, truncated = await append_document(
             session_key,
             filename,
             text,
@@ -118,7 +113,14 @@ async def upload_document(
             char_count=len(text),
             metadata_fields={k: v for k, v in doc_meta.items()
                              if k not in ("filename", "type", "char_count")},
+            session_cap=SESSION_TEXT_CAP,
         )
+        # Reflect any truncation back into doc_meta for the response
+        if truncated:
+            doc_meta["char_count"] = next(
+                (d["char_count"] for d in docs_list if d.get("filename") == filename),
+                doc_meta["char_count"],
+            )
         session_total = sum(d.get("char_count", 0) for d in docs_list)
     else:
         # New session — generate a fresh key

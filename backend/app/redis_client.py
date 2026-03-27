@@ -174,6 +174,10 @@ async def set_documents(
     _memory_store[key] = docs
 
 
+# Maximum number of WATCH/MULTI/EXEC retries before giving up on an atomic append.
+_APPEND_MAX_RETRIES = 5
+
+
 async def append_document(
     session_key: str,
     filename: str,
@@ -182,11 +186,34 @@ async def append_document(
     char_count: int | None = None,
     metadata_fields: dict | None = None,
     ttl_hours: int | None = None,
-) -> list[dict]:
-    """Append a document to an existing session and return metadata (no text).
+    session_cap: int | None = None,
+) -> tuple[list[dict], bool]:
+    """Atomically append a document to an existing session.
 
-    Handles migration from old ``pdf:`` prefix and old ``(text, filename)``
-    in-memory tuple format to the new ``doc:`` list format.
+    Uses WATCH/MULTI/EXEC optimistic locking so concurrent uploads to the same
+    ``session_key`` cannot overwrite each other.  The ``session_cap`` check is
+    performed *inside* the atomic block, eliminating the TOCTOU window.
+
+    Args:
+        session_key: Redis session identifier.
+        filename: Original filename of the uploaded document.
+        text: Extracted text content.
+        doc_type: Explicit document type; inferred from filename if omitted.
+        char_count: Explicit char count; computed from ``text`` if omitted.
+        metadata_fields: Extra per-document fields (pages, sheets, rows, …).
+        ttl_hours: Override TTL; falls back to ``settings.redis_ttl_hours``.
+        session_cap: Maximum total characters allowed in the session.  If the
+            appended text would exceed this limit, the text is truncated to fit
+            and the returned ``truncated`` flag is ``True``.
+
+    Returns:
+        A ``(docs_metadata, truncated)`` tuple where ``docs_metadata`` is the
+        full per-document metadata list (text stripped) and ``truncated``
+        indicates whether the text was truncated to respect ``session_cap``.
+
+    Raises:
+        RuntimeError: If the atomic append fails after ``_APPEND_MAX_RETRIES``
+            concurrent-write conflicts (extremely unlikely in practice).
     """
     ttl = (ttl_hours or settings.redis_ttl_hours) * 3600
     resolved_type = doc_type or _infer_type_from_filename(filename)
@@ -204,63 +231,132 @@ async def append_document(
                 entry[k] = v
 
     docs: list[dict] = []
+    truncated = False
 
     client = await _get_client()
     if client is not None:
         try:
-            docs = await _redis_append(client, session_key, entry, ttl)
+            docs, truncated = await _redis_append(client, session_key, entry, ttl, session_cap)
         except _RedisAuthError as exc:
             logger.warning("Redis auth error on append_document — attempting rotation recovery: %s", exc)
             await _reset_client()
             client = await _get_client()
             if client is not None:
                 try:
-                    docs = await _redis_append(client, session_key, entry, ttl)
+                    docs, truncated = await _redis_append(client, session_key, entry, ttl, session_cap)
                 except Exception:
-                    docs = _memory_append(session_key, entry)
+                    docs, truncated = _memory_append(session_key, entry, session_cap)
             else:
-                docs = _memory_append(session_key, entry)
+                docs, truncated = _memory_append(session_key, entry, session_cap)
         except Exception:
-            docs = _memory_append(session_key, entry)
+            docs, truncated = _memory_append(session_key, entry, session_cap)
     else:
-        docs = _memory_append(session_key, entry)
+        docs, truncated = _memory_append(session_key, entry, session_cap)
 
     # Return metadata only (strip text)
-    return [{k: v for k, v in d.items() if k != "text"} for d in docs]
+    return [{k: v for k, v in d.items() if k != "text"} for d in docs], truncated
 
 
-async def _redis_append(client: Any, key: str, entry: dict, ttl: int) -> list[dict]:
-    """Load existing docs from Redis, append *entry*, store and return full list."""
-    docs: list[dict] = []
+async def _redis_append(
+    client: Any,
+    key: str,
+    entry: dict,
+    ttl: int,
+    session_cap: int | None = None,
+) -> tuple[list[dict], bool]:
+    """Atomically append *entry* to the session list using WATCH/MULTI/EXEC.
 
-    # Try new prefix first
-    raw = await client.get(f"doc:{key}")
-    if raw:
-        docs = json.loads(raw)
-    else:
-        # Fall back to old prefix
-        raw = await client.get(f"pdf:{key}")
-        if raw:
-            old = json.loads(raw)
-            if isinstance(old, dict):
-                docs = [{
-                    "filename": old.get("filename", "document.pdf"),
-                    "text": old.get("text", ""),
-                    "type": _infer_type_from_filename(old.get("filename", "document.pdf")),
-                    "char_count": len(old.get("text", "")),
-                }]
-            elif isinstance(old, list):
-                docs = old
-            # Remove old key
-            await client.delete(f"pdf:{key}")
+    Retries up to ``_APPEND_MAX_RETRIES`` times on concurrent-write conflicts.
+    The session cap check runs inside the atomic block so no TOCTOU window
+    exists between reading the current total and writing the new document.
 
-    docs.append(entry)
-    await client.setex(f"doc:{key}", ttl, json.dumps(docs))
-    return docs
+    Returns:
+        ``(full_docs_list, truncated)`` — the complete list after append and a
+        flag indicating whether ``entry["text"]`` was truncated to fit the cap.
+    """
+    try:
+        from redis.exceptions import WatchError
+    except ImportError:  # redis not installed — unreachable in practice
+        WatchError = type("WatchError", (Exception,), {})  # type: ignore[assignment,misc]
+
+    doc_key = f"doc:{key}"
+    pdf_key = f"pdf:{key}"
+
+    for _ in range(_APPEND_MAX_RETRIES):
+        async with client.pipeline() as pipe:
+            try:
+                # WATCH both keys so a concurrent migration also triggers retry.
+                await pipe.watch(doc_key, pdf_key)
+
+                # Read phase — pipeline is in immediate-execution mode after WATCH.
+                docs: list[dict] = []
+                migrated = False
+
+                raw = await pipe.get(doc_key)
+                if raw:
+                    docs = json.loads(raw)
+                else:
+                    old_raw = await pipe.get(pdf_key)
+                    if old_raw:
+                        migrated = True
+                        old = json.loads(old_raw)
+                        if isinstance(old, dict):
+                            docs = [{
+                                "filename": old.get("filename", "document.pdf"),
+                                "text": old.get("text", ""),
+                                "type": _infer_type_from_filename(
+                                    old.get("filename", "document.pdf")
+                                ),
+                                "char_count": len(old.get("text", "")),
+                            }]
+                        elif isinstance(old, list):
+                            docs = old
+
+                # Enforce session cap inside the transaction (eliminates TOCTOU).
+                actual_entry = entry
+                truncated = False
+                if session_cap is not None:
+                    current_total = sum(d.get("char_count", 0) for d in docs)
+                    entry_chars = entry.get("char_count", len(entry.get("text", "")))
+                    if current_total + entry_chars > session_cap:
+                        allowed = max(0, session_cap - current_total)
+                        actual_entry = {
+                            **entry,
+                            "text": entry.get("text", "")[:allowed],
+                            "char_count": allowed,
+                        }
+                        truncated = True
+
+                new_docs = [*docs, actual_entry]
+
+                # Write phase — pipeline enters buffered MULTI mode.
+                pipe.multi()
+                pipe.setex(doc_key, ttl, json.dumps(new_docs))
+                if migrated:
+                    pipe.delete(pdf_key)
+                await pipe.execute()  # raises WatchError if key changed mid-flight
+
+                return new_docs, truncated
+
+            except WatchError:
+                continue  # concurrent writer changed the key; retry
+
+    raise RuntimeError(
+        f"append_document: failed to write session '{key}' after "
+        f"{_APPEND_MAX_RETRIES} concurrent-write retries"
+    )
 
 
-def _memory_append(key: str, entry: dict) -> list[dict]:
-    """In-memory fallback for append_document, with old-format migration."""
+def _memory_append(
+    key: str,
+    entry: dict,
+    session_cap: int | None = None,
+) -> tuple[list[dict], bool]:
+    """In-memory fallback for append_document, with old-format migration.
+
+    asyncio is single-threaded so there is no race condition in this path.
+    The session cap is still enforced here for consistency with the Redis path.
+    """
     existing = _memory_store.get(key)
     docs: list[dict] = []
 
@@ -283,9 +379,23 @@ def _memory_append(key: str, entry: dict) -> list[dict]:
                 "char_count": len(existing.get("text", "")),
             }]
 
-    docs.append(entry)
+    actual_entry = entry
+    truncated = False
+    if session_cap is not None:
+        current_total = sum(d.get("char_count", 0) for d in docs)
+        entry_chars = entry.get("char_count", len(entry.get("text", "")))
+        if current_total + entry_chars > session_cap:
+            allowed = max(0, session_cap - current_total)
+            actual_entry = {
+                **entry,
+                "text": entry.get("text", "")[:allowed],
+                "char_count": allowed,
+            }
+            truncated = True
+
+    docs.append(actual_entry)
     _memory_store[key] = docs
-    return docs
+    return docs, truncated
 
 
 async def get_documents(session_key: str) -> DocumentSession | None:
