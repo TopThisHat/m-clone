@@ -45,7 +45,7 @@ class TextDeltaBatcher:
     def add(self, text: str) -> str | None:
         """Add text to buffer. Returns flushed text if batch is ready, else None."""
         self._buffer += text
-        now = asyncio.get_event_loop().time()
+        now = asyncio.get_running_loop().time()
 
         if (
             len(self._buffer) >= self._batch_size
@@ -60,7 +60,7 @@ class TextDeltaBatcher:
             return None
         text = self._buffer
         self._buffer = ""
-        self._last_flush = asyncio.get_event_loop().time()
+        self._last_flush = asyncio.get_running_loop().time()
         return text
 
 # NOTE: Keep in sync with TOOL_REGISTRY in tools.py when adding/removing tools.
