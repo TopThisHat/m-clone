@@ -51,6 +51,9 @@
 	let streamingAnnouncement = $state('');
 	let _streamingAnnouncementTimer: ReturnType<typeof setTimeout> | null = null;
 
+	// Batch progress — non-null only during a processFiles call with 3+ valid files
+	let uploadProgress = $state<{ completed: number; total: number } | null>(null);
+
 	const uploading = $derived(documents.some((d) => d.status === 'uploading' || d.status === 'pending'));
 	const showAttach = $derived(!$isStreaming);
 
@@ -122,6 +125,11 @@
 			srAnnouncement = rejectedCount ? `${files[0].name} rejected.` : `Uploading ${files[0].name}.`;
 		}
 
+		// Show consolidated progress bar when uploading 3+ files in one batch
+		if (validCount >= 3) {
+			uploadProgress = { completed: 0, total: validCount };
+		}
+
 		for (const file of files) {
 			const validationError = validateDroppedFile(file);
 			if (validationError) {
@@ -149,7 +157,14 @@
 					j === idx ? { ...d, status: 'error' as const, error: errorMsg, file } : d
 				);
 			}
+
+			// Increment batch counter after each valid file completes (success or error)
+			if (uploadProgress) {
+				uploadProgress = { ...uploadProgress, completed: uploadProgress.completed + 1 };
+			}
 		}
+
+		uploadProgress = null;
 		textareaEl?.focus();
 	}
 
@@ -261,6 +276,29 @@
 	<!-- Screen reader announcements (visually hidden) -->
 	<div class="sr-only" aria-live="polite" aria-atomic="true">{srAnnouncement}</div>
 	<div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{streamingAnnouncement}</div>
+
+	<!-- Consolidated progress bar: shown for batches of 3+ files -->
+	{#if uploadProgress !== null}
+		<div
+			class="px-2.5 py-2 bg-navy-700 border border-navy-600 rounded"
+			role="progressbar"
+			aria-valuenow={uploadProgress.completed}
+			aria-valuemin={0}
+			aria-valuemax={uploadProgress.total}
+			aria-label="Uploading files: {uploadProgress.completed} of {uploadProgress.total} complete"
+		>
+			<div class="flex justify-between text-xs mb-1.5">
+				<span class="text-slate-400">Uploading {uploadProgress.total} files…</span>
+				<span class="text-gold tabular-nums">{uploadProgress.completed} / {uploadProgress.total}</span>
+			</div>
+			<div class="w-full bg-navy-800 rounded-full h-1 overflow-hidden">
+				<div
+					class="bg-gold h-1 rounded-full transition-[width] duration-300 ease-out"
+					style="width: {uploadProgress.total > 0 ? Math.round((uploadProgress.completed / uploadProgress.total) * 100) : 0}%"
+				></div>
+			</div>
+		</div>
+	{/if}
 
 	<!-- Document chips + errors -->
 	{#if documents.length > 0}
