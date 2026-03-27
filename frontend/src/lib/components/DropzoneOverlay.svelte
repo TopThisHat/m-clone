@@ -11,7 +11,7 @@
 			       : 'border-gold/60 bg-navy-900/80'}"
 		role="region"
 		aria-label="File drop zone"
-		aria-live="assertive"
+		aria-live="polite"
 	>
 		<div class="flex flex-col items-center gap-3 pointer-events-none select-none">
 			{#if rejected}
