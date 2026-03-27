@@ -256,17 +256,11 @@ function handleSSEEvent(
 				toolName,
 				toolLabel: data.tool_label as string,
 				icon: (data.icon as ToolIconType) ?? 'tool',
-				status: 'pending'
-			});
-			break;
-		}
-
-		case 'tool_executing':
-			traceStore.updateStep(data.call_id as string, {
 				status: 'running',
 				args: data.args as Record<string, unknown>
 			});
 			break;
+		}
 
 		case 'tool_result':
 			traceStore.updateStep(data.call_id as string, {

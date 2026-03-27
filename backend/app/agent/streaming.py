@@ -1,8 +1,11 @@
 import asyncio
 import json
+import logging
 import re
 from typing import Any, AsyncIterator
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 from app.agent.agent import (
     FinalResult,
@@ -15,6 +18,50 @@ from app.agent.clarification import clarification_store
 from app.dependencies import AgentDeps
 
 _MAX_HISTORY_MESSAGES = 60
+
+# Token batching configuration
+TEXT_DELTA_BATCH_SIZE_CHARS: int = 80
+TEXT_DELTA_FLUSH_INTERVAL_MS: int = 80
+
+
+class TextDeltaBatcher:
+    """Batches text_delta tokens to reduce SSE event frequency.
+
+    Instead of emitting one SSE event per LLM token (50-100+/sec), this
+    accumulates tokens and flushes when either the character threshold or
+    the time interval is reached — whichever comes first.
+    """
+
+    def __init__(
+        self,
+        batch_size_chars: int = TEXT_DELTA_BATCH_SIZE_CHARS,
+        flush_interval_ms: int = TEXT_DELTA_FLUSH_INTERVAL_MS,
+    ) -> None:
+        self._buffer: str = ""
+        self._batch_size: int = batch_size_chars
+        self._flush_interval: float = flush_interval_ms / 1000.0
+        self._last_flush: float = 0.0
+
+    def add(self, text: str) -> str | None:
+        """Add text to buffer. Returns flushed text if batch is ready, else None."""
+        self._buffer += text
+        now = asyncio.get_event_loop().time()
+
+        if (
+            len(self._buffer) >= self._batch_size
+            or (now - self._last_flush) >= self._flush_interval
+        ):
+            return self.flush()
+        return None
+
+    def flush(self) -> str | None:
+        """Force flush the buffer. Returns buffered text or None if empty."""
+        if not self._buffer:
+            return None
+        text = self._buffer
+        self._buffer = ""
+        self._last_flush = asyncio.get_event_loop().time()
+        return text
 
 # NOTE: Keep in sync with TOOL_REGISTRY in tools.py when adding/removing tools.
 TOOL_METADATA: dict[str, dict[str, str]] = {
@@ -158,6 +205,7 @@ async def stream_research(
 
     accumulated_text = ""
     _pending_chart_tool_names: set[str] = set()
+    batcher = TextDeltaBatcher()
 
     prior: list[dict[str, Any]] | None = None
     if message_history:
@@ -179,20 +227,19 @@ async def stream_research(
             # ── Text token ────────────────────────────────────────────
             if isinstance(event, TextDelta):
                 accumulated_text += event.token
-                yield _sse("text_delta", {"token": event.token})
+                batched = batcher.add(event.token)
+                if batched is not None:
+                    yield _sse("text_delta", {"token": batched})
 
             # ── Tool call starting ────────────────────────────────────
             elif isinstance(event, ToolCallStart):
+                # Flush buffered text before tool call so UI displays it first
+                remaining = batcher.flush()
+                if remaining is not None:
+                    yield _sse("text_delta", {"token": remaining})
                 meta = TOOL_METADATA.get(
                     event.name, {"label": event.name, "icon": "tool"},
                 )
-
-                yield _sse("tool_call_start", {
-                    "tool_name": event.name,
-                    "tool_label": meta["label"],
-                    "icon": meta["icon"],
-                    "call_id": event.call_id,
-                })
 
                 try:
                     args = json.loads(event.arguments_json) if event.arguments_json else {}
@@ -226,12 +273,13 @@ async def stream_research(
                 if event.name == "get_financials":
                     _pending_chart_tool_names.add(event.call_id)
 
-                yield _sse("tool_executing", {
+                yield _sse("tool_call_start", {
                     "tool_name": event.name,
                     "tool_label": meta["label"],
                     "icon": meta["icon"],
                     "call_id": event.call_id,
                     "args": args,
+                    "status": "executing",
                 })
 
                 # Drain any mid-tool SSE signals
@@ -270,6 +318,10 @@ async def stream_research(
 
             # ── Final result ──────────────────────────────────────────
             elif isinstance(event, FinalResult):
+                # Flush any remaining buffered text before emitting the report
+                remaining = batcher.flush()
+                if remaining is not None:
+                    yield _sse("text_delta", {"token": remaining})
                 final_text = event.text or accumulated_text
                 usage_data = event.usage
                 all_messages = event.messages
@@ -347,6 +399,10 @@ async def stream_research(
                         pass
 
     except Exception as exc:
+        # Flush buffered text before emitting the error
+        remaining = batcher.flush()
+        if remaining is not None:
+            yield _sse("text_delta", {"token": remaining})
         yield _sse("error", {"message": str(exc)})
     finally:
         if deps.active_clarification_ids:
