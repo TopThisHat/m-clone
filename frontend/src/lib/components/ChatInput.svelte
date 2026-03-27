@@ -150,6 +150,7 @@
 				documents = documents.map((d, j) =>
 					j === idx ? { ...d, status: 'success' as const, result } : d
 				);
+				srAnnouncement = `${file.name} uploaded successfully.`;
 			} catch (err) {
 				const errorMsg = err instanceof Error ? err.message : 'Upload failed';
 				// store file ref on upload errors only — enables retry
