@@ -8,10 +8,13 @@
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
+	// Normalize teams to always be an array, guarding against null/undefined from the server
+	const safeTeams = $derived(Array.isArray(data.teams) ? data.teams : []);
+
 	// Validate stored team is still one the user belongs to
 	onMount(() => {
 		const stored = $scoutTeam;
-		if (stored && !data.teams.some((t: { id: string }) => t.id === stored)) {
+		if (stored && !safeTeams.some((t: { id: string }) => t.id === stored)) {
 			scoutTeam.select(null);
 		}
 	});
@@ -52,7 +55,7 @@
 		</nav>
 
 		<!-- Team switcher -->
-		<TeamSwitcher teams={data.teams} />
+		<TeamSwitcher teams={safeTeams} />
 	</div>
 
 	{@render children()}

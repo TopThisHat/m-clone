@@ -11,7 +11,8 @@ export const load: LayoutServerLoad = async ({ cookies, fetch }) => {
 	const user = await res.json();
 
 	const teamsRes = await fetch('/api/teams').catch(() => null);
-	const teams = teamsRes?.ok ? await teamsRes.json() : [];
+	const teamsRaw = teamsRes?.ok ? await teamsRes.json().catch(() => null) : null;
+	const teams: import('$lib/api/teams').Team[] = Array.isArray(teamsRaw) ? teamsRaw : [];
 
 	return { user, teams };
 };

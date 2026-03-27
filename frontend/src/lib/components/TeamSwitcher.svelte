@@ -3,13 +3,15 @@
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
 
 	let {
-		teams,
+		teams = [],
 		onswitch,
 	}: {
-		teams: Team[];
+		teams?: Team[] | null;
 		/** Called after the active team changes, with the new team ID (null = personal). */
 		onswitch?: (teamId: string | null) => void;
 	} = $props();
+
+	const safeTeams: Team[] = $derived(Array.isArray(teams) ? teams : []);
 
 	function select(teamId: string | null) {
 		scoutTeam.select(teamId);
@@ -17,7 +19,7 @@
 	}
 </script>
 
-{#if teams.length === 0}
+{#if safeTeams.length === 0}
 	<!-- Empty state: user has no teams -->
 	<div class="flex items-center gap-2 text-xs text-slate-500">
 		<svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -46,7 +48,7 @@
 			>
 				Personal
 			</button>
-			{#each teams as team (team.id)}
+			{#each safeTeams as team (team.id)}
 				<button
 					onclick={() => select(team.id)}
 					aria-pressed={$scoutTeam === team.id}
