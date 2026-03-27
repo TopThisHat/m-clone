@@ -16,6 +16,11 @@
 	});
 </script>
 
+<svelte:window
+	ondragover={(e) => e.preventDefault()}
+	ondrop={(e) => e.preventDefault()}
+/>
+
 <svelte:head>
 	<title>Playbook Research — Private Intelligence</title>
 </svelte:head>

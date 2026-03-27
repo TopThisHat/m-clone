@@ -4,6 +4,8 @@
 	import ChatThread from '$lib/components/ChatThread.svelte';
 	import ChatInput from '$lib/components/ChatInput.svelte';
 	import RulesPanel from '$lib/components/RulesPanel.svelte';
+	import DropzoneOverlay from '$lib/components/DropzoneOverlay.svelte';
+	import { dropzone } from '$lib/actions/dropzone';
 	import { traceStore } from '$lib/stores/traceStore';
 	import { isStreaming } from '$lib/stores/reportStore';
 	import { newResearch } from '$lib/stores/sessionStore';
@@ -12,6 +14,8 @@
 
 	let traceVisible = $state(true);
 	let rulesOpen = $state(false);
+	let dragging = $state(false);
+	let chatInput = $state<{ processFiles: (files: File[]) => Promise<void> } | null>(null);
 
 	function handleKeydown(e: KeyboardEvent) {
 		// Cmd+Shift+N (Mac) or Ctrl+Shift+N (Win/Linux) → new research
@@ -47,7 +51,19 @@
 	</div>
 
 	<!-- ── CENTRE PANE: Chat ──────────────────────────────────────────── -->
-	<section class="flex-1 flex flex-col overflow-hidden min-w-0 border-l border-navy-700 md:border-l-0">
+	<section
+		class="relative flex-1 flex flex-col overflow-hidden min-w-0 border-l border-navy-700 md:border-l-0"
+		use:dropzone={{
+			disabled: $isStreaming,
+			onEnter: () => { dragging = true; },
+			onLeave: () => { dragging = false; },
+			onDrop: (files) => {
+				dragging = false;
+				chatInput?.processFiles(files);
+			}
+		}}
+	>
+		<DropzoneOverlay visible={dragging} />
 		<!-- Top bar with rules + trace toggles -->
 		<div class="flex items-center justify-end gap-1 px-4 py-2 border-b border-navy-700 flex-shrink-0">
 			<!-- Rules button -->
@@ -87,7 +103,7 @@
 
 		<!-- Sticky input at bottom -->
 		<div class="border-t border-navy-700 px-4 sm:px-6 py-4 flex-shrink-0">
-			<ChatInput />
+			<ChatInput bind:this={chatInput} />
 		</div>
 	</section>
 

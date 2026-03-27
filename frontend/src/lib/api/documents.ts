@@ -25,6 +25,8 @@ export interface UploadFileStatus {
 	status: 'pending' | 'uploading' | 'success' | 'error';
 	error?: string;
 	result?: UploadResult;
+	previewUrl?: string;
+	file?: File;
 }
 
 export interface KGUploadResult {
@@ -51,9 +53,24 @@ export const SUPPORTED_EXTENSIONS = [
 
 export const ACCEPT_STRING = SUPPORTED_EXTENSIONS.join(',');
 
+export const MAX_CLIENT_FILE_SIZE_MB = 20;
+export const MAX_CLIENT_FILE_SIZE = MAX_CLIENT_FILE_SIZE_MB * 1024 * 1024;
+
 export function isSupportedFile(filename: string): boolean {
 	const ext = filename.lastIndexOf('.') >= 0 ? filename.slice(filename.lastIndexOf('.')).toLowerCase() : '';
 	return SUPPORTED_EXTENSIONS.includes(ext);
+}
+
+/** Returns null for valid files, or an error message string for invalid ones. */
+export function validateDroppedFile(file: File): string | null {
+	if (!isSupportedFile(file.name)) {
+		const ext = file.name.lastIndexOf('.') >= 0 ? file.name.slice(file.name.lastIndexOf('.')).toLowerCase() : '(no extension)';
+		return `Unsupported file type: ${ext}`;
+	}
+	if (file.size > MAX_CLIENT_FILE_SIZE) {
+		return `File exceeds ${MAX_CLIENT_FILE_SIZE_MB} MB limit`;
+	}
+	return null;
 }
 
 export async function uploadDocument(file: File): Promise<UploadResult> {

@@ -1,9 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
+	import { fly } from 'svelte/transition';
 	import { startResearch, cancelResearch } from '$lib/api/research';
 	import {
 		uploadDocument,
 		uploadDocumentToSession,
+		validateDroppedFile,
 		ACCEPT_STRING,
 		type UploadFileStatus
 	} from '$lib/api/documents';
@@ -40,12 +42,31 @@
 	// docSessionKey is NOT cleared here — that's handled by newResearch() and startResearch()
 	$effect(() => {
 		$activeSessionId; // track any change
+		revokePreviewUrls(documents);
 		documents = [];
 		if (fileInput) fileInput.value = '';
 	});
 
 	const uploading = $derived(documents.some((d) => d.status === 'uploading' || d.status === 'pending'));
 	const showAttach = $derived(!$isStreaming);
+
+	// Respect prefers-reduced-motion for chip entry animations
+	const prefersReducedMotion =
+		typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+	const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+	function isImageFile(filename: string): boolean {
+		const ext = filename.lastIndexOf('.') >= 0 ? filename.slice(filename.lastIndexOf('.')).toLowerCase() : '';
+		return IMAGE_EXTENSIONS.has(ext);
+	}
+
+	function revokePreviewUrls(docs: typeof documents) {
+		for (const d of docs) {
+			if (d.previewUrl) URL.revokeObjectURL(d.previewUrl);
+		}
+	}
+
+	onDestroy(() => revokePreviewUrls(documents));
 
 	function getTypeLabel(filename: string): string {
 		const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
@@ -58,6 +79,16 @@
 		return 'File';
 	}
 
+	function getTypeBadgeClass(filename: string): string {
+		const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
+		if (ext === '.pdf') return 'bg-red-900/50 text-red-300';
+		if (ext === '.docx') return 'bg-blue-900/50 text-blue-300';
+		if (ext === '.xlsx' || ext === '.xls') return 'bg-green-900/50 text-green-300';
+		if (ext === '.csv' || ext === '.tsv') return 'bg-teal-900/50 text-teal-300';
+		if (['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) return 'bg-purple-900/50 text-purple-300';
+		return 'bg-navy-600 text-gold';
+	}
+
 	function getMetaLabel(doc: UploadFileStatus): string | null {
 		if (doc.status !== 'success' || !doc.result) return null;
 		const r = doc.result;
@@ -67,15 +98,18 @@
 		return null;
 	}
 
-	async function handleFileSelect(e: Event) {
-		const input = e.target as HTMLInputElement;
-		const files = input.files;
-		if (!files || files.length === 0) return;
+	/** Shared upload pipeline used by file input, drop zone, and paste handler. */
+	export async function processFiles(files: File[]) {
+		if ($isStreaming) return; // streaming guard — Task #15
+		for (const file of files) {
+			const validationError = validateDroppedFile(file);
+			if (validationError) {
+				documents = [...documents, { filename: file.name, status: 'error', error: validationError }];
+				continue;
+			}
 
-		const fileList = Array.from(files);
-
-		for (const file of fileList) {
-			const entry: UploadFileStatus = { filename: file.name, status: 'uploading' };
+			const previewUrl = isImageFile(file.name) ? URL.createObjectURL(file) : undefined;
+			const entry: UploadFileStatus = { filename: file.name, status: 'uploading', previewUrl };
 			documents = [...documents, entry];
 			const idx = documents.length - 1;
 
@@ -83,23 +117,47 @@
 				const result = $docSessionKey
 					? await uploadDocumentToSession(file, $docSessionKey)
 					: await uploadDocument(file);
-
 				docSessionKey.set(result.session_key);
 				documents = documents.map((d, j) =>
 					j === idx ? { ...d, status: 'success' as const, result } : d
 				);
 			} catch (err) {
 				const errorMsg = err instanceof Error ? err.message : 'Upload failed';
+				// store file ref on upload errors only — enables retry
 				documents = documents.map((d, j) =>
-					j === idx ? { ...d, status: 'error' as const, error: errorMsg } : d
+					j === idx ? { ...d, status: 'error' as const, error: errorMsg, file } : d
 				);
 			}
 		}
+	}
 
+	async function handleFileSelect(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const files = input.files;
+		if (!files || files.length === 0) return;
+		await processFiles(Array.from(files));
 		if (fileInput) fileInput.value = '';
 	}
 
+	function handlePaste(e: ClipboardEvent) {
+		const items = e.clipboardData?.items;
+		if (!items) return;
+		const files: File[] = [];
+		for (const item of Array.from(items)) {
+			if (item.kind === 'file') {
+				const file = item.getAsFile();
+				if (file) files.push(file);
+			}
+		}
+		if (files.length > 0) {
+			e.preventDefault();
+			processFiles(files);
+		}
+	}
+
 	function removeDocument(index: number) {
+		const removed = documents[index];
+		if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
 		documents = documents.filter((_, i) => i !== index);
 		if (documents.length === 0) {
 			if (fileInput) fileInput.value = '';
@@ -109,6 +167,15 @@
 				docSessionKey.set(undefined);
 			}
 		}
+	}
+
+	async function retryDocument(index: number) {
+		const doc = documents[index];
+		if (!doc?.file) return;
+		const file = doc.file;
+		// Remove the error chip first, then re-process
+		removeDocument(index);
+		await processFiles([file]);
 	}
 
 	// 9.2: Capture docSessionKey, clear UI, then pass captured key
@@ -173,6 +240,7 @@
 		<div class="flex flex-wrap gap-1.5">
 			{#each documents as doc, i (i)}
 				<div
+					in:fly={{ y: prefersReducedMotion ? 0 : -4, duration: prefersReducedMotion ? 0 : 150, delay: prefersReducedMotion ? 0 : i * 25 }}
 					class="flex items-center gap-1.5 bg-navy-700 border rounded px-2.5 py-1
 					       {doc.status === 'error' ? 'border-red-800/50' : 'border-navy-600'}"
 				>
@@ -185,10 +253,17 @@
 								></span>
 							{/each}
 						</span>
+					{:else if doc.previewUrl}
+						<img
+							src={doc.previewUrl}
+							alt=""
+							class="w-5 h-5 rounded object-cover flex-shrink-0"
+							aria-hidden="true"
+						/>
 					{:else}
 						<span
 							class="text-xs font-medium px-1 py-0.5 rounded
-							       {doc.status === 'error' ? 'bg-red-900/40 text-red-400' : 'bg-navy-600 text-gold'}"
+							       {doc.status === 'error' ? 'bg-red-900/40 text-red-400' : getTypeBadgeClass(doc.filename)}"
 						>
 							{getTypeLabel(doc.filename)}
 						</span>
@@ -202,6 +277,15 @@
 					{/if}
 					{#if doc.status === 'error'}
 						<span class="text-xs text-red-400 truncate max-w-[100px]">{doc.error}</span>
+						{#if doc.file}
+							<button
+								onclick={() => retryDocument(i)}
+								class="text-xs text-slate-500 hover:text-gold transition-colors flex-shrink-0"
+								aria-label="Retry upload for {doc.filename}"
+							>
+								↺
+							</button>
+						{/if}
 					{/if}
 					{#if doc.status !== 'uploading'}
 						<button
@@ -217,9 +301,13 @@
 		</div>
 
 		{#if isTruncated}
-			<p class="text-amber-400 text-xs px-1">
+			<div class="flex items-center gap-2 px-2.5 py-1.5 bg-amber-900/20 border border-amber-700/40 rounded text-xs text-amber-400" role="status">
+				<svg class="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+						d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+				</svg>
 				Some documents were truncated to fit within the session size limit.
-			</p>
+			</div>
 		{/if}
 	{/if}
 
@@ -269,6 +357,7 @@
 			bind:value={query}
 			onkeydown={handleKeydown}
 			oninput={autoResize}
+			onpaste={handlePaste}
 			{placeholder}
 			rows="1"
 			disabled={$isStreaming}
