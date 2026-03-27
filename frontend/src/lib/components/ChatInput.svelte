@@ -47,6 +47,10 @@
 		if (fileInput) fileInput.value = '';
 	});
 
+	let srAnnouncement = $state('');
+	let streamingAnnouncement = $state('');
+	let _streamingAnnouncementTimer: ReturnType<typeof setTimeout> | null = null;
+
 	const uploading = $derived(documents.some((d) => d.status === 'uploading' || d.status === 'pending'));
 	const showAttach = $derived(!$isStreaming);
 
@@ -100,7 +104,24 @@
 
 	/** Shared upload pipeline used by file input, drop zone, and paste handler. */
 	export async function processFiles(files: File[]) {
-		if ($isStreaming) return; // streaming guard — Task #15
+		if ($isStreaming) {
+			if (_streamingAnnouncementTimer) clearTimeout(_streamingAnnouncementTimer);
+			streamingAnnouncement = 'Wait for the current response to finish before attaching files.';
+			_streamingAnnouncementTimer = setTimeout(() => { streamingAnnouncement = ''; }, 4000);
+			return;
+		}
+
+		// Announce summary for mixed/multi-file drops
+		const rejectedCount = files.filter(f => validateDroppedFile(f) !== null).length;
+		const validCount = files.length - rejectedCount;
+		if (files.length > 1) {
+			srAnnouncement = rejectedCount > 0
+				? `${validCount} file${validCount !== 1 ? 's' : ''} uploading. ${rejectedCount} file${rejectedCount !== 1 ? 's' : ''} rejected.`
+				: `Uploading ${validCount} file${validCount !== 1 ? 's' : ''}.`;
+		} else if (files.length === 1) {
+			srAnnouncement = rejectedCount ? `${files[0].name} rejected.` : `Uploading ${files[0].name}.`;
+		}
+
 		for (const file of files) {
 			const validationError = validateDroppedFile(file);
 			if (validationError) {
@@ -129,6 +150,7 @@
 				);
 			}
 		}
+		textareaEl?.focus();
 	}
 
 	async function handleFileSelect(e: Event) {
@@ -236,12 +258,17 @@
 </script>
 
 <div class="flex flex-col gap-2">
+	<!-- Screen reader announcements (visually hidden) -->
+	<div class="sr-only" aria-live="polite" aria-atomic="true">{srAnnouncement}</div>
+	<div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{streamingAnnouncement}</div>
+
 	<!-- Document chips + errors -->
 	{#if documents.length > 0}
-		<div class="flex flex-wrap gap-1.5">
+		<div class="flex flex-wrap gap-1.5" role="list" aria-label="Attached files">
 			{#each documents as doc, i (i)}
 				<div
-					in:fly={{ y: prefersReducedMotion ? 0 : -4, duration: prefersReducedMotion ? 0 : 150, delay: prefersReducedMotion ? 0 : i * 25 }}
+					role="listitem"
+					in:fly={{ y: prefersReducedMotion ? 0 : -4, duration: prefersReducedMotion ? 0 : 150, delay: prefersReducedMotion ? 0 : i * 30 }}
 					class="flex items-center gap-1.5 bg-navy-700 border rounded px-2.5 py-1
 					       {doc.status === 'error' ? 'border-red-800/50' : 'border-navy-600'}"
 				>
@@ -249,7 +276,7 @@
 						<span class="flex gap-0.5">
 							{#each [0, 1, 2] as j (j)}
 								<span
-									class="w-1 h-1 bg-gold rounded-full animate-bounce"
+									class="w-1 h-1 bg-gold rounded-full motion-safe:animate-bounce"
 									style="animation-delay: {j * 0.12}s"
 								></span>
 							{/each}
@@ -258,7 +285,7 @@
 						<img
 							src={doc.previewUrl}
 							alt=""
-							class="w-5 h-5 rounded object-cover flex-shrink-0"
+							class="w-6 h-6 rounded object-cover flex-shrink-0"
 							aria-hidden="true"
 						/>
 					{:else}
@@ -277,7 +304,7 @@
 						{/if}
 					{/if}
 					{#if doc.status === 'error'}
-						<span class="text-xs text-red-400 truncate max-w-[100px]">{doc.error}</span>
+						<span class="text-xs text-red-400 truncate max-w-[100px]" role="alert">{doc.error}</span>
 						{#if doc.file}
 							<button
 								onclick={() => retryDocument(i)}
@@ -325,7 +352,7 @@
 					<span class="flex gap-0.5 pb-0.5">
 						{#each [0, 1, 2] as i (i)}
 							<span
-								class="w-1 h-1 bg-gold rounded-full animate-bounce"
+								class="w-1 h-1 bg-gold rounded-full motion-safe:animate-bounce"
 								style="animation-delay: {i * 0.12}s"
 							></span>
 						{/each}

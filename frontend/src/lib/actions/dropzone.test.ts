@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { dropzone, type DropzoneOptions } from './dropzone';
 
 // jsdom does not implement DragEvent — provide a minimal polyfill
@@ -34,17 +34,17 @@ function makeDragEvent(type: string, includeFiles = true, files: File[] = []): D
 
 describe('dropzone action', () => {
 	let el: HTMLDivElement;
-	let onEnter: ReturnType<typeof vi.fn>;
-	let onLeave: ReturnType<typeof vi.fn>;
-	let onDrop: ReturnType<typeof vi.fn>;
+	let onEnter: Mock<() => void>;
+	let onLeave: Mock<() => void>;
+	let onDrop: Mock<(files: File[]) => void>;
 	let action: ReturnType<typeof dropzone>;
 
 	beforeEach(() => {
 		el = document.createElement('div');
 		document.body.appendChild(el);
-		onEnter = vi.fn();
-		onLeave = vi.fn();
-		onDrop = vi.fn();
+		onEnter = vi.fn<() => void>();
+		onLeave = vi.fn<() => void>();
+		onDrop = vi.fn<(files: File[]) => void>();
 		action = dropzone(el, { onEnter, onLeave, onDrop });
 	});
 

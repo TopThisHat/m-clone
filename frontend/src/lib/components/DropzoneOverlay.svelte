@@ -1,9 +1,12 @@
 <script lang="ts">
+	import { fade } from 'svelte/transition';
 	let { visible = false, rejected = false }: { visible: boolean; rejected?: boolean } = $props();
 </script>
 
 {#if visible}
 	<div
+		in:fade={{ duration: 120 }}
+		out:fade={{ duration: 100 }}
 		class="absolute inset-0 z-40 flex items-center justify-center
 		       border-2 rounded-lg backdrop-blur-sm transition-colors
 		       {rejected
@@ -43,7 +46,7 @@
 						d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
 					/>
 				</svg>
-				<p class="text-sm font-medium text-gold">Drop to attach</p>
+				<p class="text-sm font-medium text-gold">Drop files to attach</p>
 			{/if}
 		</div>
 	</div>
