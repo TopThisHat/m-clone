@@ -30,11 +30,10 @@
   },
   "dependencies": {
     "@types/d3": "^7.4.3",
-    "@types/dompurify": "^3.0.5",
     "chart.js": "^4.5.1",
     "d3": "^7.9.0",
-    "dompurify": "^3.3.3",
     "html2pdf.js": "^0.10.3",
+    "isomorphic-dompurify": "^3.7.1",
     "marked": "^14.0.0",
     "papaparse": "^5.5.3",
     "xlsx": "^0.18.5"
