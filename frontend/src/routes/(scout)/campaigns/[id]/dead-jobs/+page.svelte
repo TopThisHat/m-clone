@@ -24,6 +24,7 @@
 
 	async function retryJob(jobId: string) {
 		retrying = new Set([...retrying, jobId]);
+		actionError = '';
 		try {
 			await jobsApi.retryJob(jobId);
 			deadJobs = deadJobs.filter((j) => j.id !== jobId);
@@ -36,12 +37,19 @@
 
 	async function retryAll() {
 		retryingAll = true;
+		actionError = '';
 		try {
-			await Promise.all(deadJobs.map((j) => jobsApi.retryJob(j.id)));
-			deadJobs = [];
+			const results = await Promise.allSettled(deadJobs.map((j) => jobsApi.retryJob(j.id)));
+			const failed = results.filter((r) => r.status === 'rejected').length;
+			const succeeded = results.length - failed;
+			if (failed > 0) {
+				actionError = `${succeeded} of ${results.length} jobs retried successfully, ${failed} failed`;
+				deadJobs = await jobsApi.listDeadJobs(campaignId);
+			} else {
+				deadJobs = [];
+			}
 		} catch (err: unknown) {
-			actionError = err instanceof Error ? err.message : 'Some retries failed';
-			deadJobs = await jobsApi.listDeadJobs(campaignId);
+			actionError = err instanceof Error ? err.message : 'Retry failed';
 		} finally {
 			retryingAll = false;
 		}

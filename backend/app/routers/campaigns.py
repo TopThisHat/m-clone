@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -28,6 +29,8 @@ from app.models.campaign import (
     CompareRequest,
     ComparisonOut,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 
@@ -155,7 +158,7 @@ async def get_campaign_status_history(
     user: dict[str, Any] = Depends(get_current_user),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
-) -> list[dict]:
+) -> list[CampaignStatusAuditOut]:
     """Return the status audit trail for a campaign, newest first."""
     try:
         campaign = await db_get_campaign(campaign_id)

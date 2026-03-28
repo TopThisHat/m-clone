@@ -294,7 +294,7 @@ async def bulk_retry_dead_jobs(campaign_id: str, user: dict[str, Any] = Depends(
                 if await db_retry_dead_job(str(job["id"])):
                     retried += 1
             except Exception:
-                pass
+                logger.warning("Failed to retry dead job %s in campaign %s", job["id"], campaign_id, exc_info=True)
         logger.info("Campaign %s: bulk-retried %d/%d dead jobs", campaign_id, retried, len(dead_jobs))
         return {"retried": retried}
     except DatabaseNotConfigured:

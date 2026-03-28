@@ -6,6 +6,7 @@
 	let open = $state(false);
 	let toggleBtnEl = $state<HTMLButtonElement | null>(null);
 	let dropdownEl = $state<HTMLDivElement | null>(null);
+	let actionError = $state('');
 
 	onMount(() => {
 		notifications.startPolling();
@@ -13,13 +14,23 @@
 	});
 
 	async function handleMarkRead(id: string) {
-		await markRead(id);
-		notifications.markOneRead(id);
+		actionError = '';
+		try {
+			await markRead(id);
+			notifications.markOneRead(id);
+		} catch (err: unknown) {
+			actionError = err instanceof Error ? err.message : 'Failed to mark as read';
+		}
 	}
 
 	async function handleMarkAll() {
-		await markAllRead();
-		notifications.markAllRead();
+		actionError = '';
+		try {
+			await markAllRead();
+			notifications.markAllRead();
+		} catch (err: unknown) {
+			actionError = err instanceof Error ? err.message : 'Failed to mark all as read';
+		}
 	}
 
 	function toggle() {
@@ -113,6 +124,13 @@
 					</button>
 				{/if}
 			</div>
+
+			{#if actionError}
+				<div class="px-4 py-2 bg-red-950 text-red-300 text-xs flex items-center justify-between" role="alert">
+					<span>{actionError}</span>
+					<button onclick={() => (actionError = '')} class="text-red-400 hover:text-red-200 ml-2" aria-label="Dismiss error">✕</button>
+				</div>
+			{/if}
 
 			<div class="max-h-72 overflow-y-auto divide-y divide-navy-800">
 				{#each recentNotifs as notif (notif.id)}

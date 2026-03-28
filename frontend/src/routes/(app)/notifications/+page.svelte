@@ -3,18 +3,30 @@
 	import { notifications, unreadCount } from '$lib/stores/notifStore';
 	import { markRead, markAllRead } from '$lib/api/notifications';
 
+	let actionError = $state('');
+
 	onMount(() => {
 		notifications.refresh();
 	});
 
 	async function handleMarkRead(id: string) {
-		await markRead(id);
-		notifications.markOneRead(id);
+		actionError = '';
+		try {
+			await markRead(id);
+			notifications.markOneRead(id);
+		} catch (err: unknown) {
+			actionError = err instanceof Error ? err.message : 'Failed to mark as read';
+		}
 	}
 
 	async function handleMarkAll() {
-		await markAllRead();
-		notifications.markAllRead();
+		actionError = '';
+		try {
+			await markAllRead();
+			notifications.markAllRead();
+		} catch (err: unknown) {
+			actionError = err instanceof Error ? err.message : 'Failed to mark all as read';
+		}
 	}
 </script>
 
@@ -34,6 +46,13 @@
 			</button>
 		{/if}
 	</div>
+
+	{#if actionError}
+		<div class="bg-red-950 border border-red-700 rounded-xl px-4 py-3 text-red-300 text-sm mb-4 flex items-center justify-between" role="alert">
+			<span>{actionError}</span>
+			<button onclick={() => (actionError = '')} class="text-red-400 hover:text-red-200 min-w-[44px] min-h-[44px] flex items-center justify-center" aria-label="Dismiss error">✕</button>
+		</div>
+	{/if}
 
 	<div class="divide-y divide-navy-800 bg-navy-900 border border-navy-700 rounded-xl overflow-hidden">
 		{#each $notifications as notif (notif.id)}

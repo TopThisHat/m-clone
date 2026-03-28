@@ -68,11 +68,11 @@ async def db_list_notifications(recipient_sid: str, limit: int = 50) -> list[dic
     return result
 
 
-async def db_mark_notification_read(notification_id: str) -> bool:
+async def db_mark_notification_read(notification_id: str, recipient_sid: str) -> bool:
     async with _acquire() as conn:
         result = await conn.execute(
-            "UPDATE playbook.notifications SET read = TRUE WHERE id = $1::uuid",
-            notification_id,
+            "UPDATE playbook.notifications SET read = TRUE WHERE id = $1::uuid AND recipient_sid = $2",
+            notification_id, recipient_sid,
         )
     return result.endswith("1")
 

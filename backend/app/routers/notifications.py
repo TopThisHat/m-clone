@@ -30,7 +30,7 @@ async def list_notifications(user: dict[str, Any] = Depends(get_current_user)):
 @router.patch("/{notification_id}/read")
 async def mark_read(notification_id: str, user: dict[str, Any] = Depends(get_current_user)):
     try:
-        ok = await db_mark_notification_read(notification_id)
+        ok = await db_mark_notification_read(notification_id, user["sub"])
         if not ok:
             raise HTTPException(status_code=404, detail="Notification not found")
         return {"ok": True}

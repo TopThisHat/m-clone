@@ -354,7 +354,7 @@ class ImportAttributeResult(BaseModel):
 class CompareRequest(BaseModel):
     """Request body for POST /api/campaigns/{id}/compare."""
 
-    entity_ids: list[str]
+    entity_ids: list[str] = Field(min_length=2, max_length=5)
 
 
 class ComparisonEntityInfo(BaseModel):
