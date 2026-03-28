@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { startResearch, cancelResearch } from '$lib/api/research';
 	import {
@@ -40,11 +40,17 @@
 	// Reset local display state on any session transition (null, A→B, new research)
 	// Intentional imperative reset — not derivable, these states have independent lifecycles
 	// docSessionKey is NOT cleared here — that's handled by newResearch() and startResearch()
+	// NOTE: untrack is required here because we READ `documents` and `fileInput` only to
+	// perform cleanup, and then WRITE to them. Without untrack, Svelte 5 registers them
+	// as dependencies — and since `documents = []` creates a new array reference each time,
+	// the effect re-triggers itself infinitely ("maximum depth exceeded").
 	$effect(() => {
-		$activeSessionId; // track any change
-		revokePreviewUrls(documents);
-		documents = [];
-		if (fileInput) fileInput.value = '';
+		$activeSessionId; // track — this is the ONLY intended dependency
+		untrack(() => {
+			revokePreviewUrls(documents);
+			documents = [];
+			if (fileInput) fileInput.value = '';
+		});
 	});
 
 	let srAnnouncement = $state('');
