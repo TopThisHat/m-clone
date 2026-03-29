@@ -57,38 +57,6 @@ async def db_assign_attribute_to_campaign(
     return _ca_row_to_dict(row)
 
 
-async def db_bulk_assign_attributes(
-    campaign_id: str,
-    assignments: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Bulk assign attributes to a campaign.
-
-    Each item in assignments should have: attribute_id, and optionally
-    weight_override and display_order.
-    """
-    results: list[dict[str, Any]] = []
-    async with _acquire() as conn:
-        async with conn.transaction():
-            for item in assignments:
-                row = await conn.fetchrow(
-                    """
-                    INSERT INTO playbook.campaign_attributes
-                        (campaign_id, attribute_id, weight_override, display_order)
-                    VALUES ($1::uuid, $2::uuid, $3, $4)
-                    ON CONFLICT (campaign_id, attribute_id) DO UPDATE
-                        SET weight_override = EXCLUDED.weight_override,
-                            display_order = EXCLUDED.display_order
-                    RETURNING *
-                    """,
-                    campaign_id,
-                    item["attribute_id"],
-                    item.get("weight_override"),
-                    item.get("display_order", 0),
-                )
-                results.append(_ca_row_to_dict(row))
-    return results
-
-
 async def db_update_campaign_attribute(
     campaign_id: str,
     attribute_id: str,

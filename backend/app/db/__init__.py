@@ -47,7 +47,6 @@ from .teams import (
     db_get_session_mentionable_users as db_get_session_mentionable_users,
     db_pin_session as db_pin_session,
     db_unpin_session as db_unpin_session,
-    db_get_pinned_sessions as db_get_pinned_sessions,
     db_list_team_member_sids as db_list_team_member_sids,
     db_is_team_member as db_is_team_member,
     db_record_activity as db_record_activity,
@@ -128,13 +127,6 @@ from .entities import (
     db_unassign_entities_from_campaign as db_unassign_entities_from_campaign,
 )
 
-# ── External IDs (lookup/find) ───────────────────────────────────────────────
-from .external_ids import (
-    db_find_entity_by_external_id as db_find_entity_by_external_id,
-    db_find_entities_by_external_ids as db_find_entities_by_external_ids,
-    db_find_entity_by_gwm_id as db_find_entity_by_gwm_id,
-)
-
 # ── Attributes ────────────────────────────────────────────────────────────────
 from .attributes import (
     db_create_attribute as db_create_attribute,
@@ -147,7 +139,6 @@ from .attributes import (
 
 # ── Validation ────────────────────────────────────────────────────────────────
 from .validation import (
-    db_create_validation_job as db_create_validation_job,
     db_create_and_enqueue_validation_job as db_create_and_enqueue_validation_job,
     db_list_validation_jobs as db_list_validation_jobs,
     db_get_validation_job as db_get_validation_job,
@@ -178,7 +169,6 @@ from .knowledge import (
 from .knowledge_graph import (
     db_find_or_create_entity as db_find_or_create_entity,
     db_find_similar_entities as db_find_similar_entities,
-    db_merge_kg_entities as db_merge_kg_entities,
     db_upsert_relationship as db_upsert_relationship,
     db_list_kg_entities as db_list_kg_entities,
     db_get_kg_entity as db_get_kg_entity,
@@ -234,7 +224,6 @@ from .programs import (
     db_assign_campaign_to_program as db_assign_campaign_to_program,
     db_unassign_campaign_from_program as db_unassign_campaign_from_program,
     db_list_program_campaigns as db_list_program_campaigns,
-    db_get_campaign_program as db_get_campaign_program,
 )
 
 # ── Scores ───────────────────────────────────────────────────────────────────
@@ -259,14 +248,12 @@ from .matrix import (
     db_get_matrix_data as db_get_matrix_data,
     db_upsert_cell_value as db_upsert_cell_value,
     db_delete_cell_value as db_delete_cell_value,
-    db_get_cell_value as db_get_cell_value,
     db_bulk_upsert_cells as db_bulk_upsert_cells,
 )
 
 # ── Campaign-Attribute Assignments ────────────────────────────────────────────
 from .campaign_attributes import (
     db_assign_attribute_to_campaign as db_assign_attribute_to_campaign,
-    db_bulk_assign_attributes as db_bulk_assign_attributes,
     db_update_campaign_attribute as db_update_campaign_attribute,
     db_unassign_attribute_from_campaign as db_unassign_attribute_from_campaign,
     db_get_campaign_attribute as db_get_campaign_attribute,

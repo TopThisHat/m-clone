@@ -250,25 +250,6 @@ async def db_unpin_session(sid: str, session_id: str, team_id: str) -> bool:
     return result.endswith("1")
 
 
-async def db_get_pinned_sessions(sid: str, team_id: str) -> list[dict[str, Any]]:
-    async with _acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT s.id, s.title, s.query, s.created_at, s.updated_at,
-                   COALESCE(s.is_public, FALSE) AS is_public,
-                   COALESCE(s.usage_tokens, 0) AS usage_tokens,
-                   s.owner_sid, COALESCE(s.visibility, 'private') AS visibility,
-                   ps.pinned_at
-            FROM playbook.pinned_sessions ps
-            JOIN playbook.sessions s ON ps.session_id = s.id
-            WHERE ps.sid = $1 AND ps.team_id = $2::uuid
-            ORDER BY ps.pinned_at DESC
-            """,
-            sid, team_id,
-        )
-    return [_row_to_dict(r) for r in rows]
-
-
 # ── Team membership helpers ────────────────────────────────────────────────────
 
 async def db_list_team_member_sids(team_id: str) -> list[str]:

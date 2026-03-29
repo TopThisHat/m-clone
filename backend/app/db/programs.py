@@ -211,16 +211,3 @@ async def db_list_program_campaigns(program_id: str) -> list[dict[str, Any]]:
     return results
 
 
-async def db_get_campaign_program(campaign_id: str) -> dict[str, Any] | None:
-    """Get the program a campaign belongs to, or None."""
-    async with _acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT p.*
-            FROM playbook.programs p
-            JOIN playbook.program_campaigns pc ON pc.program_id = p.id
-            WHERE pc.campaign_id = $1::uuid
-            """,
-            campaign_id,
-        )
-    return _program_row_to_dict(row) if row else None

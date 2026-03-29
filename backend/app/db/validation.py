@@ -68,24 +68,6 @@ def _attribute_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     return d
 
 
-async def db_create_validation_job(campaign_id: str, triggered_by: str,
-                                   triggered_sid: str | None = None,
-                                   entity_filter: list[str] | None = None,
-                                   attribute_filter: list[str] | None = None) -> dict[str, Any]:
-    async with _acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO playbook.validation_jobs
-                (campaign_id, triggered_by, triggered_sid, entity_filter, attribute_filter)
-            VALUES ($1::uuid, $2, $3, $4::uuid[], $5::uuid[])
-            RETURNING *
-            """,
-            campaign_id, triggered_by, triggered_sid,
-            entity_filter or None, attribute_filter or None,
-        )
-    return _job_vrow_to_dict(row)
-
-
 async def db_create_and_enqueue_validation_job(
     campaign_id: str,
     triggered_by: str,

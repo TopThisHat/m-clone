@@ -193,25 +193,6 @@ async def db_delete_cell_value(
     return result.endswith("1")
 
 
-async def db_get_cell_value(
-    campaign_id: str,
-    entity_id: str,
-    attribute_id: str,
-) -> dict[str, Any] | None:
-    """Get a single cell value."""
-    async with _acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT * FROM playbook.entity_attribute_assignments
-            WHERE campaign_id = $1::uuid
-              AND entity_id = $2::uuid
-              AND attribute_id = $3::uuid
-            """,
-            campaign_id, entity_id, attribute_id,
-        )
-    return _assignment_row_to_dict(row) if row else None
-
-
 async def db_bulk_upsert_cells(
     campaign_id: str,
     cells: list[dict[str, Any]],

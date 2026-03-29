@@ -158,45 +158,6 @@ async def db_find_similar_entities(
     return [_kg_entity_to_dict(r) for r in rows]
 
 
-async def db_merge_kg_entities(keep_id: str, merge_id: str) -> None:
-    """
-    Merge entity merge_id into keep_id:
-    - Move all relationships from merge_id to keep_id
-    - Merge aliases (include merge_id's name as alias)
-    - Delete merge_id
-    """
-    async with _acquire() as conn:
-        async with conn.transaction():
-            merge_row = await conn.fetchrow(
-                "SELECT name, aliases FROM playbook.kg_entities WHERE id = $1::uuid",
-                merge_id,
-            )
-            if merge_row is None:
-                return
-
-            await conn.execute(
-                "UPDATE playbook.kg_relationships SET subject_id = $1::uuid WHERE subject_id = $2::uuid",
-                keep_id, merge_id,
-            )
-            await conn.execute(
-                "UPDATE playbook.kg_relationships SET object_id = $1::uuid WHERE object_id = $2::uuid",
-                keep_id, merge_id,
-            )
-
-            merge_aliases = list(merge_row["aliases"] or [])
-            merge_aliases.append(merge_row["name"])
-            await conn.execute(
-                """
-                UPDATE playbook.kg_entities
-                SET aliases = (SELECT array_agg(DISTINCT a) FROM unnest(aliases || $1::text[]) AS a),
-                    updated_at = NOW()
-                WHERE id = $2::uuid
-                """,
-                merge_aliases, keep_id,
-            )
-            await conn.execute("DELETE FROM playbook.kg_entities WHERE id = $1::uuid", merge_id)
-
-
 async def db_update_kg_entity(
     entity_id: str,
     patch: dict[str, Any],

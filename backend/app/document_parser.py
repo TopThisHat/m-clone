@@ -315,7 +315,6 @@ SUPPORTED_EXTENSIONS = {
 }
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
-TABLE_EXTENSIONS = {".xlsx", ".xls", ".csv", ".tsv"}
 
 
 def get_extension(filename: str) -> str:

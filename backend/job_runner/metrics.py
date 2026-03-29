@@ -10,15 +10,10 @@ from aiohttp import web
 
 _start_time = time.time()
 _counters: dict[str, int] = {"jobs_dispatched": 0, "jobs_reclaimed": 0}
-_gauges: dict[str, int] = {}
 
 
 def inc(key: str, n: int = 1) -> None:
     _counters[key] = _counters.get(key, 0) + n
-
-
-def set_gauge(key: str, v: int) -> None:
-    _gauges[key] = v
 
 
 async def _handle_health(request: web.Request) -> web.Response:
@@ -27,7 +22,7 @@ async def _handle_health(request: web.Request) -> web.Response:
 
 
 async def _handle_metrics(request: web.Request) -> web.Response:
-    data = {**_counters, **_gauges, "uptime_seconds": int(time.time() - _start_time)}
+    data = {**_counters, "uptime_seconds": int(time.time() - _start_time)}
     return web.Response(text=json.dumps(data), content_type="application/json")
 
 

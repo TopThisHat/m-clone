@@ -1,9 +1,5 @@
-import { writable, derived } from 'svelte/store';
-import { marked } from 'marked';
+import { writable } from 'svelte/store';
 import type { Comment } from '$lib/api/comments';
-
-// Configure marked for safe rendering
-marked.setOptions({ gfm: true, breaks: true });
 
 export interface ChatSource {
 	url: string;
@@ -47,7 +43,6 @@ export const researchPhase = writable<ResearchPhase>(null);
 export const chatMessages = writable<ChatMessage[]>([]);
 export const reportMarkdown = writable<string>('');
 export const isStreaming = writable<boolean>(false);
-export const streamingText = writable<string>('');
 export const errorMessage = writable<string | null>(null);
 export const messageHistory = writable<unknown[] | null>(null);
 
@@ -56,10 +51,6 @@ export const chartData = writable<ChartPayload[]>([]);
 export const conflictWarnings = writable<string[]>([]);
 export const memoryContext = writable<string>('');
 export const pendingClarification = writable<ClarificationData | null>(null);
-
-export const reportHtml = derived(reportMarkdown, ($md) =>
-	$md ? (marked.parse($md) as string) : ''
-);
 
 // Shared comment state so HighlightableReport can read what CommentThread loaded
 export const sessionComments = writable<Comment[]>([]);

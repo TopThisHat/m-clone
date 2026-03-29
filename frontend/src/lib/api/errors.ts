@@ -2,7 +2,7 @@
  * Converts an HTTP response into a user-friendly error message.
  * Never leaks raw stack traces or internal keys.
  */
-export async function friendlyError(res: Response, fallback = 'Something went wrong — please try again.'): Promise<string> {
+async function friendlyError(res: Response, fallback = 'Something went wrong — please try again.'): Promise<string> {
 	switch (res.status) {
 		case 400: {
 			const body = await res.json().catch(() => ({}));

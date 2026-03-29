@@ -1,13 +1,7 @@
 from __future__ import annotations
 import asyncio
-import json
 import logging
-import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from app.dependencies import AgentDeps
 
 logger = logging.getLogger(__name__)
 # No TTL — clarifications wait indefinitely until answered or stream closes.
@@ -72,52 +66,3 @@ class ClarificationStore:
 
 
 clarification_store = ClarificationStore()
-
-
-async def clarify_within_tool(
-    deps: "AgentDeps",
-    question: str,
-    context: str | None = None,
-    options: list[str] | None = None,
-) -> str:
-    """
-    Call this from inside any tool to pause and ask the user a question.
-
-    The streaming layer polls deps.tool_sse_queue and will emit the
-    clarification_needed SSE within ~100ms. The tool then blocks indefinitely
-    until the user responds via POST /api/research/clarify/{id}.
-    If the SSE stream closes before the user answers, the stream_research
-    finally block calls clarification_store.cancel_session() and this
-    await will resolve with a cancellation message so the tool can exit cleanly.
-
-    Returns the user's answer string, or a fallback if the stream was closed.
-    """
-    clarification_id = str(uuid.uuid4())
-    future = clarification_store.register(clarification_id, question, context, options)
-    deps.active_clarification_ids.append(clarification_id)
-
-    # Build the SSE string and put it in the outbox for the streaming layer to emit
-    sse_payload = {
-        "clarification_id": clarification_id,
-        "question": question,
-        "context": context,
-        "options": options or [],
-    }
-    sse_string = f"event: clarification_needed\ndata: {json.dumps(sse_payload)}\n\n"
-    await deps.tool_sse_queue.put(sse_string)
-
-    # Wait indefinitely — no timeout
-    answer = await future
-
-    if answer.startswith("__CANCELLED__:"):
-        reason = answer.split(":", 1)[1]
-        return f"No user answer ({reason}) — proceed with best judgment"
-
-    # Emit clarification_answered so the frontend card turns green immediately
-    answered_sse = (
-        f"event: clarification_answered\n"
-        f"data: {json.dumps({'clarification_id': clarification_id, 'answer': answer})}\n\n"
-    )
-    await deps.tool_sse_queue.put(answered_sse)
-
-    return answer
