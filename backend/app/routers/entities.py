@@ -10,6 +10,7 @@ from app.db import (
     DuplicateLabelError,
     db_assign_entities_to_campaign,
     db_bulk_create_entities,
+    db_bulk_delete_entities,
     db_create_entity,
     db_delete_entity,
     db_delete_entity_metadata,
@@ -44,6 +45,10 @@ from app.models.campaign import (
 
 class ImportLibraryBody(BaseModel):
     ids: list[str] = Field(min_length=1)
+
+
+class BulkDeleteBody(BaseModel):
+    ids: list[str] = Field(default_factory=list)
 
 router = APIRouter(prefix="/api/campaigns", tags=["entities"])
 
@@ -90,7 +95,7 @@ async def list_entities(
     limit: int = Query(default=50, ge=0, le=10000),
     offset: int = Query(default=0, ge=0),
     search: str | None = Query(default=None),
-    sort_by: str = Query(default="created_at", pattern="^(name|label|created_at|score)$"),
+    sort_by: str = Query(default="created_at", pattern="^(name|label|gwm_id|created_at|score)$"),
     order: str = Query(default="asc", pattern="^(asc|desc)$"),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
@@ -222,6 +227,20 @@ async def update_entity(campaign_id: str, entity_id: str, body: EntityUpdate, us
     if not updated:
         raise HTTPException(status_code=404, detail="Entity not found")
     return updated
+
+
+# ── Bulk delete entities ─────────────────────────────────────────────────────
+
+@router.delete("/{campaign_id}/entities/bulk", status_code=200)
+async def bulk_delete_entities(campaign_id: str, body: BulkDeleteBody, user: dict[str, Any] = Depends(get_current_user)):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    if not body.ids:
+        return {"deleted": 0}
+    try:
+        deleted = await db_bulk_delete_entities(campaign_id, body.ids)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    return {"deleted": deleted}
 
 
 # ── Delete entity ────────────────────────────────────────────────────────────

@@ -22,6 +22,10 @@ export interface BulkEntityResult {
 	skipped: number;
 }
 
+export interface BulkDeleteResult {
+	deleted: number;
+}
+
 export interface PaginatedResponse<T> {
 	items: T[];
 	total: number;
@@ -32,12 +36,14 @@ export interface PaginatedResponse<T> {
 export const entitiesApi = {
 	list: (
 		campaignId: string,
-		opts?: { limit?: number; offset?: number; search?: string }
+		opts?: { limit?: number; offset?: number; search?: string; sort_by?: string; order?: string }
 	): Promise<PaginatedResponse<Entity>> => {
 		const params = new URLSearchParams();
 		if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
 		if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
 		if (opts?.search) params.set('search', opts.search);
+		if (opts?.sort_by) params.set('sort_by', opts.sort_by);
+		if (opts?.order) params.set('order', opts.order);
 		const qs = params.toString();
 		return apiFetch(`/api/campaigns/${campaignId}/entities${qs ? `?${qs}` : ''}`);
 	},
@@ -65,6 +71,13 @@ export const entitiesApi = {
 
 	delete: (campaignId: string, entityId: string): Promise<null> =>
 		apiFetch(`/api/campaigns/${campaignId}/entities/${entityId}`, { method: 'DELETE' }),
+
+	bulkDelete: (campaignId: string, ids: string[]): Promise<BulkDeleteResult> =>
+		apiFetch(`/api/campaigns/${campaignId}/entities/bulk`, {
+			method: 'DELETE',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ids }),
+		}),
 
 	importFrom: (campaignId: string, sourceCampaignId: string): Promise<BulkEntityResult> =>
 		apiFetch(`/api/campaigns/${campaignId}/entities/import`, {

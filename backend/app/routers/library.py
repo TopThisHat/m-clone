@@ -2,13 +2,15 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
 from app.db import (
     DatabaseNotConfigured,
     db_bulk_create_attribute_library,
     db_bulk_create_entity_library,
+    db_bulk_delete_library_attributes,
+    db_bulk_delete_library_entities,
     db_create_attribute_library,
     db_create_entity_library,
     db_delete_attribute_library,
@@ -77,6 +79,10 @@ class BulkLibraryAttributeBody(BaseModel):
     team_id: str | None = None
 
 
+class BulkDeleteBody(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
 # ── Entity library endpoints ───────────────────────────────────────────────────
 
 @router.get("/entities")
@@ -133,6 +139,17 @@ async def update_library_entity(item_id: str, body: LibraryEntityUpdate, user: d
     if not updated:
         raise HTTPException(status_code=404, detail="Entity not found")
     return updated
+
+
+@router.delete("/entities/bulk", status_code=200)
+async def bulk_delete_library_entities(body: BulkDeleteBody, user: dict[str, Any] = Depends(get_current_user)):
+    if not body.ids:
+        return {"deleted": 0}
+    try:
+        deleted = await db_bulk_delete_library_entities(user["sub"], body.ids)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    return {"deleted": deleted}
 
 
 @router.delete("/entities/{item_id}", status_code=204)
@@ -201,6 +218,17 @@ async def update_library_attribute(item_id: str, body: LibraryAttributeUpdate, u
     if not updated:
         raise HTTPException(status_code=404, detail="Attribute not found")
     return updated
+
+
+@router.delete("/attributes/bulk", status_code=200)
+async def bulk_delete_library_attributes(body: BulkDeleteBody, user: dict[str, Any] = Depends(get_current_user)):
+    if not body.ids:
+        return {"deleted": 0}
+    try:
+        deleted = await db_bulk_delete_library_attributes(user["sub"], body.ids)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    return {"deleted": deleted}
 
 
 @router.delete("/attributes/{item_id}", status_code=204)

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { libraryEntitiesApi, type LibraryEntity, type LibraryEntityCreate } from '$lib/api/library';
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
 	import CSVUpload from '$lib/components/CSVUpload.svelte';
@@ -58,8 +59,45 @@
 	let selectedIds = $state<Set<string>>(new Set());
 	let bulkDeleting = $state(false);
 
+	let allSelected = $derived(
+		displayedEntities().length > 0 && selectedIds.size === displayedEntities().length
+	);
+	let someSelected = $derived(
+		selectedIds.size > 0 && selectedIds.size < displayedEntities().length
+	);
+
 	// Export
 	let exporting = $state(false);
+
+	// Focus refs for panel management
+	let addBtnEl = $state<HTMLButtonElement | undefined>(undefined);
+	let uploadBtnEl = $state<HTMLButtonElement | undefined>(undefined);
+
+	async function openAddPanel() {
+		showAddForm = true;
+		showCSV = false;
+		await tick();
+		document.getElementById('lib-ent-label')?.focus();
+	}
+
+	async function closeAddPanel() {
+		showAddForm = false;
+		await tick();
+		addBtnEl?.focus();
+	}
+
+	async function openUploadPanel() {
+		showCSV = true;
+		showAddForm = false;
+		await tick();
+		document.getElementById('lib-ent-upload-close')?.focus();
+	}
+
+	async function closeUploadPanel() {
+		showCSV = false;
+		await tick();
+		uploadBtnEl?.focus();
+	}
 
 	async function loadEntities(teamId: string | null, search: string, page: number, size: number, sort: string = 'created_at', dir: 'asc' | 'desc' = 'asc') {
 		loading = true;
@@ -134,6 +172,8 @@
 			newDesc = '';
 			showAddForm = false;
 			loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize, sortBy, sortDir);
+			await tick();
+			addBtnEl?.focus();
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to add entity';
 		} finally {
@@ -141,13 +181,18 @@
 		}
 	}
 
-	function startEdit(entity: LibraryEntity) {
+	async function startEdit(entity: LibraryEntity) {
 		editingId = entity.id;
 		editForm = { label: entity.label, gwm_id: entity.gwm_id ?? '', description: entity.description ?? '' };
+		await tick();
+		document.getElementById(`lib-edit-label-${entity.id}`)?.focus();
 	}
 
-	function cancelEdit() {
+	async function cancelEdit() {
+		const id = editingId;
 		editingId = null;
+		await tick();
+		document.getElementById(`lib-ent-edit-${id}`)?.focus();
 	}
 
 	function handleEditKeydown(e: KeyboardEvent, entity: LibraryEntity) {
@@ -170,6 +215,8 @@
 			});
 			entities = entities.map((e) => (e.id === entity.id ? updated : e));
 			editingId = null;
+			await tick();
+			document.getElementById(`lib-ent-edit-${entity.id}`)?.focus();
 		} catch (err: unknown) {
 			actionError = err instanceof Error ? err.message : 'Failed to save';
 		} finally {
@@ -207,7 +254,7 @@
 		if (!confirm(`Delete ${selectedIds.size} selected entities from the library?`)) return;
 		bulkDeleting = true;
 		try {
-			await Promise.all([...selectedIds].map((id) => libraryEntitiesApi.delete(id)));
+			await libraryEntitiesApi.bulkDelete([...selectedIds]);
 			selectedIds = new Set();
 			loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize, sortBy, sortDir);
 		} catch (err: unknown) {
@@ -372,16 +419,22 @@
 				disabled={exporting}
 				class="bg-navy-700 border border-navy-600 text-slate-300 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg hover:bg-navy-600 disabled:opacity-50 transition-colors"
 			>
-				{exporting ? 'Export…' : 'CSV'}
+				{exporting ? 'Exporting…' : 'Export CSV'}
 			</button>
 			<button
-				onclick={() => { showCSV = !showCSV; showAddForm = false; }}
-				class="bg-navy-700 border border-navy-600 text-slate-300 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg hover:bg-navy-600 transition-colors"
+				bind:this={uploadBtnEl}
+				onclick={() => (showCSV ? closeUploadPanel() : openUploadPanel())}
+				aria-expanded={showCSV}
+				class={showCSV
+					? 'bg-gold/10 border border-gold/40 text-gold font-medium px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs sm:text-sm'
+					: 'bg-navy-700 border border-navy-600 text-slate-300 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg hover:bg-navy-600 transition-colors'}
 			>
 				Upload
 			</button>
 			<button
-				onclick={() => { showAddForm = !showAddForm; showCSV = false; }}
+				bind:this={addBtnEl}
+				onclick={() => (showAddForm ? closeAddPanel() : openAddPanel())}
+				aria-expanded={showAddForm}
 				class="bg-gold text-navy font-semibold px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg hover:bg-gold-light transition-colors"
 			>
 				+ Add
@@ -391,25 +444,28 @@
 
 	<!-- CSV Upload Section -->
 	{#if showCSV}
-		<div class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
+		<section aria-label="Upload CSV or Excel file" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
 			<div class="flex items-center justify-between mb-4">
 				<h3 class="font-medium text-slate-200">Upload CSV / Excel to Library</h3>
-				<button onclick={() => (showCSV = false)} class="text-slate-500 hover:text-slate-300 text-xs">✕ Close</button>
+				<button id="lib-ent-upload-close" onclick={closeUploadPanel} class="text-slate-500 hover:text-slate-300 text-xs" aria-label="Close upload panel">Close</button>
 			</div>
 			<CSVUpload
 				onBulkCreate={libraryBulkCreate}
 				onUploaded={async () => {
-					showCSV = false;
+					await closeUploadPanel();
 					loadEntities($scoutTeam, debouncedSearch, currentPage, pageSize, sortBy, sortDir);
 				}}
 			/>
-		</div>
+		</section>
 	{/if}
 
 	<!-- Add Form Section -->
 	{#if showAddForm}
 		<form onsubmit={addEntity} class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
-			<h3 class="font-medium text-slate-200 mb-4">Add Entity to Library</h3>
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="font-medium text-slate-200">Add Entity to Library</h3>
+				<button type="button" onclick={closeAddPanel} class="text-slate-500 hover:text-slate-300 text-xs" aria-label="Close add entity panel">Close</button>
+			</div>
 			<div class="grid grid-cols-3 gap-4 mb-4">
 				<div>
 					<label for="lib-ent-label" class="block text-xs text-slate-400 mb-1">Label *</label>
@@ -429,7 +485,7 @@
 					class="bg-gold text-navy font-semibold px-4 py-1.5 rounded-lg text-sm hover:bg-gold-light disabled:opacity-50">
 					{adding ? 'Adding…' : 'Add'}
 				</button>
-				<button type="button" onclick={() => (showAddForm = false)}
+				<button type="button" onclick={closeAddPanel}
 					class="bg-navy-700 text-slate-300 px-4 py-1.5 rounded-lg text-sm border border-navy-600">
 					Cancel
 				</button>
@@ -439,7 +495,9 @@
 
 	<!-- Error -->
 	{#if error}
-		<p class="text-red-400 mb-4 text-sm">{error}</p>
+		<div class="bg-red-950 border border-red-700 rounded-xl px-4 py-3 text-red-300 text-sm mb-4" role="alert">
+			<p>{error}</p>
+		</div>
 	{/if}
 
 	<!-- Loading / Empty State -->
@@ -456,11 +514,22 @@
 		<div class="text-center py-12 text-slate-500">
 			{#if debouncedSearch}
 				<p>No entities match "{debouncedSearch}".</p>
+				<button onclick={() => { searchQuery = ''; debouncedSearch = ''; }} class="text-gold/70 hover:text-gold text-sm mt-2 underline">
+					Clear search
+				</button>
 			{:else if gwmIdFilter !== 'all'}
 				<p>No entities {gwmIdFilter === 'has' ? 'with GWM ID' : 'without GWM ID'}.</p>
+				<button onclick={() => (gwmIdFilter = 'all')} class="text-gold/70 hover:text-gold text-sm mt-2 underline">
+					Show all
+				</button>
 			{:else}
-				<p>No entities in the library yet. Add them manually or upload a CSV.</p>
-				<p class="text-sm mt-2">Entities added here can be imported into any campaign.</p>
+				<p class="text-slate-400 font-medium mb-2">No entities in the library yet.</p>
+				<p class="text-sm mb-4">Items added here can be imported into any campaign.</p>
+				<p class="text-sm">Add them manually or upload a CSV to get started.</p>
+				<div class="flex items-center justify-center gap-3 mt-5">
+					<button onclick={openAddPanel} class="btn-gold text-sm py-1.5">+ Add Entity</button>
+					<button onclick={openUploadPanel} class="btn-secondary text-sm py-1.5">Upload CSV</button>
+				</div>
 			{/if}
 		</div>
 	{:else}
@@ -468,20 +537,21 @@
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
 			<div class="max-h-[50vh] sm:max-h-[60vh] lg:max-h-[70vh] overflow-auto">
 				<table class="w-full text-sm" aria-label="Entity library">
-					<thead class="sticky top-0 bg-navy-800 border-b border-navy-700">
+					<thead class="sticky top-0 bg-navy-800 border-b border-navy-700 z-10">
 						<tr class="text-slate-400">
 							<th scope="col" class="px-4 py-3 w-8">
 								<input type="checkbox"
-									checked={selectedIds.size === displayedEntities().length && displayedEntities().length > 0}
+									checked={allSelected}
+									indeterminate={someSelected}
 									onchange={toggleSelectAll}
 									class="accent-gold"
 									aria-label="Select all entities on this page" />
 							</th>
-							<th scope="col" class="text-left px-4 py-3 font-medium">Label</th>
-							<th scope="col" class="text-left px-4 py-3 font-medium hidden sm:table-cell">GWM ID</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium" aria-sort={sortBy === 'label' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>Label</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium hidden sm:table-cell" aria-sort={sortBy === 'gwm_id' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>GWM ID</th>
 							<th scope="col" class="text-left px-4 py-3 font-medium hidden md:table-cell">Description</th>
 							<th scope="col" class="text-left px-4 py-3 font-medium hidden lg:table-cell">Metadata</th>
-							<th scope="col" class="text-left px-4 py-3 font-medium hidden md:table-cell w-20">Created</th>
+							<th scope="col" class="text-left px-4 py-3 font-medium hidden md:table-cell w-20" aria-sort={sortBy === 'created_at' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>Created</th>
 							<th scope="col" class="px-4 py-3 w-24"><span class="sr-only">Actions</span></th>
 						</tr>
 					</thead>
@@ -535,10 +605,10 @@
 									</td>
 									<td class="px-4 py-3 text-slate-500 text-xs hidden md:table-cell">{formatDate(entity.created_at)}</td>
 									<td class="px-4 py-3 text-right whitespace-nowrap space-x-2">
-										<button onclick={() => startEdit(entity)} aria-label="Edit {entity.label}"
-											class="text-slate-500 hover:text-slate-300 text-xs">Edit</button>
+										<button id="lib-ent-edit-{entity.id}" onclick={() => startEdit(entity)} aria-label="Edit {entity.label}"
+											class="text-slate-500 hover:text-slate-300 text-xs py-1 px-2 min-h-[44px] inline-flex items-center">Edit</button>
 										<button onclick={() => deleteEntity(entity.id)} aria-label="Delete {entity.label}"
-											class="text-red-400/60 hover:text-red-400 text-xs">Delete</button>
+											class="text-red-400/60 hover:text-red-400 text-xs py-1 px-2 min-h-[44px] inline-flex items-center">Delete</button>
 									</td>
 								{/if}
 							</tr>

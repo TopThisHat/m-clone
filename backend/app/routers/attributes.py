@@ -10,6 +10,7 @@ from app.db import (
     DatabaseNotConfigured,
     db_assign_attribute_to_campaign,
     db_bulk_create_attributes,
+    db_bulk_delete_attributes,
     db_create_attribute,
     db_delete_attribute,
     db_get_attribute,
@@ -39,6 +40,10 @@ logger = logging.getLogger(__name__)
 
 class ImportLibraryBody(BaseModel):
     ids: list[str] = Field(min_length=1)
+
+
+class BulkDeleteBody(BaseModel):
+    ids: list[str] = Field(default_factory=list)
 
 
 class CampaignAttributeAssign(BaseModel):
@@ -91,11 +96,14 @@ async def list_attributes(
     offset: int = Query(default=0, ge=0),
     search: str | None = Query(default=None),
     category: str | None = Query(default=None),
+    sort_by: str = Query(default="created_at", pattern="^(label|weight|created_at)$"),
+    order: str = Query(default="asc", pattern="^(asc|desc)$"),
 ):
     await _get_owned_campaign(campaign_id, user["sub"])
     try:
         return await db_list_attributes(
             campaign_id, limit=limit, offset=offset, search=search, category=category,
+            sort_by=sort_by, order=order,
         )
     except DatabaseNotConfigured:
         raise _no_db()
@@ -220,6 +228,18 @@ async def import_attributes(campaign_id: str, body: ImportBody, user: dict[str, 
         )
     except DatabaseNotConfigured:
         raise _no_db()
+
+
+@router.delete("/{campaign_id}/attributes/bulk", status_code=200)
+async def bulk_delete_attributes(campaign_id: str, body: BulkDeleteBody, user: dict[str, Any] = Depends(get_current_user)):
+    await _get_owned_campaign(campaign_id, user["sub"])
+    if not body.ids:
+        return {"deleted": 0}
+    try:
+        deleted = await db_bulk_delete_attributes(campaign_id, body.ids)
+    except DatabaseNotConfigured:
+        raise _no_db()
+    return {"deleted": deleted}
 
 
 @router.delete("/{campaign_id}/attributes/{attribute_id}", status_code=204)

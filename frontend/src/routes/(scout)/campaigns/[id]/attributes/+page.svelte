@@ -1,10 +1,12 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { page } from '$app/state';
 	import { attributesApi, type Attribute } from '$lib/api/attributes';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
 	import { libraryAttributesApi, type LibraryAttribute } from '$lib/api/library';
 	import AttributeCSVUpload from '$lib/components/AttributeCSVUpload.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
+	import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
 
 	let campaignId = $derived(page.params.id as string);
 	let attributes = $state<Attribute[]>([]);
@@ -14,7 +16,7 @@
 	let totalCount = $state(0);
 
 	// Pagination & search
-	const pageSize = 50;
+	let pageSize = $state(50);
 	let currentPage = $state(0);
 	let searchQuery = $state('');
 	let debouncedSearch = $state('');
@@ -29,6 +31,35 @@
 		}, 300);
 		return () => clearTimeout(debounceTimer);
 	});
+
+	// Sorting
+	let sortBy = $state<'label' | 'weight' | 'created_at'>('created_at');
+	let sortDir = $state<'asc' | 'desc'>('asc');
+
+	function toggleSort(col: typeof sortBy) {
+		if (sortBy === col) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
+		else { sortBy = col; sortDir = 'asc'; }
+		currentPage = 0;
+	}
+
+	// Weight range filter (client-side over current page)
+	let minWeight = $state(0);
+	let maxWeight = $state(10);
+
+	function displayedAttributes() {
+		return attributes.filter(a => a.weight >= minWeight && a.weight <= maxWeight);
+	}
+
+	function getWeightColor(weight: number) {
+		if (weight < 0.5) return 'bg-slate-700';
+		if (weight < 1.5) return 'bg-slate-600';
+		if (weight < 2.5) return 'bg-slate-500';
+		if (weight < 3.5) return 'bg-slate-400';
+		return 'bg-slate-300';
+	}
+
+	// CSV export
+	let exporting = $state(false);
 
 	// Add form
 	let showAddForm = $state(false);
@@ -75,7 +106,7 @@
 		if (!confirm(`Delete ${selectedIds.size} selected attributes?`)) return;
 		bulkDeleting = true;
 		try {
-			await Promise.all([...selectedIds].map((id) => attributesApi.delete(campaignId, id)));
+			await attributesApi.bulkDelete(campaignId, [...selectedIds]);
 			selectedIds = new Set();
 			load();
 		} catch (err: unknown) {
@@ -92,6 +123,8 @@
 				limit: pageSize,
 				offset: currentPage * pageSize,
 				search: debouncedSearch || undefined,
+				sort_by: sortBy,
+				order: sortDir,
 			});
 			attributes = resp.items;
 			totalCount = resp.total;
@@ -103,11 +136,48 @@
 	}
 
 	$effect(() => {
-		// Reactive re-load when search or page changes (also handles initial load)
+		// Reactive re-load when search, page, or sort changes (also handles initial load)
 		const _s = debouncedSearch;
 		const _p = currentPage;
+		const _sort = sortBy;
+		const _dir = sortDir;
 		load();
 	});
+
+	async function exportCsv() {
+		exporting = true;
+		try {
+			const resp = await attributesApi.list(campaignId, {
+				limit: 0,
+				search: debouncedSearch || undefined,
+				sort_by: sortBy,
+				order: sortDir,
+			});
+			const rows = resp.items;
+			const headers = ['Label', 'Description', 'Weight'];
+			const csvLines = [
+				headers.map(h => `"${h}"`).join(','),
+				...rows.map(r => [
+					`"${r.label.replace(/"/g, '""')}"`,
+					`"${(r.description ?? '').replace(/"/g, '""')}"`,
+					r.weight.toFixed(2),
+				].join(','))
+			];
+			const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `attributes-${new Date().toISOString().split('T')[0]}.csv`;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			URL.revokeObjectURL(url);
+		} catch (err: unknown) {
+			actionError = err instanceof Error ? err.message : 'Failed to export';
+		} finally {
+			exporting = false;
+		}
+	}
 
 	async function openImport() {
 		showImport = true;
@@ -144,6 +214,40 @@
 		}
 	}
 
+	// Focus refs for panel management
+	let addBtnEl = $state<HTMLButtonElement | undefined>(undefined);
+	let uploadBtnEl = $state<HTMLButtonElement | undefined>(undefined);
+
+	async function openAddPanel() {
+		showAddForm = true;
+		showUpload = false;
+		showImport = false;
+		showLibrary = false;
+		await tick();
+		document.getElementById('attr-label')?.focus();
+	}
+
+	async function closeAddPanel() {
+		showAddForm = false;
+		await tick();
+		addBtnEl?.focus();
+	}
+
+	async function openUploadPanel() {
+		showUpload = true;
+		showAddForm = false;
+		showImport = false;
+		showLibrary = false;
+		await tick();
+		document.getElementById('camp-attr-upload-close')?.focus();
+	}
+
+	async function closeUploadPanel() {
+		showUpload = false;
+		await tick();
+		uploadBtnEl?.focus();
+	}
+
 	async function addAttribute(e: Event) {
 		e.preventDefault();
 		if (!newLabel.trim()) return;
@@ -159,6 +263,8 @@
 			newWeight = 1.0;
 			showAddForm = false;
 			load();
+			await tick();
+			addBtnEl?.focus();
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to add attribute';
 		} finally {
@@ -166,14 +272,18 @@
 		}
 	}
 
-	function startEdit(attr: Attribute) {
+	async function startEdit(attr: Attribute) {
 		editing[attr.id] = { ...attr, _orig: attr };
+		await tick();
+		document.getElementById(`edit-attr-label-${attr.id}`)?.focus();
 	}
 
-	function cancelEdit(id: string) {
+	async function cancelEdit(id: string) {
 		const e = { ...editing };
 		delete e[id];
 		editing = e;
+		await tick();
+		document.getElementById(`camp-attr-edit-${id}`)?.focus();
 	}
 
 	async function saveEdit(id: string) {
@@ -186,7 +296,11 @@
 				weight: e.weight,
 			});
 			attributes = attributes.map((a) => (a.id === id ? updated : a));
-			cancelEdit(id);
+			const next = { ...editing };
+			delete next[id];
+			editing = next;
+			await tick();
+			document.getElementById(`camp-attr-edit-${id}`)?.focus();
 		} catch (err: unknown) {
 			actionError = err instanceof Error ? err.message : 'Failed to save';
 		}
@@ -305,13 +419,6 @@
 				Import from Library
 			</button>
 			<button
-				onclick={() => { showUpload = !showUpload; showAddForm = false; showImport = false; showLibrary = false; }}
-				aria-expanded={showUpload}
-				class="{showUpload ? 'bg-gold/10 border border-gold/40 text-gold font-medium px-3 py-1.5 rounded-lg text-sm' : 'btn-secondary text-sm py-1.5'}"
-			>
-				Upload CSV / Excel
-			</button>
-			<button
 				onclick={openImport}
 				aria-expanded={showImport}
 				class="{showImport ? 'bg-gold/10 border border-gold/40 text-gold font-medium px-3 py-1.5 rounded-lg text-sm' : 'btn-secondary text-sm py-1.5'}"
@@ -319,7 +426,23 @@
 				&nearr; Import from Campaign
 			</button>
 			<button
-				onclick={() => { showAddForm = !showAddForm; showUpload = false; showImport = false; showLibrary = false; }}
+				onclick={exportCsv}
+				disabled={exporting}
+				class="btn-secondary text-sm py-1.5 disabled:opacity-50"
+			>
+				{exporting ? 'Exporting…' : 'Export CSV'}
+			</button>
+			<button
+				bind:this={uploadBtnEl}
+				onclick={() => (showUpload ? closeUploadPanel() : openUploadPanel())}
+				aria-expanded={showUpload}
+				class="{showUpload ? 'bg-gold/10 border border-gold/40 text-gold font-medium px-3 py-1.5 rounded-lg text-sm' : 'btn-secondary text-sm py-1.5'}"
+			>
+				Upload CSV / Excel
+			</button>
+			<button
+				bind:this={addBtnEl}
+				onclick={() => (showAddForm ? closeAddPanel() : openAddPanel())}
 				aria-expanded={showAddForm}
 				class="bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg text-sm hover:bg-gold-light transition-colors"
 			>
@@ -328,15 +451,74 @@
 		</div>
 	</div>
 
-	<!-- Search -->
-	<div class="mb-4">
-		<input
-			bind:value={searchQuery}
-			placeholder="Search attributes..."
-			aria-label="Search attributes"
-			class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
-		/>
+	<!-- Filter & Sort Bar -->
+	<div class="bg-navy-800 border border-navy-700 rounded-xl p-4 mb-6 space-y-3">
+		<div>
+			<input
+				bind:value={searchQuery}
+				placeholder="Search attributes..."
+				aria-label="Search attributes"
+				class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
+			/>
+		</div>
+		<div class="flex items-center gap-2 lg:gap-4 flex-wrap text-xs">
+			<div class="flex items-center gap-2 flex-wrap">
+				<span class="text-xs text-slate-400">Sort:</span>
+				{#each [['label', 'Label'], ['weight', 'Weight'], ['created_at', 'Date']] as [col, lbl] (col)}
+					<button
+						onclick={() => toggleSort(col as typeof sortBy)}
+						class={`text-xs px-2 py-1 rounded border transition-colors ${
+							sortBy === col
+								? 'bg-gold/10 border-gold/40 text-gold'
+								: 'border-navy-600 text-slate-400 hover:text-slate-300'
+						}`}
+						aria-pressed={sortBy === col}
+						aria-label="Sort by {lbl}{sortBy === col ? (sortDir === 'asc' ? ', ascending' : ', descending') : ''}"
+					>
+						{lbl} {sortBy === col ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+					</button>
+				{/each}
+			</div>
+			<div class="flex-1"></div>
+			<div class="flex items-center gap-1 w-full lg:w-auto">
+				<span class="text-xs text-slate-400 whitespace-nowrap">Weight:</span>
+				<input
+					type="range"
+					bind:value={minWeight}
+					min="0"
+					max="10"
+					step="0.1"
+					class="w-16 sm:w-20 h-1 bg-navy-700 rounded-lg appearance-none cursor-pointer accent-gold"
+					title="Minimum weight"
+				/>
+				<span class="text-xs text-slate-400 w-6 text-center">{minWeight.toFixed(1)}</span>
+				<span class="text-xs text-slate-500">–</span>
+				<input
+					type="range"
+					bind:value={maxWeight}
+					min="0"
+					max="10"
+					step="0.1"
+					class="w-16 sm:w-20 h-1 bg-navy-700 rounded-lg appearance-none cursor-pointer accent-gold"
+					title="Maximum weight"
+				/>
+				<span class="text-xs text-slate-400 w-6 text-center">{maxWeight.toFixed(1)}</span>
+			</div>
+		</div>
 	</div>
+
+	<!-- Stats line -->
+	{#if !loading}
+		<p class="text-xs text-slate-400 mb-4" aria-live="polite">
+			<span class="text-slate-200 font-semibold">{totalCount}</span> total
+			{#if (minWeight > 0 || maxWeight < 10) || debouncedSearch}
+				• <span class="text-slate-200 font-semibold">{displayedAttributes().length}</span> shown
+			{/if}
+			{#if selectedIds.size > 0}
+				• <span class="text-gold font-semibold">{selectedIds.size}</span> selected
+			{/if}
+		</p>
+	{/if}
 
 	{#if showLibrary}
 		<section aria-label="Import attributes from library" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
@@ -414,7 +596,8 @@
 			<div class="flex items-center justify-between mb-4">
 				<h3 class="font-medium text-slate-200">Upload Attributes</h3>
 				<button
-					onclick={() => (showUpload = false)}
+					id="camp-attr-upload-close"
+					onclick={closeUploadPanel}
 					aria-label="Close upload panel"
 					class="text-slate-500 hover:text-slate-300 text-xs"
 				>Close</button>
@@ -422,8 +605,8 @@
 			<AttributeCSVUpload
 				{campaignId}
 				onUploaded={async () => {
-					showUpload = false;
 					load();
+					await closeUploadPanel();
 				}}
 			/>
 		</section>
@@ -465,10 +648,13 @@
 		</section>
 	{/if}
 
-	<!-- Add form (collapsible) -->
+	<!-- Add form panel -->
 	{#if showAddForm}
 		<form onsubmit={addAttribute} aria-label="Add attribute" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
-			<h3 class="font-medium text-slate-200 mb-4">Add Attribute</h3>
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="font-medium text-slate-200">Add Attribute</h3>
+				<button type="button" onclick={closeAddPanel} class="text-slate-500 hover:text-slate-300 text-xs" aria-label="Close add attribute panel">Close</button>
+			</div>
 			<div class="grid grid-cols-4 gap-4 mb-4">
 				<div class="col-span-2">
 					<label for="attr-label" class="block text-xs text-slate-400 mb-1">Label *</label>
@@ -493,7 +679,7 @@
 				        class="bg-gold text-navy font-semibold px-4 py-1.5 rounded-lg text-sm hover:bg-gold-light disabled:opacity-50">
 					{adding ? 'Adding...' : '+ Add Attribute'}
 				</button>
-				<button type="button" onclick={() => (showAddForm = false)} class="btn-secondary py-1.5 text-sm">
+				<button type="button" onclick={closeAddPanel} class="btn-secondary py-1.5 text-sm">
 					Cancel
 				</button>
 			</div>
@@ -512,19 +698,33 @@
 {/if}
 
 {#if loading}
-		<p class="text-slate-500" aria-live="polite" aria-busy="true">Loading...</p>
-	{:else if attributes.length === 0}
+		<LoadingSpinner />
+	{:else if displayedAttributes().length === 0}
 		<div class="text-center py-12 text-slate-500">
 			{#if debouncedSearch}
 				<p>No attributes match "{debouncedSearch}".</p>
+				<button onclick={() => { searchQuery = ''; debouncedSearch = ''; }} class="text-gold/70 hover:text-gold text-sm mt-2 underline">
+					Clear search
+				</button>
+			{:else if minWeight > 0 || maxWeight < 10}
+				<p>No attributes in the weight range {minWeight.toFixed(1)}–{maxWeight.toFixed(1)}.</p>
+				<button onclick={() => { minWeight = 0; maxWeight = 10; }} class="text-gold/70 hover:text-gold text-sm mt-2 underline">
+					Reset weight filter
+				</button>
 			{:else}
-				<p>No attributes yet. Add them above or import from another campaign.</p>
+				<p class="text-slate-400 font-medium mb-2">No attributes yet.</p>
+				<p class="text-sm">Add them manually or upload a CSV to get started.</p>
+				<div class="flex items-center justify-center gap-3 mt-5">
+					<button onclick={openAddPanel} class="btn-gold text-sm py-1.5">+ Add Attribute</button>
+					<button onclick={openUploadPanel} class="btn-secondary text-sm py-1.5">Upload CSV</button>
+				</div>
 			{/if}
 		</div>
 	{:else}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
+			<div class="max-h-[50vh] sm:max-h-[60vh] lg:max-h-[70vh] overflow-auto">
 			<table class="w-full text-sm" aria-label="Attributes">
-				<thead>
+				<thead class="sticky top-0 bg-navy-800 border-b border-navy-700 z-10">
 					<tr class="border-b border-navy-700 text-slate-400">
 						<th scope="col" class="px-4 py-3 w-8">
 							<input
@@ -545,7 +745,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each attributes as attr (attr.id)}
+					{#each displayedAttributes() as attr (attr.id)}
 						{#if editing[attr.id]}
 							{@const e = editing[attr.id]}
 							<tr class="border-t border-navy-700 bg-navy-700/50">
@@ -560,16 +760,19 @@
 								</td>
 								<td class="px-4 py-2">
 									<label class="sr-only" for="edit-attr-label-{attr.id}">Label</label>
-									<input id="edit-attr-label-{attr.id}" bind:value={e.label} class="input-field w-full text-sm" />
+									<input id="edit-attr-label-{attr.id}" bind:value={e.label} class="input-field w-full text-sm"
+									onkeydown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); saveEdit(attr.id); } else if (ev.key === 'Escape') { cancelEdit(attr.id); } }} />
 								</td>
 								<td class="px-4 py-2">
 									<label class="sr-only" for="edit-attr-desc-{attr.id}">Description</label>
-									<input id="edit-attr-desc-{attr.id}" bind:value={e.description} class="input-field w-full text-sm" />
+									<input id="edit-attr-desc-{attr.id}" bind:value={e.description} class="input-field w-full text-sm"
+									onkeydown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); saveEdit(attr.id); } else if (ev.key === 'Escape') { cancelEdit(attr.id); } }} />
 								</td>
 								<td class="px-4 py-2">
 									<label class="sr-only" for="edit-attr-weight-{attr.id}">Weight</label>
 									<input id="edit-attr-weight-{attr.id}" type="number" bind:value={e.weight} min="0" step="0.1"
-									       class="input-field w-20 text-sm" />
+									       class="input-field w-20 text-sm"
+									onkeydown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); saveEdit(attr.id); } else if (ev.key === 'Escape') { cancelEdit(attr.id); } }} />
 								</td>
 								<td class="px-4 py-2 text-right space-x-2">
 									<button
@@ -597,29 +800,39 @@
 								</td>
 								<td class="px-4 py-3 text-slate-200 font-medium">{attr.label}</td>
 								<td class="px-4 py-3 text-slate-500 max-w-sm" title={attr.description ?? ''}><span class="line-clamp-2">{attr.description ?? '—'}</span></td>
-								<td class="px-4 py-3 text-slate-300 font-mono text-xs">{attr.weight.toFixed(1)}</td>
+								<td class="px-4 py-3">
+									<div class="flex items-center gap-2">
+										<div class="w-16 sm:w-20 h-2 bg-navy-700 rounded-full overflow-hidden" aria-hidden="true">
+											<div class={`h-full ${getWeightColor(attr.weight)} transition-all`} style={`width: ${(attr.weight / 10) * 100}%`}></div>
+										</div>
+										<span class="text-slate-300 font-mono text-xs w-7 sm:w-8 text-right">{attr.weight.toFixed(1)}</span>
+									</div>
+								</td>
 								<td class="px-4 py-3 text-right space-x-2">
 									<button
+										id="camp-attr-edit-{attr.id}"
 										onclick={() => startEdit(attr)}
 										aria-label="Edit {attr.label}"
-										class="text-slate-400 hover:text-gold text-xs"
+										class="text-slate-400 hover:text-gold text-xs py-1 px-2 min-h-[44px] inline-flex items-center"
 									>Edit</button>
 									<button
 										onclick={() => deleteAttribute(attr.id, attr.label)}
 										aria-label="Delete {attr.label}"
-										class="text-red-400/60 hover:text-red-400 text-xs"
-									>Del</button>
+										class="text-red-400/60 hover:text-red-400 text-xs py-1 px-2 min-h-[44px] inline-flex items-center"
+									>Delete</button>
 								</td>
 							</tr>
 						{/if}
 					{/each}
 				</tbody>
 			</table>
+			</div>
 			<Pagination
 				total={totalCount}
 				{pageSize}
 				{currentPage}
 				onPageChange={(p) => { currentPage = p; selectedIds = new Set(); }}
+				onPageSizeChange={(size) => { pageSize = size; currentPage = 0; selectedIds = new Set(); }}
 			/>
 		</div>
 	{/if}
