@@ -34,6 +34,9 @@
 </svelte:head>
 
 <div class="h-screen bg-navy flex flex-col" class:light={$theme === 'light'}>
+	<a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-gold focus:text-navy focus:rounded-lg focus:font-semibold focus:text-sm">
+		Skip to content
+	</a>
 	<!-- Header -->
 	<header class="border-b border-navy-700 px-4 sm:px-8 py-4 flex items-center justify-between flex-shrink-0">
 		<div class="flex items-center gap-3">
@@ -105,7 +108,7 @@
 	</header>
 
 	<!-- Main Content -->
-	<main class="flex-1 overflow-hidden">
+	<main id="main-content" class="flex-1 overflow-hidden">
 		{@render children()}
 	</main>
 

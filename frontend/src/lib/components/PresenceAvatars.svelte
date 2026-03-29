@@ -25,8 +25,12 @@
 {#if viewers.length > 0}
 	<div class="flex items-center gap-1" title="{viewers.map(v => v.display_name).join(', ')} viewing">
 		{#each shown as viewer (viewer.user_sid)}
+			<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 			<div
 				class="relative group"
+				tabindex="0"
+				role="img"
+				aria-label={viewer.display_name}
 				title={viewer.display_name}
 			>
 				<div
@@ -42,7 +46,7 @@
 					{/if}
 				</div>
 				<!-- Tooltip -->
-				<div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-1.5 py-0.5 bg-navy-900 border border-navy-700 rounded text-xs text-slate-300 whitespace-nowrap z-30 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+				<div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-1.5 py-0.5 bg-navy-900 border border-navy-700 rounded text-xs text-slate-300 whitespace-nowrap z-30 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity pointer-events-none">
 					{viewer.display_name}{viewer.user_sid === currentSid ? ' (you)' : ''}
 				</div>
 			</div>

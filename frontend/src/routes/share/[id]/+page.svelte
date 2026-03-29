@@ -41,6 +41,7 @@
 	let showSwimlane = $state(false);
 	let showComments = $state(false);
 	let copied = $state(false);
+	let copyError = $state(false);
 
 	// Live comments (Feature 1 & 3)
 	let liveComments = $state<Comment[]>(untrack(() => (data.comments as Comment[]) ?? []));
@@ -51,6 +52,7 @@
 	// Subscribe (Feature 10)
 	let subscribed = $state(false);
 	let subscribing = $state(false);
+	let subscribeError = $state('');
 
 	// Presence (Feature 11)
 	let viewers = $state<PresenceViewer[]>([]);
@@ -62,12 +64,30 @@
 	let diffMode = $state<'unified' | 'side'>('unified');
 	let loadingDiff = $state(false);
 
+	// Mobile responsive (Task 4.3)
+	let isMobile = $state(false);
+
+	$effect(() => {
+		if (isMobile && diffMode === 'side') {
+			diffMode = 'unified';
+		}
+	});
+
 	// Forking (Feature 7)
 	let forking = $state(false);
+	let forkError = $state('');
+
+	function checkMobile() {
+		isMobile = window.innerWidth < 768;
+	}
 
 	// Seed the global comment store so CommentThread can operate
 	onMount(async () => {
 		sessionComments.set(liveComments);
+
+		// Initialize mobile detection (Task 4.3)
+		checkMobile();
+		window.addEventListener('resize', checkMobile);
 
 		// Compute unread (Feature 3)
 		const lastSeen = getLastSeen(session.id);
@@ -114,11 +134,53 @@
 				viewers = await getPresence(session.id).catch(() => []);
 			}, 20_000);
 		}
+
+		// Pause/resume polling when tab visibility changes (Feature 5.5)
+		document.addEventListener('visibilitychange', handleVisibility);
 	});
+
+	function handleVisibility() {
+		if (document.hidden) {
+			// Pause polling to avoid wasted requests when tab is inactive
+			if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+			if (presenceInterval) { clearInterval(presenceInterval); presenceInterval = null; }
+		} else {
+			// Resume comment polling with an immediate fetch
+			if (!pollInterval) {
+				listComments(session.id).then((fresh) => {
+					if (!fresh) return;
+					liveComments = fresh;
+					sessionComments.set(fresh);
+				}).catch(() => {});
+				pollInterval = setInterval(async () => {
+					const fresh = await listComments(session.id).catch(() => null);
+					if (!fresh) return;
+					const existingIds = new Set(liveComments.map((c) => c.id));
+					const newOnes = fresh.filter((c) => !existingIds.has(c.id));
+					if (newOnes.length > 0 && !showComments) {
+						unseenIds = new Set([...unseenIds, ...newOnes.map((c) => c.id)]);
+					}
+					liveComments = fresh;
+					sessionComments.set(fresh);
+				}, 15_000);
+			}
+			// Resume presence heartbeat
+			if (!presenceInterval && $currentUser) {
+				heartbeatPresence(session.id).catch(() => {});
+				getPresence(session.id).then((v) => { viewers = v; }).catch(() => {});
+				presenceInterval = setInterval(async () => {
+					await heartbeatPresence(session.id).catch(() => {});
+					viewers = await getPresence(session.id).catch(() => []);
+				}, 20_000);
+			}
+		}
+	}
 
 	onDestroy(() => {
 		if (pollInterval) clearInterval(pollInterval);
 		if (presenceInterval) clearInterval(presenceInterval);
+		document.removeEventListener('visibilitychange', handleVisibility);
+		window.removeEventListener('resize', checkMobile);
 	});
 
 	function onCommentsOpen() {
@@ -130,11 +192,13 @@
 	async function handleFork() {
 		if (forking || !$currentUser) return;
 		forking = true;
+		forkError = '';
 		try {
 			const forked = await forkSession(session.id);
 			goto(`/?session=${forked.id}`);
 		} catch {
-			// ignore
+			forkError = 'Failed to fork report. Please try again.';
+			setTimeout(() => (forkError = ''), 3000);
 		} finally {
 			forking = false;
 		}
@@ -143,6 +207,7 @@
 	async function handleSubscribe() {
 		if (subscribing || !$currentUser) return;
 		subscribing = true;
+		subscribeError = '';
 		try {
 			if (subscribed) {
 				await unsubscribe(session.id);
@@ -152,7 +217,8 @@
 				subscribed = true;
 			}
 		} catch {
-			// ignore
+			subscribeError = 'Failed to update subscription.';
+			setTimeout(() => (subscribeError = ''), 3000);
 		} finally {
 			subscribing = false;
 		}
@@ -264,9 +330,14 @@
 	}
 
 	async function copyLink() {
-		await navigator.clipboard.writeText(window.location.href).catch(() => {});
-		copied = true;
-		setTimeout(() => (copied = false), 2000);
+		try {
+			await navigator.clipboard.writeText(window.location.href);
+			copied = true;
+			setTimeout(() => (copied = false), 2000);
+		} catch {
+			copyError = true;
+			setTimeout(() => (copyError = false), 2000);
+		}
 	}
 
 	// Short excerpt for OG description
@@ -290,7 +361,7 @@
 	{/if}
 </svelte:head>
 
-<div class="h-full overflow-y-auto bg-navy-950" class:light={$theme === 'light'}>
+<div class="h-full overflow-y-auto bg-navy-950">
 	<!-- Sticky top bar -->
 	<div class="sticky top-0 z-20 bg-navy-950/95 backdrop-blur border-b border-navy-700">
 		<div class="max-w-6xl mx-auto px-4 sm:px-6 flex items-center gap-3 h-12">
@@ -306,18 +377,22 @@
 				<PresenceAvatars {viewers} currentSid={$currentUser.sid} />
 			{/if}
 
-			<div class="flex items-center gap-2 flex-shrink-0">
+			<div class="flex items-center gap-2 overflow-x-auto">
 				<!-- Subscribe bell (Feature 10) -->
 				{#if $currentUser && session.visibility === 'team'}
 					<button
 						onclick={handleSubscribe}
 						disabled={subscribing}
 						title={subscribed ? 'Unsubscribe from new comments' : 'Subscribe to new comments'}
-						class="p-1.5 rounded text-xs border transition-all
-							{subscribed ? 'border-gold/40 text-gold bg-gold/5' : 'border-navy-700 text-slate-500 hover:text-gold hover:border-gold/30'}"
+						aria-label={subscribed ? 'Unsubscribe from notifications' : 'Subscribe to notifications'}
+						class="btn-secondary !p-1.5 !text-xs transition-all
+							{subscribed ? '!border-gold/40 !text-gold !bg-gold/5' : ''}"
 					>
 						{subscribed ? '🔔' : '🔕'}
 					</button>
+					{#if subscribeError}
+						<span class="text-xs text-red-400">{subscribeError}</span>
+					{/if}
 				{/if}
 
 				<!-- Fork (Feature 7) -->
@@ -325,20 +400,24 @@
 					<button
 						onclick={handleFork}
 						disabled={forking}
-						class="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs border border-navy-700 text-slate-500 hover:text-gold hover:border-gold/30 transition-all disabled:opacity-40"
+						class="btn-secondary flex items-center gap-1.5 !px-2.5 !py-1.5 !text-xs transition-all disabled:opacity-40"
 					>
 						<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
 						</svg>
 						{forking ? 'Forking…' : 'Fork'}
 					</button>
+					{#if forkError}
+						<span class="text-xs text-red-400">{forkError}</span>
+					{/if}
 				{/if}
 
 				{#if session.visibility === 'team' && $currentUser}
 					<button
 						onclick={() => { showComments = !showComments; if (showComments) onCommentsOpen(); }}
-						class="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs border transition-all
-							{showComments ? 'border-gold/40 text-gold bg-gold/5' : 'border-navy-700 text-slate-500 hover:text-gold hover:border-gold/30'}"
+						aria-label="{showComments ? 'Hide' : 'Show'} comments ({liveComments.length})"
+						class="btn-secondary flex items-center gap-1.5 !px-2.5 !py-1.5 !text-xs transition-all
+							{showComments ? '!border-gold/40 !text-gold !bg-gold/5' : ''}"
 					>
 						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -353,9 +432,10 @@
 				{/if}
 				<button
 					onclick={copyLink}
-					class="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs border border-navy-700 text-slate-500 hover:text-gold hover:border-gold/30 transition-all"
+					aria-label={copied ? 'Link copied' : 'Copy share link'}
+					class="btn-secondary flex items-center gap-1.5 !px-2.5 !py-1.5 !text-xs transition-all"
 				>
-					{copied ? 'Copied!' : 'Copy link'}
+					{copied ? 'Copied!' : copyError ? 'Failed to copy' : 'Copy link'}
 				</button>
 			</div>
 		</div>
@@ -368,7 +448,7 @@
 			<aside class="hidden lg:block w-52 flex-shrink-0">
 				<div class="sticky top-20">
 					<p class="text-[10px] text-slate-600 uppercase tracking-widest mb-3">Contents</p>
-					<nav class="space-y-0.5">
+					<nav class="space-y-0.5" aria-label="Table of contents">
 						{#each toc as entry (entry.id)}
 							<button
 								onclick={() => scrollToHeading(entry.id)}
@@ -388,20 +468,20 @@
 			<!-- Report metadata row -->
 			<div class="mb-5">
 				<div class="flex items-center gap-2 flex-wrap mb-2">
-					<span class="text-xs text-slate-600">
+					<span class="text-xs text-slate-500">
 						{new Date(session.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
 					</span>
-					<span class="text-slate-700">·</span>
-					<span class="text-xs text-slate-600">{readingTime} min read</span>
+					<span class="text-slate-600">·</span>
+					<span class="text-xs text-slate-500">{readingTime} min read</span>
 					{#if isPublic}
-						<span class="ml-auto flex items-center gap-1 text-[10px] text-slate-600 border border-navy-700 rounded-full px-2 py-0.5">
+						<span class="ml-auto flex items-center gap-1 text-[10px] text-slate-500 border border-navy-700 rounded-full px-2 py-0.5">
 							<svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 							</svg>
 							Public
 						</span>
 					{:else}
-						<span class="ml-auto flex items-center gap-1 text-[10px] text-slate-600 border border-navy-700 rounded-full px-2 py-0.5">
+						<span class="ml-auto flex items-center gap-1 text-[10px] text-slate-500 border border-navy-700 rounded-full px-2 py-0.5">
 							<svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
 							</svg>
@@ -409,17 +489,17 @@
 						</span>
 					{/if}
 				</div>
-				<h1 class="font-serif text-xl sm:text-2xl text-slate-100 leading-snug">{session.title}</h1>
+				<h1 class="font-serif text-xl sm:text-2xl text-gold leading-snug">{session.title}</h1>
 				<p class="text-sm text-slate-500 mt-1">{session.query}</p>
 			</div>
 
 			<!-- Action buttons -->
 			{#if session.report_markdown}
-				<div class="flex gap-2 mb-5 flex-wrap">
+				<div class="flex gap-2 mb-5 overflow-x-auto pb-1 flex-wrap sm:flex-nowrap">
 					<button
 						onclick={downloadPdf}
 						disabled={pdfGenerating}
-						class="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs text-slate-400 hover:text-gold border border-navy-700 hover:border-gold/30 bg-navy-900 transition-colors disabled:opacity-50"
+						class="btn-secondary flex items-center gap-1.5 !px-3 !py-1.5 !text-xs transition-colors disabled:opacity-50"
 					>
 						{#if pdfGenerating}
 							<span class="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin"></span>
@@ -436,7 +516,7 @@
 					{/if}
 					<button
 						onclick={downloadMarkdown}
-						class="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs text-slate-400 hover:text-gold border border-navy-700 hover:border-gold/30 bg-navy-900 transition-colors"
+						class="btn-secondary flex items-center gap-1.5 !px-3 !py-1.5 !text-xs transition-colors"
 					>
 						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -446,7 +526,7 @@
 					<a
 						href="/api/sessions/{session.id}/export?format=docx"
 						download
-						class="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs text-slate-400 hover:text-gold border border-navy-700 hover:border-gold/30 bg-navy-900 transition-colors"
+						class="btn-secondary flex items-center gap-1.5 !px-3 !py-1.5 !text-xs transition-colors"
 					>
 						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h4a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
@@ -459,8 +539,8 @@
 						<button
 							onclick={handleShowDiff}
 							disabled={loadingDiff}
-							class="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs border transition-colors disabled:opacity-40
-								{showDiff ? 'border-gold/40 text-gold bg-gold/5' : 'text-slate-400 hover:text-gold border-navy-700 hover:border-gold/30 bg-navy-900'}"
+							class="btn-secondary flex items-center gap-1.5 !px-3 !py-1.5 !text-xs transition-colors disabled:opacity-40
+								{showDiff ? '!border-gold/40 !text-gold !bg-gold/5' : ''}"
 						>
 							<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" />
@@ -472,7 +552,7 @@
 					<!-- Mobile TOC -->
 					{#if toc.length >= 3}
 						<details class="lg:hidden relative">
-							<summary class="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs text-slate-400 hover:text-gold border border-navy-700 hover:border-gold/30 bg-navy-900 cursor-pointer list-none">
+							<summary class="btn-secondary flex items-center gap-1.5 !px-3 !py-1.5 !text-xs cursor-pointer list-none">
 								<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" />
 								</svg>
@@ -504,12 +584,14 @@
 						<div class="ml-auto flex gap-1">
 							<button
 								onclick={() => (diffMode = 'unified')}
-								class="text-[10px] px-2 py-0.5 rounded border transition-colors {diffMode === 'unified' ? 'border-gold/40 text-gold' : 'border-navy-700 text-slate-500'}"
+								class="text-[10px] px-2 py-0.5 rounded-lg border transition-colors {diffMode === 'unified' ? 'border-gold/40 text-gold' : 'border-navy-700 text-slate-500'}"
 							>Unified</button>
-							<button
-								onclick={() => (diffMode = 'side')}
-								class="text-[10px] px-2 py-0.5 rounded border transition-colors {diffMode === 'side' ? 'border-gold/40 text-gold' : 'border-navy-700 text-slate-500'}"
-							>Side by side</button>
+							{#if !isMobile}
+								<button
+									onclick={() => (diffMode = 'side')}
+									class="text-[10px] px-2 py-0.5 rounded-lg border transition-colors {diffMode === 'side' ? 'border-gold/40 text-gold' : 'border-navy-700 text-slate-500'}"
+								>Side by side</button>
+							{/if}
 						</div>
 					</div>
 					<ReportDiff
@@ -522,7 +604,7 @@
 
 			<!-- Report body -->
 			{#if session.report_markdown}
-				<div class="border border-navy-600 rounded-lg bg-navy-800/30 overflow-hidden mb-6">
+				<div class="card overflow-hidden mb-6">
 					<div id="share-report-content" class="px-6 py-5">
 						<article use:tableExport class="prose prose-sm max-w-none">
 							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -563,21 +645,13 @@
 				</div>
 			{/if}
 
-			<!-- Footer -->
-			<div class="border-t border-navy-800 pt-6 mt-2 flex items-center justify-between flex-wrap gap-2">
-				<div class="flex items-center gap-2">
-					<div class="w-5 h-5 bg-gold rounded-sm flex items-center justify-center">
-						<span class="text-navy font-serif font-bold text-[10px]">P</span>
-					</div>
-					<span class="text-xs text-slate-600">Generated by Playbook Research AI</span>
-				</div>
-				<p class="text-xs text-slate-700">For informational purposes only. Not investment advice.</p>
-			</div>
+
 		</div>
 
 		<!-- Comments sidebar (team-shared, authenticated users) -->
 		{#if showComments && session.visibility === 'team' && $currentUser}
-			<aside class="w-80 flex-shrink-0">
+			<!-- Desktop: inline sidebar -->
+			<aside class="hidden md:block w-80 flex-shrink-0">
 				<div class="sticky top-20 max-h-[calc(100vh-5rem)] flex flex-col">
 					<CommentThread
 						sessionId={session.id}
@@ -588,6 +662,48 @@
 					/>
 				</div>
 			</aside>
+
+			<!-- Mobile: slide-over drawer -->
+			<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+			<div
+				class="md:hidden fixed inset-0 z-40"
+				role="dialog"
+				aria-label="Comments"
+				aria-modal="true"
+				tabindex="-1"
+				onkeydown={(e) => { if (e.key === 'Escape') showComments = false; }}
+			>
+				<!-- Backdrop -->
+				<div
+					class="absolute inset-0 bg-black/50"
+					onclick={() => { showComments = false; }}
+					aria-hidden="true"
+				></div>
+				<!-- Drawer panel -->
+				<div class="absolute right-0 top-0 bottom-0 w-80 max-w-[85vw] bg-navy-900 border-l border-navy-700 shadow-2xl flex flex-col overflow-y-auto">
+					<div class="flex items-center justify-between px-4 py-3 border-b border-navy-700 flex-shrink-0">
+						<span class="text-sm font-medium text-slate-300">Comments</span>
+						<button
+							onclick={() => { showComments = false; }}
+							class="text-slate-500 hover:text-slate-300 transition-colors"
+							aria-label="Close comments"
+						>
+							<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+							</svg>
+						</button>
+					</div>
+					<div class="flex-1 overflow-y-auto">
+						<CommentThread
+							sessionId={session.id}
+							unseenIds={unseenIds}
+							onCommentsChange={(comments) => {
+								liveComments = comments;
+							}}
+						/>
+					</div>
+				</div>
+			</div>
 		{/if}
 	</div>
 </div>
