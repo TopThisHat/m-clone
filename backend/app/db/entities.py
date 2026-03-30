@@ -12,6 +12,7 @@ from ._pool import _acquire
 _SORT_COLUMNS = {
     "name": "e.label",
     "label": "e.label",
+    "gwm_id": "e.gwm_id",
     "created_at": "e.created_at",
     "score": "COALESCE(s.total_score, 0)",
 }
@@ -201,6 +202,21 @@ async def db_delete_entity(entity_id: str, campaign_id: str) -> bool:
             entity_id, campaign_id,
         )
     return result.endswith("1")
+
+
+async def db_bulk_delete_entities(campaign_id: str, ids: list[str]) -> int:
+    """Delete multiple entities from a campaign in one query. Returns count deleted."""
+    if not ids:
+        return 0
+    async with _acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM playbook.entities WHERE campaign_id = $1::uuid AND id = ANY($2::uuid[])",
+            campaign_id, ids,
+        )
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
 
 
 async def db_update_entity(entity_id: str, campaign_id: str, **kwargs: Any) -> dict[str, Any] | None:

@@ -48,6 +48,14 @@
 	// Reaction picker open for which comment
 	let reactionPickerFor = $state<string | null>(null);
 
+	/** Svelte action: auto-focus the first button inside the node on mount */
+	function autoFocusFirst(node: HTMLElement) {
+		tick().then(() => {
+			const first = node.querySelector('button') as HTMLElement | null;
+			first?.focus();
+		});
+	}
+
 	// ── @mention autocomplete ────────────────────────────────────────────────
 	interface MentionUser { sid: string; display_name: string; avatar_url: string | null; }
 	let mentionUsers = $state<MentionUser[]>([]);
@@ -222,13 +230,15 @@
 	}
 
 	async function remove(id: string) {
+		if (!confirm('Are you sure you want to delete this comment?')) return;
 		try {
 			await deleteComment(id);
 			comments = comments.filter((c) => c.id !== id);
 			sessionComments.set(comments);
 			onCommentsChange?.(comments);
 		} catch {
-			// ignore
+			error = 'Failed to delete comment. Please try again.';
+			setTimeout(() => (error = ''), 3000);
 		}
 	}
 
@@ -416,7 +426,7 @@
 
 								<!-- Suggestion badge -->
 								{#if comment.comment_type === 'suggestion'}
-									<div class="mt-1 mb-1 rounded border border-navy-600 p-1.5 text-xs">
+									<div class="mt-1 mb-1 rounded-lg border border-navy-600 p-1.5 text-xs">
 										<div class="text-slate-500 mb-1">Suggestion</div>
 										{#if comment.proposed_text}
 											<div class="line-through text-red-400/70 truncate">{comment.highlight_anchor?.quote ?? '(original)'}</div>
@@ -427,11 +437,11 @@
 											<div class="flex gap-1 mt-1.5">
 												<button
 													onclick={() => handleResolveSuggestion(comment.id, 'accepted')}
-													class="px-1.5 py-0.5 rounded bg-green-900/40 text-green-400 hover:bg-green-900/60 transition-colors"
+													class="px-1.5 py-0.5 rounded-lg bg-green-900/40 text-green-400 hover:bg-green-900/60 transition-colors"
 												>Accept</button>
 												<button
 													onclick={() => handleResolveSuggestion(comment.id, 'rejected')}
-													class="px-1.5 py-0.5 rounded bg-red-900/40 text-red-400 hover:bg-red-900/60 transition-colors"
+													class="px-1.5 py-0.5 rounded-lg bg-red-900/40 text-red-400 hover:bg-red-900/60 transition-colors"
 												>Reject</button>
 											</div>
 										{:else if comment.suggestion_status === 'accepted'}
@@ -448,12 +458,12 @@
 										<textarea
 											bind:value={editBody}
 											rows="2"
-											class="w-full bg-navy-800 border border-navy-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-gold/40 resize-none"
+											class="input-field w-full !text-xs resize-none"
 										></textarea>
 										<div class="flex gap-2 mt-1">
 											<button
 												onclick={() => saveEdit(comment.id)}
-												class="text-xs px-2 py-0.5 bg-gold text-navy rounded"
+												class="btn-gold !px-2 !py-0.5 !text-xs"
 											>Save</button>
 											<button
 												onclick={() => (editingId = null)}
@@ -483,10 +493,35 @@
 										<div class="relative">
 											<button
 												onclick={() => (reactionPickerFor = reactionPickerFor === comment.id ? null : comment.id)}
-												aria-label="Add reaction" class="text-xs text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
+												aria-label="Add reaction" class="text-xs text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded-lg border border-navy-700 hover:border-navy-600 transition-colors"
 											>+</button>
 											{#if reactionPickerFor === comment.id}
-												<div class="absolute bottom-full left-0 mb-1 bg-navy-900 border border-navy-700 rounded-lg p-1.5 flex gap-1 z-30 shadow-xl">
+												<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+												<div
+													use:autoFocusFirst
+													tabindex="-1"
+													class="absolute bottom-full left-0 mb-1 bg-navy-900 border border-navy-700 rounded-lg p-1.5 flex gap-1 z-30 shadow-xl"
+													role="dialog"
+													aria-label="Reaction picker"
+													onkeydown={(e) => {
+														if (e.key === 'Escape') {
+															reactionPickerFor = null;
+															return;
+														}
+														if (e.key === 'Tab') {
+															const buttons = e.currentTarget.querySelectorAll('button');
+															const first = buttons[0];
+															const last = buttons[buttons.length - 1];
+															if (e.shiftKey && document.activeElement === first) {
+																e.preventDefault();
+																last.focus();
+															} else if (!e.shiftKey && document.activeElement === last) {
+																e.preventDefault();
+																first.focus();
+															}
+														}
+													}}
+												>
 													{#each ['👍','❤️','🔥','💡','✅','❓'] as emoji}
 														<button
 															onclick={() => handleReaction(comment.id, emoji)}
@@ -542,10 +577,10 @@
 													<textarea
 														bind:value={editBody}
 														rows="2"
-														class="w-full bg-navy-800 border border-navy-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-gold/40 resize-none"
+														class="input-field w-full !text-xs resize-none"
 													></textarea>
 													<div class="flex gap-2 mt-1">
-														<button onclick={() => saveEdit(reply.id)} class="text-xs px-2 py-0.5 bg-gold text-navy rounded">Save</button>
+														<button onclick={() => saveEdit(reply.id)} class="btn-gold !px-2 !py-0.5 !text-xs">Save</button>
 														<button onclick={() => (editingId = null)} class="text-xs text-slate-500 hover:text-slate-300">Cancel</button>
 													</div>
 												</div>
@@ -568,10 +603,35 @@
 													<div class="relative">
 														<button
 															onclick={() => (reactionPickerFor = reactionPickerFor === reply.id ? null : reply.id)}
-															aria-label="Add reaction" class="text-xs text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded border border-navy-700 hover:border-navy-600 transition-colors"
+															aria-label="Add reaction" class="text-xs text-slate-600 hover:text-slate-400 px-1 py-0.5 rounded-lg border border-navy-700 hover:border-navy-600 transition-colors"
 														>+</button>
 														{#if reactionPickerFor === reply.id}
-															<div class="absolute bottom-full left-0 mb-1 bg-navy-900 border border-navy-700 rounded-lg p-1.5 flex gap-1 z-30 shadow-xl">
+															<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+															<div
+																use:autoFocusFirst
+																tabindex="-1"
+																class="absolute bottom-full left-0 mb-1 bg-navy-900 border border-navy-700 rounded-lg p-1.5 flex gap-1 z-30 shadow-xl"
+																role="dialog"
+																aria-label="Reaction picker"
+																onkeydown={(e) => {
+																	if (e.key === 'Escape') {
+																		reactionPickerFor = null;
+																		return;
+																	}
+																	if (e.key === 'Tab') {
+																		const buttons = e.currentTarget.querySelectorAll('button');
+																		const first = buttons[0];
+																		const last = buttons[buttons.length - 1];
+																		if (e.shiftKey && document.activeElement === first) {
+																			e.preventDefault();
+																			last.focus();
+																		} else if (!e.shiftKey && document.activeElement === last) {
+																			e.preventDefault();
+																			first.focus();
+																		}
+																	}
+																}}
+															>
 																{#each ['👍','❤️','🔥','💡','✅','❓'] as emoji}
 																	<button aria-label="React with {emoji}" onclick={() => handleReaction(reply.id, emoji)} class="text-sm hover:scale-125 transition-transform p-0.5">{emoji}</button>
 																{/each}
@@ -605,7 +665,7 @@
 						<div class="flex items-center gap-2 mb-2">
 							<button
 								onclick={() => { isSuggestion = !isSuggestion; }}
-								class="text-xs px-2 py-0.5 rounded border transition-colors {isSuggestion ? 'border-gold/40 text-gold bg-gold/10' : 'border-navy-700 text-slate-500 hover:text-slate-300'}"
+								class="text-xs px-2 py-0.5 rounded-lg border transition-colors {isSuggestion ? 'border-gold/40 text-gold bg-gold/10' : 'border-navy-700 text-slate-500 hover:text-slate-300'}"
 							>{isSuggestion ? '✎ Suggestion mode' : 'Switch to suggestion'}</button>
 						</div>
 						{#if isSuggestion}
@@ -616,7 +676,7 @@
 									bind:value={proposedText}
 									placeholder="Enter your suggested replacement…"
 									rows="2"
-									class="w-full bg-navy-800 border border-green-900/40 rounded px-2 py-1 text-xs text-green-300 placeholder-slate-600 focus:outline-none focus:border-green-700/40 resize-none"
+									class="input-field w-full !border-green-900/40 !text-xs !text-green-300 resize-none"
 								></textarea>
 							</div>
 						{/if}
@@ -654,7 +714,7 @@
 								aria-controls={mentionVisible && mentionFiltered.length > 0 ? 'mention-listbox' : undefined}
 								aria-activedescendant={mentionVisible && mentionFiltered.length > 0 ? `mention-option-${mentionIndex}` : undefined}
 								aria-autocomplete="list"
-								class="w-full bg-navy-800 border border-navy-700 rounded px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-gold/40 resize-none transition-colors"
+								class="input-field w-full !text-xs resize-none transition-colors"
 							></textarea>
 
 							<!-- @mention autocomplete dropdown -->
@@ -702,7 +762,7 @@
 								<button
 									onclick={submit}
 									disabled={!newBody.trim() || submitting}
-									class="px-3 py-1 rounded text-xs bg-gold text-navy font-medium disabled:opacity-40 hover:bg-gold/90 transition-colors"
+									class="btn-gold !px-3 !py-1 !text-xs disabled:opacity-40"
 								>
 									{submitting ? 'Posting…' : isSuggestion ? 'Post suggestion' : currentAnchor ? 'Comment on selection' : replyingToId ? 'Reply' : 'Comment'}
 								</button>

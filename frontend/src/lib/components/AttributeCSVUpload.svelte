@@ -200,7 +200,7 @@
 			<p class="text-slate-500 text-xs mb-3">CSV, TSV, Excel (.xlsx / .xls) supported</p>
 			<label class="cursor-pointer">
 				<span class="text-gold hover:text-gold-light underline text-sm">or browse files</span>
-				<input type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" class="hidden" onchange={onFileInput} />
+				<input type="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" class="hidden" onchange={onFileInput} aria-label="Choose file to upload" />
 			</label>
 		</div>
 
@@ -341,7 +341,14 @@
 				<span class="text-slate-400">Uploading attributes…</span>
 				<span class="text-slate-300 font-mono">{uploadedCount.toLocaleString()} / {totalCount.toLocaleString()}</span>
 			</div>
-			<div class="h-2 bg-navy-700 rounded-full overflow-hidden">
+			<div
+				class="h-2 bg-navy-700 rounded-full overflow-hidden"
+				role="progressbar"
+				aria-valuenow={uploadedCount}
+				aria-valuemin={0}
+				aria-valuemax={totalCount}
+				aria-label="Upload progress: {uploadPct}% complete"
+			>
 				<div
 					class="h-full bg-gold rounded-full transition-all duration-300"
 					style="width: {uploadPct}%"

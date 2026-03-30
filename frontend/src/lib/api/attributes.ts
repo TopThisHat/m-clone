@@ -1,7 +1,7 @@
 import { apiFetch } from './apiFetch';
-import type { PaginatedResponse } from './entities';
+import type { BulkDeleteResult, PaginatedResponse } from './entities';
 
-export type { PaginatedResponse };
+export type { BulkDeleteResult, PaginatedResponse };
 
 export interface Attribute {
 	id: string;
@@ -32,12 +32,14 @@ export interface BulkAttributeResult {
 export const attributesApi = {
 	list: (
 		campaignId: string,
-		opts?: { limit?: number; offset?: number; search?: string }
+		opts?: { limit?: number; offset?: number; search?: string; sort_by?: string; order?: string }
 	): Promise<PaginatedResponse<Attribute>> => {
 		const params = new URLSearchParams();
 		if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
 		if (opts?.offset !== undefined) params.set('offset', String(opts.offset));
 		if (opts?.search) params.set('search', opts.search);
+		if (opts?.sort_by) params.set('sort_by', opts.sort_by);
+		if (opts?.order) params.set('order', opts.order);
 		const qs = params.toString();
 		return apiFetch(`/api/campaigns/${campaignId}/attributes${qs ? `?${qs}` : ''}`);
 	},
@@ -65,6 +67,13 @@ export const attributesApi = {
 
 	delete: (campaignId: string, attributeId: string): Promise<null> =>
 		apiFetch(`/api/campaigns/${campaignId}/attributes/${attributeId}`, { method: 'DELETE' }),
+
+	bulkDelete: (campaignId: string, ids: string[]): Promise<BulkDeleteResult> =>
+		apiFetch(`/api/campaigns/${campaignId}/attributes/bulk`, {
+			method: 'DELETE',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ids }),
+		}),
 
 	importFrom: (campaignId: string, sourceCampaignId: string): Promise<BulkAttributeResult> =>
 		apiFetch(`/api/campaigns/${campaignId}/attributes/import`, {

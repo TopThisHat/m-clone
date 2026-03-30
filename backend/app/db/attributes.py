@@ -7,6 +7,12 @@ import asyncpg
 
 from ._pool import _acquire
 
+_ATTR_SORT_COLUMNS = {
+    "label": "label",
+    "weight": "weight",
+    "created_at": "created_at",
+}
+
 
 def _attribute_row_to_dict(row: asyncpg.Record | dict[str, Any]) -> dict[str, Any]:
     d = dict(row)
@@ -92,14 +98,19 @@ async def db_list_attributes(
     offset: int = 0,
     search: str | None = None,
     category: str | None = None,
+    sort_by: str = "created_at",
+    order: str = "asc",
 ) -> dict[str, Any]:
+    sort_col = _ATTR_SORT_COLUMNS.get(sort_by, "created_at")
+    direction = "DESC" if order.lower() == "desc" else "ASC"
     _where = """WHERE campaign_id = $1::uuid
                   AND ($2::text IS NULL OR label ILIKE '%' || $2 || '%')
                   AND ($3::text IS NULL OR category = $3)"""
+    _order = f"ORDER BY {sort_col} {direction}"
     async with _acquire() as conn:
         if limit == 0:
             rows = await conn.fetch(
-                f"SELECT * FROM playbook.attributes {_where} ORDER BY created_at ASC",
+                f"SELECT * FROM playbook.attributes {_where} {_order}",
                 campaign_id, search, category,
             )
             total = len(rows)
@@ -109,7 +120,7 @@ async def db_list_attributes(
                 campaign_id, search, category,
             )
             rows = await conn.fetch(
-                f"SELECT * FROM playbook.attributes {_where} ORDER BY created_at ASC LIMIT $4 OFFSET $5",
+                f"SELECT * FROM playbook.attributes {_where} {_order} LIMIT $4 OFFSET $5",
                 campaign_id, search, category, limit, offset,
             )
     items = [_attribute_row_to_dict(r) for r in rows]
@@ -161,3 +172,18 @@ async def db_delete_attribute(attribute_id: str, campaign_id: str) -> bool:
             attribute_id, campaign_id,
         )
     return result.endswith("1")
+
+
+async def db_bulk_delete_attributes(campaign_id: str, ids: list[str]) -> int:
+    """Delete multiple attributes from a campaign in one query. Returns count deleted."""
+    if not ids:
+        return 0
+    async with _acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM playbook.attributes WHERE campaign_id = $1::uuid AND id = ANY($2::uuid[])",
+            campaign_id, ids,
+        )
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0

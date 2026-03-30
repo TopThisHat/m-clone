@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { page } from '$app/state';
 	import { entitiesApi, type Entity } from '$lib/api/entities';
 	import { campaignsApi, type Campaign } from '$lib/api/campaigns';
@@ -18,7 +19,7 @@
 	let showImport = $state(false);
 
 	// Pagination & search
-	const pageSize = 50;
+	let pageSize = $state(50);
 	let currentPage = $state(0);
 	let searchQuery = $state('');
 	let debouncedSearch = $state('');
@@ -33,6 +34,28 @@
 		}, 300);
 		return () => clearTimeout(debounceTimer);
 	});
+
+	// Sorting
+	let sortBy = $state<'label' | 'gwm_id' | 'created_at'>('created_at');
+	let sortDir = $state<'asc' | 'desc'>('asc');
+
+	function toggleSort(col: typeof sortBy) {
+		if (sortBy === col) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
+		else { sortBy = col; sortDir = 'asc'; }
+		currentPage = 0;
+	}
+
+	// GWM ID filter (client-side over current page)
+	let gwmIdFilter = $state<'all' | 'has' | 'missing'>('all');
+
+	function displayedEntities() {
+		if (gwmIdFilter === 'has') return entities.filter(e => !!e.gwm_id);
+		if (gwmIdFilter === 'missing') return entities.filter(e => !e.gwm_id);
+		return entities;
+	}
+
+	// CSV export
+	let exporting = $state(false);
 
 	// Add form state
 	let newLabel = $state('');
@@ -70,6 +93,8 @@
 				limit: pageSize,
 				offset: currentPage * pageSize,
 				search: debouncedSearch || undefined,
+				sort_by: sortBy,
+				order: sortDir,
 			});
 			entities = resp.items;
 			totalCount = resp.total;
@@ -81,11 +106,48 @@
 	}
 
 	$effect(() => {
-		// Reactive re-load when search or page changes (also handles initial load)
+		// Reactive re-load when search, page, or sort changes (also handles initial load)
 		const _s = debouncedSearch;
 		const _p = currentPage;
+		const _sort = sortBy;
+		const _dir = sortDir;
 		load();
 	});
+
+	async function exportCsv() {
+		exporting = true;
+		try {
+			const resp = await entitiesApi.list(campaignId, {
+				limit: 0,
+				search: debouncedSearch || undefined,
+				sort_by: sortBy,
+				order: sortDir,
+			});
+			const rows = resp.items;
+			const headers = ['Label', 'GWM ID', 'Description'];
+			const csvLines = [
+				headers.map(h => `"${h}"`).join(','),
+				...rows.map(r => [
+					`"${r.label.replace(/"/g, '""')}"`,
+					`"${(r.gwm_id ?? '').replace(/"/g, '""')}"`,
+					`"${(r.description ?? '').replace(/"/g, '""')}"`,
+				].join(','))
+			];
+			const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `entities-${new Date().toISOString().split('T')[0]}.csv`;
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			URL.revokeObjectURL(url);
+		} catch (err: unknown) {
+			actionError = err instanceof Error ? err.message : 'Failed to export';
+		} finally {
+			exporting = false;
+		}
+	}
 
 	async function openImport() {
 		showImport = true;
@@ -122,6 +184,40 @@
 		}
 	}
 
+	// Focus refs for panel management
+	let addBtnEl = $state<HTMLButtonElement | undefined>(undefined);
+	let uploadBtnEl = $state<HTMLButtonElement | undefined>(undefined);
+
+	async function openAddPanel() {
+		showAddForm = true;
+		showCSV = false;
+		showImport = false;
+		showLibrary = false;
+		await tick();
+		document.getElementById('new-label')?.focus();
+	}
+
+	async function closeAddPanel() {
+		showAddForm = false;
+		await tick();
+		addBtnEl?.focus();
+	}
+
+	async function openUploadPanel() {
+		showCSV = true;
+		showAddForm = false;
+		showImport = false;
+		showLibrary = false;
+		await tick();
+		document.getElementById('camp-ent-upload-close')?.focus();
+	}
+
+	async function closeUploadPanel() {
+		showCSV = false;
+		await tick();
+		uploadBtnEl?.focus();
+	}
+
 	async function addEntity(e: Event) {
 		e.preventDefault();
 		if (!newLabel.trim()) return;
@@ -137,6 +233,8 @@
 			newDesc = '';
 			showAddForm = false;
 			load();
+			await tick();
+			addBtnEl?.focus();
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to add entity';
 		} finally {
@@ -157,13 +255,18 @@
 		}
 	}
 
-	function startEdit(entity: Entity) {
+	async function startEdit(entity: Entity) {
 		editingId = entity.id;
 		editForm = { label: entity.label, gwm_id: entity.gwm_id ?? '', description: entity.description ?? '' };
+		await tick();
+		document.getElementById(`edit-label-${entity.id}`)?.focus();
 	}
 
-	function cancelEdit() {
+	async function cancelEdit() {
+		const id = editingId;
 		editingId = null;
+		await tick();
+		document.getElementById(`camp-ent-edit-${id}`)?.focus();
 	}
 
 	async function saveEdit(entity: Entity) {
@@ -176,6 +279,8 @@
 			});
 			entities = entities.map((e) => (e.id === entity.id ? updated : e));
 			editingId = null;
+			await tick();
+			document.getElementById(`camp-ent-edit-${entity.id}`)?.focus();
 		} catch (err: unknown) {
 			actionError = err instanceof Error ? err.message : 'Failed to save';
 		} finally {
@@ -201,7 +306,7 @@
 		if (!confirm(`Delete ${selectedIds.size} selected entities?`)) return;
 		bulkDeleting = true;
 		try {
-			await Promise.all([...selectedIds].map((id) => entitiesApi.delete(campaignId, id)));
+			await entitiesApi.bulkDelete(campaignId, [...selectedIds]);
 			selectedIds = new Set();
 			load();
 		} catch (err: unknown) {
@@ -317,14 +422,23 @@
 				&nearr; Import from Campaign
 			</button>
 			<button
-				onclick={() => { showCSV = !showCSV; showAddForm = false; showImport = false; showLibrary = false; }}
+				onclick={exportCsv}
+				disabled={exporting}
+				class="btn-secondary text-sm py-1.5 disabled:opacity-50"
+			>
+				{exporting ? 'Exporting…' : 'Export CSV'}
+			</button>
+			<button
+				bind:this={uploadBtnEl}
+				onclick={() => (showCSV ? closeUploadPanel() : openUploadPanel())}
 				aria-expanded={showCSV}
 				class="{showCSV ? 'bg-gold/10 border border-gold/40 text-gold font-medium px-3 py-1.5 rounded-lg text-sm' : 'btn-secondary text-sm py-1.5'}"
 			>
 				Upload CSV
 			</button>
 			<button
-				onclick={() => { showAddForm = !showAddForm; showCSV = false; showImport = false; showLibrary = false; }}
+				bind:this={addBtnEl}
+				onclick={() => (showAddForm ? closeAddPanel() : openAddPanel())}
 				aria-expanded={showAddForm}
 				class="bg-gold text-navy font-semibold px-3 py-1.5 rounded-lg text-sm hover:bg-gold-light transition-colors"
 			>
@@ -333,15 +447,65 @@
 		</div>
 	</div>
 
-	<!-- Search -->
-	<div class="mb-4">
-		<input
-			bind:value={searchQuery}
-			placeholder="Search entities…"
-			aria-label="Search entities"
-			class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
-		/>
+	<!-- Filter & Sort Bar -->
+	<div class="bg-navy-800 border border-navy-700 rounded-xl p-4 mb-6 space-y-3">
+		<div>
+			<input
+				bind:value={searchQuery}
+				placeholder="Search entities…"
+				aria-label="Search entities"
+				class="w-full bg-navy-700 border border-navy-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold"
+			/>
+		</div>
+		<div class="flex items-center gap-2 flex-wrap text-xs">
+			<div class="flex items-center gap-2 flex-wrap">
+				<span class="text-xs text-slate-400">Sort:</span>
+				{#each [['label', 'Label'], ['gwm_id', 'GWM ID'], ['created_at', 'Date']] as [col, lbl]}
+					<button
+						onclick={() => toggleSort(col as typeof sortBy)}
+						class={`text-xs px-2 py-1 rounded border transition-colors ${
+							sortBy === col
+								? 'bg-gold/10 border-gold/40 text-gold'
+								: 'border-navy-600 text-slate-400 hover:text-slate-300'
+						}`}
+						aria-pressed={sortBy === col}
+						aria-label="Sort by {lbl}{sortBy === col ? (sortDir === 'asc' ? ', ascending' : ', descending') : ''}"
+					>
+						{lbl} {sortBy === col ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+					</button>
+				{/each}
+			</div>
+			<div class="flex-1"></div>
+			<div class="flex items-center gap-2">
+				<span class="text-xs text-slate-400">Filter:</span>
+				{#each [['all', 'All'], ['has', 'Has GWM ID'], ['missing', 'Missing GWM ID']] as [val, lbl]}
+					<button
+						onclick={() => (gwmIdFilter = val as typeof gwmIdFilter)}
+						class={`text-xs px-2.5 py-0.5 rounded-full border transition-colors ${
+							gwmIdFilter === val
+								? 'bg-gold/10 border-gold/40 text-gold'
+								: 'border-navy-600 text-slate-400 hover:text-slate-300'
+						}`}
+					>
+						{lbl}
+					</button>
+				{/each}
+			</div>
+		</div>
 	</div>
+
+	<!-- Stats line -->
+	{#if !loading}
+		<p class="text-xs text-slate-400 mb-4" aria-live="polite">
+			<span class="text-slate-200 font-semibold">{totalCount}</span> total
+			{#if gwmIdFilter !== 'all' || debouncedSearch}
+				• <span class="text-slate-200 font-semibold">{displayedEntities().length}</span> shown
+			{/if}
+			{#if selectedIds.size > 0}
+				• <span class="text-gold font-semibold">{selectedIds.size}</span> selected
+			{/if}
+		</p>
+	{/if}
 
 	{#if showImport}
 		<section aria-label="Import entities from another campaign" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
@@ -453,17 +617,23 @@
 
 	{#if showCSV}
 		<section aria-label="Upload entities via CSV" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
-			<h3 class="font-medium text-slate-200 mb-4">Upload CSV</h3>
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="font-medium text-slate-200">Upload CSV</h3>
+				<button id="camp-ent-upload-close" onclick={closeUploadPanel} class="text-slate-500 hover:text-slate-300 text-xs" aria-label="Close upload panel">Close</button>
+			</div>
 			<CSVUpload
 				{campaignId}
-				onUploaded={() => { load(); showCSV = false; }}
+				onUploaded={async () => { load(); await closeUploadPanel(); }}
 			/>
 		</section>
 	{/if}
 
 	{#if showAddForm}
 		<form onsubmit={addEntity} aria-label="Add entity" class="bg-navy-800 border border-navy-700 rounded-xl p-5 mb-6">
-			<h3 class="font-medium text-slate-200 mb-4">Add Entity</h3>
+			<div class="flex items-center justify-between mb-4">
+				<h3 class="font-medium text-slate-200">Add Entity</h3>
+				<button type="button" onclick={closeAddPanel} class="text-slate-500 hover:text-slate-300 text-xs" aria-label="Close add entity panel">Close</button>
+			</div>
 			<div class="grid grid-cols-3 gap-4 mb-4">
 				<div>
 					<label for="new-label" class="block text-xs text-slate-400 mb-1">Label *</label>
@@ -486,7 +656,7 @@
 				        class="bg-gold text-navy font-semibold px-4 py-1.5 rounded-lg text-sm hover:bg-gold-light disabled:opacity-50">
 					{adding ? 'Adding…' : 'Add'}
 				</button>
-				<button type="button" onclick={() => (showAddForm = false)} class="btn-secondary py-1.5 text-sm">
+				<button type="button" onclick={closeAddPanel} class="btn-secondary py-1.5 text-sm">
 					Cancel
 				</button>
 			</div>
@@ -506,18 +676,32 @@
 
 {#if loading}
 		<LoadingSpinner />
-	{:else if entities.length === 0}
+	{:else if displayedEntities().length === 0}
 		<div class="text-center py-12 text-slate-500">
 			{#if debouncedSearch}
 				<p>No entities match "{debouncedSearch}".</p>
+				<button onclick={() => { searchQuery = ''; debouncedSearch = ''; }} class="text-gold/70 hover:text-gold text-sm mt-2 underline">
+					Clear search
+				</button>
+			{:else if gwmIdFilter !== 'all'}
+				<p>No entities {gwmIdFilter === 'has' ? 'with GWM ID' : 'without GWM ID'}.</p>
+				<button onclick={() => (gwmIdFilter = 'all')} class="text-gold/70 hover:text-gold text-sm mt-2 underline">
+					Show all
+				</button>
 			{:else}
-				<p>No entities yet. Add them manually, upload a CSV, or import from another campaign.</p>
+				<p class="text-slate-400 font-medium mb-2">No entities yet.</p>
+				<p class="text-sm">Add them manually or upload a CSV to get started.</p>
+				<div class="flex items-center justify-center gap-3 mt-5">
+					<button onclick={openAddPanel} class="btn-gold text-sm py-1.5">+ Add Entity</button>
+					<button onclick={openUploadPanel} class="btn-secondary text-sm py-1.5">Upload CSV</button>
+				</div>
 			{/if}
 		</div>
 	{:else}
 		<div class="bg-navy-800 border border-navy-700 rounded-xl overflow-hidden">
+			<div class="max-h-[50vh] sm:max-h-[60vh] lg:max-h-[70vh] overflow-auto">
 			<table class="w-full text-sm" aria-label="Entities">
-				<thead>
+				<thead class="sticky top-0 bg-navy-800 border-b border-navy-700 z-10">
 					<tr class="border-b border-navy-700 text-slate-400">
 						<th scope="col" class="px-4 py-3 w-8">
 							<input
@@ -538,7 +722,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each entities as entity (entity.id)}
+					{#each displayedEntities() as entity (entity.id)}
 						<tr class="border-t border-navy-700 hover:bg-navy-700/50">
 							<td class="px-4 py-3">
 								<input
@@ -552,15 +736,18 @@
 							{#if editingId === entity.id}
 								<td class="px-4 py-2">
 									<label class="sr-only" for="edit-label-{entity.id}">Label</label>
-									<input id="edit-label-{entity.id}" bind:value={editForm.label} class="input-field w-full" />
+									<input id="edit-label-{entity.id}" bind:value={editForm.label} class="input-field w-full"
+										onkeydown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); saveEdit(entity); } else if (ev.key === 'Escape') { cancelEdit(); } }} />
 								</td>
 								<td class="px-4 py-2">
 									<label class="sr-only" for="edit-gwm-{entity.id}">GWM ID</label>
-									<input id="edit-gwm-{entity.id}" bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs" />
+									<input id="edit-gwm-{entity.id}" bind:value={editForm.gwm_id} class="input-field w-full font-mono text-xs"
+										onkeydown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); saveEdit(entity); } else if (ev.key === 'Escape') { cancelEdit(); } }} />
 								</td>
 								<td class="px-4 py-2">
 									<label class="sr-only" for="edit-desc-{entity.id}">Description</label>
-									<input id="edit-desc-{entity.id}" bind:value={editForm.description} class="input-field w-full" />
+									<input id="edit-desc-{entity.id}" bind:value={editForm.description} class="input-field w-full"
+										onkeydown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); saveEdit(entity); } else if (ev.key === 'Escape') { cancelEdit(); } }} />
 								</td>
 								<td class="px-4 py-2 text-right whitespace-nowrap">
 									<button
@@ -585,16 +772,17 @@
 								<td class="px-4 py-3 text-slate-500 max-w-sm" title={entity.description ?? ''}><span class="line-clamp-2">{entity.description ?? '—'}</span></td>
 								<td class="px-4 py-3 text-right whitespace-nowrap">
 									<button
+										id="camp-ent-edit-{entity.id}"
 										onclick={() => startEdit(entity)}
 										aria-label="Edit {entity.label}"
-										class="text-slate-500 hover:text-slate-300 transition-colors text-xs mr-2"
+										class="text-slate-500 hover:text-slate-300 transition-colors text-xs py-1 px-2 min-h-[44px] inline-flex items-center mr-2"
 									>
 										Edit
 									</button>
 									<button
 										onclick={() => deleteEntity(entity.id, entity.label)}
 										aria-label="Delete {entity.label}"
-										class="text-red-400/60 hover:text-red-400 transition-colors text-xs"
+										class="text-red-400/60 hover:text-red-400 transition-colors text-xs py-1 px-2 min-h-[44px] inline-flex items-center"
 									>
 										Delete
 									</button>
@@ -604,11 +792,13 @@
 					{/each}
 				</tbody>
 			</table>
+			</div>
 			<Pagination
 				total={totalCount}
 				{pageSize}
 				{currentPage}
 				onPageChange={(p) => { currentPage = p; selectedIds = new Set(); }}
+				onPageSizeChange={(size) => { pageSize = size; currentPage = 0; selectedIds = new Set(); }}
 			/>
 		</div>
 	{/if}

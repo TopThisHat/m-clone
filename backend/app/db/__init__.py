@@ -115,6 +115,7 @@ from .entities import (
     db_list_entities as db_list_entities,
     db_get_entity as db_get_entity,
     db_delete_entity as db_delete_entity,
+    db_bulk_delete_entities as db_bulk_delete_entities,
     db_update_entity as db_update_entity,
     db_get_entity_metadata as db_get_entity_metadata,
     db_set_entity_metadata as db_set_entity_metadata,
@@ -135,6 +136,7 @@ from .attributes import (
     db_get_attribute as db_get_attribute,
     db_update_attribute as db_update_attribute,
     db_delete_attribute as db_delete_attribute,
+    db_bulk_delete_attributes as db_bulk_delete_attributes,
 )
 
 # ── Validation ────────────────────────────────────────────────────────────────
@@ -204,11 +206,13 @@ from .library import (
     db_bulk_create_entity_library as db_bulk_create_entity_library,
     db_update_entity_library as db_update_entity_library,
     db_delete_entity_library as db_delete_entity_library,
+    db_bulk_delete_library_entities as db_bulk_delete_library_entities,
     db_list_attribute_library as db_list_attribute_library,
     db_create_attribute_library as db_create_attribute_library,
     db_bulk_create_attribute_library as db_bulk_create_attribute_library,
     db_update_attribute_library as db_update_attribute_library,
     db_delete_attribute_library as db_delete_attribute_library,
+    db_bulk_delete_library_attributes as db_bulk_delete_library_attributes,
     db_import_entities_from_library as db_import_entities_from_library,
     db_import_attributes_from_library as db_import_attributes_from_library,
 )

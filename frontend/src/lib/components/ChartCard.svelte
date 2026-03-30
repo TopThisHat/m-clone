@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { theme } from '$lib/stores/themeStore';
 
 	export interface ChartPayload {
 		ticker: string;
@@ -14,6 +15,22 @@
 
 	let canvasEl = $state<HTMLCanvasElement | undefined>();
 	let chartInstance: unknown = null;
+
+	const gridColor = $derived($theme === 'light' ? '#e2e8f0' : '#1a3660');
+	const tickColor = $derived($theme === 'light' ? '#475569' : '#64748b');
+
+	$effect(() => {
+		if (!chartInstance) return;
+		const c = chartInstance as {
+			options: { scales: { x: { ticks: { color: string }; grid: { color: string } }; y: { ticks: { color: string }; grid: { color: string } } } };
+			update: () => void;
+		};
+		c.options.scales.x.ticks.color = tickColor;
+		c.options.scales.x.grid.color = gridColor;
+		c.options.scales.y.ticks.color = tickColor;
+		c.options.scales.y.grid.color = gridColor;
+		c.update();
+	});
 
 	onMount(async () => {
 		try {
@@ -60,19 +77,19 @@
 					scales: {
 						x: {
 							ticks: {
-								color: '#64748b',
+								color: tickColor,
 								maxTicksLimit: 6,
 								font: { size: 10 }
 							},
-							grid: { color: '#1a3660' }
+							grid: { color: gridColor }
 						},
 						y: {
 							ticks: {
-								color: '#64748b',
+								color: tickColor,
 								font: { size: 10 },
 								callback: (v) => `$${v}`
 							},
-							grid: { color: '#1a3660' }
+							grid: { color: gridColor }
 						}
 					}
 				}

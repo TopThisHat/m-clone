@@ -196,6 +196,21 @@ async def db_delete_entity_library(item_id: str, owner_sid: str) -> bool:
     return result.endswith("1")
 
 
+async def db_bulk_delete_library_entities(owner_sid: str, ids: list[str]) -> int:
+    """Delete multiple entity library items owned by the user. Returns count deleted."""
+    if not ids:
+        return 0
+    async with _acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM playbook.entity_library WHERE owner_sid = $1 AND id = ANY($2::uuid[])",
+            owner_sid, ids,
+        )
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
 async def db_list_attribute_library(
     owner_sid: str,
     team_id: str | None = None,
@@ -321,6 +336,21 @@ async def db_delete_attribute_library(item_id: str, owner_sid: str) -> bool:
             item_id, owner_sid,
         )
     return result.endswith("1")
+
+
+async def db_bulk_delete_library_attributes(owner_sid: str, ids: list[str]) -> int:
+    """Delete multiple attribute library items owned by the user. Returns count deleted."""
+    if not ids:
+        return 0
+    async with _acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM playbook.attribute_library WHERE owner_sid = $1 AND id = ANY($2::uuid[])",
+            owner_sid, ids,
+        )
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
 
 
 async def db_import_entities_from_library(

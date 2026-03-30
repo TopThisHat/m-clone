@@ -1,7 +1,7 @@
 import { apiFetch } from './apiFetch';
-import type { PaginatedResponse } from './entities';
+import type { BulkDeleteResult, PaginatedResponse } from './entities';
 
-export type { PaginatedResponse };
+export type { BulkDeleteResult, PaginatedResponse };
 
 export interface LibraryEntity {
 	id: string;
@@ -86,6 +86,13 @@ export const libraryEntitiesApi = {
 
 	delete: (id: string): Promise<null> =>
 		apiFetch(`/api/library/entities/${id}`, { method: 'DELETE' }),
+
+	bulkDelete: (ids: string[]): Promise<BulkDeleteResult> =>
+		apiFetch('/api/library/entities/bulk', {
+			method: 'DELETE',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ids }),
+		}),
 };
 
 export const libraryAttributesApi = {
@@ -130,4 +137,11 @@ export const libraryAttributesApi = {
 
 	delete: (id: string): Promise<null> =>
 		apiFetch(`/api/library/attributes/${id}`, { method: 'DELETE' }),
+
+	bulkDelete: (ids: string[]): Promise<BulkDeleteResult> =>
+		apiFetch('/api/library/attributes/bulk', {
+			method: 'DELETE',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ids }),
+		}),
 };
