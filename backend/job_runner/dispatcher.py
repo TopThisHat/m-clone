@@ -219,12 +219,18 @@ class Dispatcher:
                     }
 
                     try:
-                        await publish_job(stream, msg_data)
-                        logger.debug("Dispatched job %s (%s) → %s", job["id"], job_type, stream)
+                        redis_msg_id = await publish_job(stream, msg_data)
+                        logger.info(
+                            "Dispatched job_id=%s job_type=%s stream=%s redis_msg_id=%s",
+                            job["id"], job_type, stream, redis_msg_id,
+                        )
                         from job_runner import metrics
                         metrics.inc("jobs_dispatched")
                     except Exception as exc:
-                        logger.error("Failed to publish job %s to %s: %s", job["id"], stream, exc)
+                        logger.error(
+                            "Failed to publish job_id=%s job_type=%s stream=%s error=%s",
+                            job["id"], job_type, stream, exc,
+                        )
                         # Rollback job to 'pending' so it can be re-dequeued
                         try:
                             from app.db import get_pool

@@ -125,35 +125,33 @@ async def enqueue_many(
 # ---------------------------------------------------------------------------
 
 async def dequeue(worker_id: str, batch_size: int = 1) -> list[dict[str, Any]]:
+    from app.streams import JOB_TYPE_TO_STREAM
+    known_types = list(JOB_TYPE_TO_STREAM.keys())
     pool = await _get_pool()
     async with pool.acquire() as conn:
-        async with conn.transaction():
-            rows = await conn.fetch(
-                """
-                SELECT *
+        rows = await conn.fetch(
+            """
+            UPDATE playbook.job_queue
+            SET status = 'claimed',
+                claimed_at = NOW(),
+                heartbeat_at = NOW(),
+                worker_id = $1
+            WHERE id IN (
+                SELECT id
                 FROM playbook.job_queue
-                WHERE status = 'pending' AND run_at <= NOW()
+                WHERE status = 'pending'
+                  AND run_at <= NOW()
+                  AND job_type = ANY($3::text[])
                 ORDER BY priority DESC, created_at ASC
-                LIMIT $1
+                LIMIT $2
                 FOR UPDATE SKIP LOCKED
-                """,
-                batch_size,
             )
-            if not rows:
-                return []
-            ids = [r["id"] for r in rows]
-            await conn.execute(
-                """
-                UPDATE playbook.job_queue
-                SET status = 'claimed',
-                    claimed_at = NOW(),
-                    heartbeat_at = NOW(),
-                    worker_id = $1
-                WHERE id = ANY($2)
-                """,
-                worker_id,
-                ids,
-            )
+            RETURNING *
+            """,
+            worker_id,
+            batch_size,
+            known_types,
+        )
     return [dict(r) for r in rows]
 
 
@@ -161,22 +159,26 @@ async def dequeue(worker_id: str, batch_size: int = 1) -> list[dict[str, Any]]:
 # Status transitions
 # ---------------------------------------------------------------------------
 
-async def mark_running(job_id: str) -> None:
+async def mark_running(job_id: str) -> bool:
+    """Transition a job from claimed → running. Returns False if the job was already reclaimed."""
     pool = await _get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE playbook.job_queue SET status = 'running', started_at = NOW() WHERE id = $1::uuid",
+        result = await conn.execute(
+            "UPDATE playbook.job_queue SET status = 'running', started_at = NOW() WHERE id = $1::uuid AND status = 'claimed'",
             job_id,
         )
+    return int(result.split()[-1]) > 0
 
 
-async def ack(job_id: str) -> None:
+async def ack(job_id: str) -> bool:
+    """Transition a job from running → done. Returns False if the job is no longer running."""
     pool = await _get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE playbook.job_queue SET status = 'done', completed_at = NOW() WHERE id = $1::uuid",
+        result = await conn.execute(
+            "UPDATE playbook.job_queue SET status = 'done', completed_at = NOW() WHERE id = $1::uuid AND status = 'running'",
             job_id,
         )
+    return int(result.split()[-1]) > 0
 
 
 async def fail(job_id: str, error: str, backoff_seconds: float = 0) -> bool:
@@ -239,14 +241,21 @@ async def reclaim_stale(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            UPDATE playbook.job_queue
+            WITH stale AS (
+                SELECT id
+                FROM playbook.job_queue
+                WHERE status IN ('claimed', 'running')
+                  AND (
+                      heartbeat_at IS NULL
+                      OR heartbeat_at < NOW() - make_interval(secs => $1::float)
+                  )
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE playbook.job_queue q
             SET status = 'pending', worker_id = NULL, heartbeat_at = NULL
-            WHERE status IN ('claimed', 'running')
-              AND (
-                  heartbeat_at IS NULL
-                  OR heartbeat_at < NOW() - make_interval(secs => $1::float)
-              )
-            RETURNING id, job_type, worker_id AS old_worker
+            FROM stale
+            WHERE q.id = stale.id
+            RETURNING q.id, q.job_type, q.worker_id AS old_worker
             """,
             float(stale_threshold_seconds),
         )

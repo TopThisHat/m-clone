@@ -12,7 +12,10 @@ import logging
 import os
 import random
 import socket
+import time
 from typing import Any
+
+from redis.exceptions import RedisError
 
 from worker.config import settings
 from worker.registry import registry
@@ -40,6 +43,7 @@ class WorkflowConsumer:
         self._sem = asyncio.Semaphore(settings.worker_concurrency)
         self._shutdown = asyncio.Event()
         self._active: set[asyncio.Task] = set()
+        self._loop_tasks: list[asyncio.Task] = []
         self._consumer_name = f"worker-{socket.gethostname()}-{os.getpid()}"
         self._type_sems: dict[str, asyncio.Semaphore] = {
             jtype: asyncio.Semaphore(limit)
@@ -57,17 +61,18 @@ class WorkflowConsumer:
         for stream in self._streams:
             await create_consumer_group(stream, GROUP_WORKERS)
 
-        # Start one consume loop per stream
-        tasks = [
-            asyncio.create_task(self._consume_loop(stream))
-            for stream in self._streams
-        ]
+        # Start one consume loop and one PEL reclaim loop per stream.
+        # self._loop_tasks is kept on the instance so health checks can inspect it.
+        self._loop_tasks = []
+        for stream in self._streams:
+            self._loop_tasks.append(asyncio.create_task(self._consume_loop(stream)))
+            self._loop_tasks.append(asyncio.create_task(self._reclaim_pel_loop(stream)))
         try:
             await self._shutdown.wait()
         finally:
-            for t in tasks:
+            for t in self._loop_tasks:
                 t.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*self._loop_tasks, return_exceptions=True)
 
     async def drain(self, timeout: int = 30) -> None:
         logger.info("WorkflowConsumer draining...")
@@ -81,11 +86,62 @@ class WorkflowConsumer:
                 logger.warning("%d jobs did not finish within drain timeout", len(pending))
         logger.info("WorkflowConsumer drained")
 
+    # ── PEL reclaim loop ──────────────────────────────────────────────────
+
+    async def _reclaim_pel_loop(self, stream: str) -> None:
+        """
+        Periodically reclaim PEL entries from dead consumers via XAUTOCLAIM.
+        Runs every 60s; claims messages idle for more than 5 minutes.
+        """
+        from app.streams import GROUP_WORKERS, get_redis
+
+        _PEL_RECLAIM_INTERVAL = 60
+        _PEL_MIN_IDLE_MS = 300_000  # 5 minutes
+
+        while not self._shutdown.is_set():
+            try:
+                await asyncio.sleep(_PEL_RECLAIM_INTERVAL)
+                if self._shutdown.is_set():
+                    break
+                r = await get_redis()
+                # XAUTOCLAIM returns (next_id, [(msg_id, fields), ...], deleted_ids)
+                _next_id, reclaimed, _deleted = await r.xautoclaim(
+                    stream,
+                    GROUP_WORKERS,
+                    self._consumer_name,
+                    min_idle_time=_PEL_MIN_IDLE_MS,
+                    start_id="0-0",
+                    count=100,
+                )
+                if reclaimed:
+                    logger.info(
+                        "Reclaimed %d PEL messages from stream=%s via XAUTOCLAIM",
+                        len(reclaimed), stream,
+                    )
+                    for msg_id, fields in reclaimed:
+                        await self._sem.acquire()
+                        try:
+                            task = asyncio.create_task(
+                                self._process_message(stream, msg_id, fields)
+                            )
+                            self._active.add(task)
+                            task.add_done_callback(
+                                lambda t: (self._active.discard(t), self._sem.release())
+                            )
+                        except Exception:
+                            self._sem.release()
+                            raise
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("PEL reclaim error on stream %s: %s", stream, exc)
+
     # ── Consume loop ──────────────────────────────────────────────────────
 
     async def _consume_loop(self, stream: str) -> None:
         from app.streams import GROUP_WORKERS, consume_jobs
 
+        _backoff = 0.0
         while not self._shutdown.is_set():
             try:
                 messages = await consume_jobs(
@@ -95,6 +151,7 @@ class WorkflowConsumer:
                     count=1,
                     block_ms=5000,
                 )
+                _backoff = 0.0  # reset on success
                 for msg_id, fields in messages:
                     await self._sem.acquire()
                     try:
@@ -110,6 +167,12 @@ class WorkflowConsumer:
                         raise
             except asyncio.CancelledError:
                 break
+            except RedisError as exc:
+                _backoff = min(_backoff * 2 if _backoff else 1.0, 30.0)
+                logger.error(
+                    "Redis error on stream %s (backoff=%.1fs): %s", stream, _backoff, exc
+                )
+                await asyncio.sleep(_backoff)
             except Exception as exc:
                 logger.error("Consume loop error on %s: %s", stream, exc)
                 await asyncio.sleep(1)
@@ -143,10 +206,21 @@ class WorkflowConsumer:
             "validation_job_id": fields.get("validation_job_id") or None,
         }
 
+        logger.info(
+            "Received job_id=%s job_type=%s stream=%s msg_id=%s",
+            job_id, job_type, stream, msg_id,
+        )
+
         hb = HeartbeatManager(job_id, settings.heartbeat_interval)
-        await mark_running(job_id)
+        running = await mark_running(job_id)
+        if not running:
+            # Job was reclaimed by another process before we could start it — skip.
+            logger.info("Job %s (%s) already reclaimed, skipping execution", job_id, job_type)
+            await ack_job(stream, GROUP_WORKERS, msg_id)
+            return
         await hb.start()
 
+        t_start = time.monotonic()
         try:
             type_sem = self._type_sems.get(job_type)
             timeout = settings.type_timeouts.get(job_type, settings.default_job_timeout)
@@ -161,21 +235,31 @@ class WorkflowConsumer:
 
             await asyncio.wait_for(coro, timeout=timeout)
             await pg_ack(job_id)
-            logger.info("Job %s (%s) done", job_id, job_type)
+            duration_ms = int((time.monotonic() - t_start) * 1000)
+            logger.info(
+                "Completed job_id=%s job_type=%s duration_ms=%d",
+                job_id, job_type, duration_ms,
+            )
 
         except asyncio.TimeoutError:
+            duration_ms = int((time.monotonic() - t_start) * 1000)
             backoff = _calc_backoff(job.get("attempts", 0), settings.default_backoff_base)
             error_msg = f"Job timed out after {timeout}s"
-            logger.error("Job %s (%s) timed out", job_id, job_type)
+            logger.error(
+                "Job %s (%s) timed out after %dms (attempt %d)",
+                job_id, job_type, duration_ms, job.get("attempts", 0) + 1,
+            )
             went_dead = await pg_fail(job_id, error_msg, backoff)
             if went_dead:
                 await registry.dispatch_on_dead(job)
 
         except Exception as exc:
+            duration_ms = int((time.monotonic() - t_start) * 1000)
             backoff = _calc_backoff(job.get("attempts", 0), settings.default_backoff_base)
             logger.error(
-                "Job %s (%s) failed (attempt %d): %s",
-                job_id, job_type, job.get("attempts", 0) + 1, exc,
+                "Failed job_id=%s job_type=%s stream=%s msg_id=%s attempt=%d duration_ms=%d error=%s",
+                job_id, job_type, stream, msg_id,
+                job.get("attempts", 0) + 1, duration_ms, exc,
             )
             went_dead = await pg_fail(job_id, str(exc), backoff)
             if went_dead:

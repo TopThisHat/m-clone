@@ -43,6 +43,11 @@ async def main() -> None:
     await start_metrics_server(settings.metrics_port)
     logger.info("Metrics server listening on port %d", settings.metrics_port)
 
+    from app.streams import get_redis
+    r = await get_redis()
+    await r.ping()
+    logger.info("Redis connection verified")
+
     dispatcher = Dispatcher()
 
     _shutdown_triggered = False
