@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.db import close_pool, init_schema
+from app.db import close_pool, init_schema, verify_client_lookup_prerequisites
 from app import scheduler
 from app.routers import documents, research, sessions, usage
 from app.routers.sessions import router_public
@@ -28,6 +28,7 @@ from app.routers.preferences import router as preferences_router
 from app.routers.matrix import router as matrix_router
 from app.routers.search import router as search_router
 from app.routers.import_export import router as import_export_router
+from app.routers.client_lookup import router as client_lookup_router
 
 app = FastAPI(
     title="m-clone Research Agent",
@@ -65,6 +66,7 @@ app.include_router(preferences_router)
 app.include_router(matrix_router)
 app.include_router(search_router)
 app.include_router(import_export_router)
+app.include_router(client_lookup_router)
 
 # ── A2A Protocol ─────────────────────────────────────────────────────────────
 from a2a.server.apps.jsonrpc.fastapi_app import A2AFastAPIApplication
@@ -103,6 +105,7 @@ async def startup():
 
     if settings.database_url or settings.aws_secret_name:
         await init_schema()
+        await verify_client_lookup_prerequisites()
     scheduler.start()
 
     if settings.aws_mode:

@@ -650,6 +650,60 @@ def _chunk_label(chunk: dict) -> str:
 
 
 @_register(
+    "lookup_client",
+    "Look up a client's GWM ID by name. Searches the client directory and priority queue "
+    "using fuzzy matching, then resolves the best match using LLM adjudication.",
+    {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "The client name to look up (e.g. 'John Smith').",
+            },
+            "company": {
+                "type": "string",
+                "description": "Optional company name for disambiguation (e.g. 'Goldman Sachs').",
+            },
+        },
+        "required": ["name"],
+    },
+)
+async def lookup_client(deps: AgentDeps, name: str, company: str | None = None) -> str:
+    from app.agent.client_resolver import resolve_client
+    result = await resolve_client(name=name, company=company)
+    lines = []
+    if result.match_found:
+        lines.append(f"**Match Found:** {result.matched_name}")
+        lines.append(f"- GWM ID: {result.gwm_id}")
+        lines.append(f"- Source: {result.source}")
+        lines.append(f"- Confidence: {result.confidence:.0%}")
+        lines.append(f"- Method: {result.adjudication.value}")
+    else:
+        lines.append("**No match found.**")
+        if result.ambiguous:
+            lines.append("Multiple potential matches — provide company or additional context.")
+        if result.conflict:
+            lines.append("Conflicting GWM IDs detected — manual verification needed.")
+
+    if result.candidates:
+        lines.append("\n**Candidates:**")
+        for c in result.candidates[:5]:
+            lines.append(f"- {c.name} (gwm_id: {c.gwm_id}, source: {c.source}, score: {c.db_score:.2f})")
+
+    if result.resolution_factors:
+        lines.append("\n**Resolution Factors:**")
+        for f in result.resolution_factors:
+            lines.append(f"- {f}")
+
+    if result.warnings:
+        lines.append("\n**Warnings:**")
+        for w in result.warnings:
+            lines.append(f"- {w}")
+
+    return "\n".join(lines)
+
+
+@_register(
     "query_knowledge_graph",
     "Search the internal knowledge graph for entities and relationships. "
     "Use this to answer questions about known people, companies, deals, and relationships. "
