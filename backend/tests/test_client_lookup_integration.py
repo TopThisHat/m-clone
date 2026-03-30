@@ -32,7 +32,7 @@ from app.models.client_lookup import AdjudicationMethod, LookupResult
 
 @pytest_asyncio.fixture
 async def fuzzy_client_rows():
-    """Seed rows into playbook.fuzzy_client and clean up after the test.
+    """Seed rows into galileo.fuzzy_client and clean up after the test.
 
     Uses a unique prefix so parallel test runs don't collide.
     """
@@ -48,7 +48,7 @@ async def fuzzy_client_rows():
         for gwm_id, name, companies in rows:
             await conn.execute(
                 """
-                INSERT INTO playbook.fuzzy_client (gwm_id, name, companies)
+                INSERT INTO galileo.fuzzy_client (gwm_id, name, companies)
                 VALUES ($1, $2, $3)
                 ON CONFLICT (gwm_id) DO NOTHING
                 """,
@@ -59,7 +59,7 @@ async def fuzzy_client_rows():
 
     async with _acquire() as conn:
         await conn.execute(
-            "DELETE FROM playbook.fuzzy_client WHERE gwm_id LIKE $1",
+            "DELETE FROM galileo.fuzzy_client WHERE gwm_id LIKE $1",
             f"{prefix}-%",
         )
 
@@ -117,7 +117,7 @@ async def hpq_rows():
 # ---------------------------------------------------------------------------
 
 class TestSearchFuzzyClient:
-    """Integration tests for search_fuzzy_client() against playbook.fuzzy_client."""
+    """Integration tests for search_fuzzy_client() against galileo.fuzzy_client."""
 
     @pytest.mark.asyncio
     async def test_exact_name_match_returns_high_score(self, fuzzy_client_rows):
@@ -185,7 +185,7 @@ class TestSearchFuzzyClient:
 
         alice = next((r for r in results if r.gwm_id == f"{prefix}-001"), None)
         assert alice is not None
-        assert alice.companies == "Goldman Sachs"
+        assert alice.companies == ["Goldman Sachs"]
 
     @pytest.mark.asyncio
     async def test_db_error_returns_empty_list(self):

@@ -1419,7 +1419,7 @@ async def init_schema() -> None:
 
             # ── Client ID Lookup: GIN trigram indexes ──────────────────────────
             # CREATE INDEX IF NOT EXISTS is idempotent; safe to run on every startup.
-            # These indexes live on external tables (playbook.fuzzy_client and
+            # These indexes live on external tables (galileo.fuzzy_client and
             # galileo.high_priority_queue_client) that this service does not own.
             # We create them only if pg_trgm is available and the tables exist,
             # using DO blocks so a missing table or extension doesn't abort startup.
@@ -1430,12 +1430,12 @@ async def init_schema() -> None:
                     ) THEN
                         IF EXISTS (
                             SELECT 1 FROM information_schema.tables
-                            WHERE table_schema = 'playbook'
+                            WHERE table_schema = 'galileo'
                               AND table_name = 'fuzzy_client'
                         ) THEN
                             EXECUTE $idx$
                                 CREATE INDEX IF NOT EXISTS fuzzy_client_name_trgm_idx
-                                ON playbook.fuzzy_client USING GIN (name gin_trgm_ops)
+                                ON galileo.fuzzy_client USING GIN (name gin_trgm_ops)
                             $idx$;
                         END IF;
                         IF EXISTS (
@@ -1463,7 +1463,7 @@ async def verify_client_lookup_prerequisites() -> None:
 
     Checks performed:
     - pg_trgm extension is installed (database-wide, covers galileo schema)
-    - playbook.fuzzy_client exists with expected columns (gwm_id, name, companies)
+    - galileo.fuzzy_client exists with expected columns (gwm_id, name, companies)
     - galileo.high_priority_queue_client exists with expected columns
       (entity_id, entity_id_type, label)
     - DB role has SELECT on galileo.high_priority_queue_client
@@ -1479,18 +1479,18 @@ async def verify_client_lookup_prerequisites() -> None:
                 "fuzzy matching will fail at query time"
             )
 
-        # 2. playbook.fuzzy_client structure
+        # 2. galileo.fuzzy_client structure
         fuzzy_cols = await conn.fetch(
             """
             SELECT column_name, data_type
             FROM information_schema.columns
-            WHERE table_schema = 'playbook' AND table_name = 'fuzzy_client'
+            WHERE table_schema = 'galileo' AND table_name = 'fuzzy_client'
             ORDER BY ordinal_position
             """
         )
         if not fuzzy_cols:
             logger.warning(
-                "client_lookup: playbook.fuzzy_client table not found — "
+                "client_lookup: galileo.fuzzy_client table not found — "
                 "fuzzy_client search will return no results"
             )
         else:
@@ -1499,7 +1499,7 @@ async def verify_client_lookup_prerequisites() -> None:
             missing = required_fuzzy - found_cols
             if missing:
                 logger.warning(
-                    "client_lookup: playbook.fuzzy_client is missing expected columns: %s",
+                    "client_lookup: galileo.fuzzy_client is missing expected columns: %s",
                     missing,
                 )
 

@@ -126,10 +126,10 @@ def _build_user_prompt(
     lines.append("")
 
     if fuzzy_candidates:
-        lines.append("CANDIDATES FROM CLIENT DIRECTORY (playbook.fuzzy_client):")
+        lines.append("CANDIDATES FROM CLIENT DIRECTORY (galileo.fuzzy_client):")
         lines.append("  [Score type: similarity() — higher is stronger, max 1.0]")
         for c in fuzzy_candidates:
-            companies_str = c.companies or "none listed"
+            companies_str = ", ".join(c.companies) if c.companies else "none listed"
             lines.append(
                 f"  - gwm_id: {c.gwm_id} | name: {c.name} | "
                 f"companies: {companies_str} | db_score: {c.db_score:.3f}"

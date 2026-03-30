@@ -640,7 +640,7 @@ class TestPostClientLookupFullRoundTrip:
                 name="Test Client",
                 source="fuzzy_client",
                 db_score=0.80,
-                companies="Goldman Sachs",
+                companies=["Goldman Sachs"],
             )
         ]
         mock_openai = self._make_openai_mock()
