@@ -27,12 +27,12 @@ async def _ensure_schema():
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_redis_state():
     """Reset module-level Redis singleton before and after each test."""
-    import app.streams as mod
-    mod._redis = None
-    mod._redis_lock = None
+    import app.redis_client as mod
+    mod._redis_client = None
+    mod._client_lock = None
     yield
-    mod._redis = None
-    mod._redis_lock = None
+    mod._redis_client = None
+    mod._client_lock = None
 
 
 def _make_client(*, ping_raises=None) -> AsyncMock:
@@ -56,12 +56,13 @@ class TestGetRedisSuccess:
         mock_client = _make_client()
 
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url", return_value=mock_client),
             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
             s.redis_url = "redis://localhost:6379"
-            from app.streams import get_redis
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
             result = await get_redis()
 
         assert result is mock_client
@@ -73,11 +74,12 @@ class TestGetRedisSuccess:
         mock_client = _make_client()
 
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url", return_value=mock_client) as mock_from_url,
         ):
             s.redis_url = "redis://localhost:6379"
-            from app.streams import get_redis
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
             await get_redis()
 
         mock_from_url.assert_called_once_with(
@@ -95,11 +97,12 @@ class TestGetRedisSuccess:
         mock_client = _make_client()
 
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url", return_value=mock_client),
         ):
             s.redis_url = "redis://localhost:6379"
-            from app.streams import get_redis
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
             await get_redis()
 
         mock_client.ping.assert_called_once()
@@ -126,12 +129,13 @@ class TestGetRedisRetry:
             return client
 
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url", side_effect=from_url_factory),
             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
             s.redis_url = "redis://localhost:6379"
-            from app.streams import get_redis
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
             result = await get_redis()
 
         assert result is not None
@@ -153,12 +157,13 @@ class TestGetRedisRetry:
             return client
 
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url", side_effect=from_url_factory),
             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
             s.redis_url = "redis://localhost:6379"
-            from app.streams import get_redis
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
             await get_redis()
 
         assert mock_sleep.call_count == 2
@@ -171,12 +176,13 @@ class TestGetRedisRetry:
         mock_client = _make_client(ping_raises=ConnectionError("refused"))
 
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url", return_value=mock_client),
             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
             s.redis_url = "redis://localhost:6379"
-            from app.streams import get_redis
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
             with pytest.raises(RuntimeError):
                 await get_redis()
 
@@ -195,13 +201,14 @@ class TestGetRedisExhausted:
         mock_client = _make_client(ping_raises=ConnectionError("refused"))
 
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url", return_value=mock_client),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             s.redis_url = "redis://localhost:6379"
-            from app.streams import get_redis
-            with pytest.raises(RuntimeError, match="Redis connection failed after 3 retries"):
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
+            with pytest.raises(RuntimeError, match="Redis is not available"):
                 await get_redis()
 
     @pytest.mark.asyncio
@@ -217,12 +224,13 @@ class TestGetRedisExhausted:
             return client
 
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url", side_effect=from_url_factory),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             s.redis_url = "redis://localhost:6379"
-            from app.streams import get_redis
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
             with pytest.raises(RuntimeError):
                 await get_redis()
 
@@ -238,13 +246,14 @@ class TestGetRedisNoUrl:
     async def test_raises_runtime_error_for_empty_url(self):
         """RuntimeError raised immediately when REDIS_URL is empty — no retry."""
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url") as mock_from_url,
             patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
             s.redis_url = ""
-            from app.streams import get_redis
-            with pytest.raises(RuntimeError, match="REDIS_URL is not configured"):
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
+            with pytest.raises(RuntimeError, match="Redis is not available"):
                 await get_redis()
 
         mock_from_url.assert_not_called()
@@ -254,12 +263,13 @@ class TestGetRedisNoUrl:
     async def test_raises_runtime_error_for_none_url(self):
         """RuntimeError raised immediately when REDIS_URL is None — no retry."""
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url") as mock_from_url,
         ):
             s.redis_url = None
-            from app.streams import get_redis
-            with pytest.raises(RuntimeError, match="REDIS_URL is not configured"):
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
+            with pytest.raises(RuntimeError, match="Redis is not available"):
                 await get_redis()
 
         mock_from_url.assert_not_called()
@@ -289,11 +299,12 @@ class TestGetRedisLock:
             return client
 
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url", side_effect=from_url_factory),
         ):
             s.redis_url = "redis://localhost:6379"
-            from app.streams import get_redis
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
             results = await asyncio.gather(get_redis(), get_redis())
 
         # Lock + double-check ensures only one client is created
@@ -312,11 +323,12 @@ class TestGetRedisLock:
             return _make_client()
 
         with (
-            patch("app.config.settings") as s,
+            patch("app.redis_client.settings") as s,
             patch("redis.asyncio.from_url", side_effect=from_url_factory),
         ):
             s.redis_url = "redis://localhost:6379"
-            from app.streams import get_redis
+            s.aws_elasticache_secret_name = ""
+            from app.redis_client import get_redis
             first = await get_redis()
             second = await get_redis()
 

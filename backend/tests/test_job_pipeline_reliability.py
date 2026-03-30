@@ -29,7 +29,7 @@ class TestConsumerGroupInit:
         mock_redis = AsyncMock()
         mock_redis.xgroup_create = AsyncMock()
 
-        with patch("app.streams.get_redis", return_value=mock_redis):
+        with patch("app.streams.get_redis", new=AsyncMock(return_value=mock_redis)):
             from app.streams import create_consumer_group
             await create_consumer_group("test-stream", "test-group")
 
@@ -40,10 +40,14 @@ class TestConsumerGroupInit:
     @pytest.mark.asyncio
     async def test_create_consumer_group_ignores_busygroup(self):
         """If group already exists, BUSYGROUP error is silently ignored."""
-        mock_redis = AsyncMock()
-        mock_redis.xgroup_create = AsyncMock(side_effect=Exception("BUSYGROUP Consumer Group name already exists"))
+        from redis.exceptions import RedisError
 
-        with patch("app.streams.get_redis", return_value=mock_redis):
+        mock_redis = AsyncMock()
+        mock_redis.xgroup_create = AsyncMock(
+            side_effect=RedisError("BUSYGROUP Consumer Group name already exists")
+        )
+
+        with patch("app.streams.get_redis", new=AsyncMock(return_value=mock_redis)):
             from app.streams import create_consumer_group
             # Should not raise
             await create_consumer_group("test-stream", "test-group")

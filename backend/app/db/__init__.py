@@ -1,5 +1,6 @@
 from ._pool import DatabaseNotConfigured as DatabaseNotConfigured, get_pool as get_pool, close_pool as close_pool, _acquire_team as _acquire_team
 from ._schema import init_schema as init_schema
+from ._schema import verify_client_lookup_prerequisites as verify_client_lookup_prerequisites
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
 from .sessions import (
@@ -280,6 +281,13 @@ from .metadata_schemas import (
 from .preferences import (
     db_get_preferences as db_get_preferences,
     db_upsert_preferences as db_upsert_preferences,
+)
+
+# ── Client ID Lookup ─────────────────────────────────────────────────────────
+from .client_lookup import (
+    normalize_name as normalize_name,
+    search_fuzzy_client as search_fuzzy_client,
+    search_queue_client as search_queue_client,
 )
 
 # ── Research Jobs / Job Queue ─────────────────────────────────────────────────
