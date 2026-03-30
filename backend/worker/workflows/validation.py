@@ -225,24 +225,24 @@ class ValidationCampaignWorkflow(BaseWorkflow):
                 else:
                     # Need research for this (entity, cluster)
                     # Substitute {entity} in the research question
-                    question = cluster.get("research_question_template", "")
+                    question = cluster.get("research_question_template") or ""
                     question = question.replace("{entity}", entity["label"])
 
                     cluster_jobs_to_enqueue.append({
                         "job_type": "validation_cluster",
                         "payload": {
-                            "validation_job_id": job_id,
-                            "campaign_id": campaign_id,
-                            "entity_id": eid,
-                            "cluster_id": cluster.get("id", ""),
-                            "attribute_ids": cluster_attr_ids,
-                            "research_question": question,
-                            "team_id": team_id,
+                            "validation_job_id": str(job_id),
+                            "campaign_id": str(campaign_id),
+                            "entity_id": str(eid),
+                            "cluster_id": str(cluster.get("id") or ""),
+                            "attribute_ids": [str(a) for a in cluster_attr_ids],
+                            "research_question": str(question),
+                            "team_id": str(team_id) if team_id is not None else None,
                         },
                         "parent_job_id": self.job_id,
                         "root_job_id": self.job_id,
                         "validation_job_id": job_id,
-                        "max_attempts": _settings.default_max_attempts,
+                        "max_attempts": int(_settings.default_max_attempts),
                     })
 
         # ── Step 4: Insert cached results ─────────────────────────────
