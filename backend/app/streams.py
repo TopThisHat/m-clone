@@ -11,6 +11,7 @@ consumer groups for horizontal scaling.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import socket
@@ -42,21 +43,61 @@ JOB_TYPE_TO_STREAM = {
 # Redis client (shared singleton)
 # ---------------------------------------------------------------------------
 _redis = None
+_redis_lock: asyncio.Lock | None = None
+
+
+def _get_lock() -> asyncio.Lock:
+    global _redis_lock
+    if _redis_lock is None:
+        _redis_lock = asyncio.Lock()
+    return _redis_lock
 
 
 async def get_redis():
-    """Return a shared async Redis client. Raises RuntimeError if unconfigured."""
+    """Return a shared async Redis client, with retry and double-check locking.
+
+    Raises RuntimeError immediately if REDIS_URL is not configured.
+    Retries connection up to 3 times with exponential backoff (1s, 2s, 4s).
+    """
     global _redis
     if _redis is not None:
         return _redis
+
     from app.config import settings
     import redis.asyncio as aioredis
 
     url = settings.redis_url
     if not url:
         raise RuntimeError("REDIS_URL is not configured")
-    _redis = aioredis.from_url(url, decode_responses=True)
-    return _redis
+
+    async with _get_lock():
+        if _redis is not None:  # another coroutine beat us here
+            return _redis
+
+        last_exc: Exception | None = None
+        for attempt, delay in [(1, 1), (2, 2), (3, 4)]:
+            try:
+                client = aioredis.from_url(
+                    url,
+                    decode_responses=True,
+                    socket_connect_timeout=5,
+                    socket_timeout=10,
+                    retry_on_timeout=True,
+                    health_check_interval=30,
+                )
+                await client.ping()
+                _redis = client
+                return _redis
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 3:
+                    logger.warning(
+                        "Redis connection attempt %d/3 failed: %s — retrying in %ds",
+                        attempt, exc, delay,
+                    )
+                    await asyncio.sleep(delay)
+
+        raise RuntimeError("Redis connection failed after 3 retries") from last_exc
 
 
 async def close_redis() -> None:
@@ -118,18 +159,14 @@ async def consume_jobs(
     Read up to `count` messages from the stream via consumer group.
     Returns list of (msg_id, field_dict) tuples, or empty list on timeout.
     """
-    try:
-        r = await get_redis()
-        results = await r.xreadgroup(
-            group, consumer, {stream: ">"}, count=count, block=block_ms,
-        )
-        if not results:
-            return []
-        _stream_name, messages = results[0]
-        return messages
-    except RedisError as exc:
-        logger.warning("consume_jobs error on %s: %s", stream, exc)
+    r = await get_redis()
+    results = await r.xreadgroup(
+        group, consumer, {stream: ">"}, count=count, block=block_ms,
+    )
+    if not results:
         return []
+    _stream_name, messages = results[0]
+    return messages
 
 
 async def ack_job(stream: str, group: str, msg_id: str) -> None:

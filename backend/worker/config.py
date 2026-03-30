@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # Run entity extraction consumer
     enable_extraction: bool = True
 
+    # Health check HTTP server port (0 to disable)
+    worker_health_port: int = 9091
+
     class Config:
         env_file = ".env"
         extra = "ignore"

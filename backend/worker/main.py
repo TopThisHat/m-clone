@@ -31,6 +31,7 @@ import app.agent  # noqa: F401 — registers research_agent tool decorators
 import worker.workflows  # noqa: F401 — registers all workflow handlers
 
 from worker.config import settings
+from worker.registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,11 @@ async def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
+    # Verify workflow handlers were registered during import
+    if not registry._handlers:
+        raise RuntimeError("No workflow handlers registered")
+    logger.info("Registered workflow handlers: %s", list(registry._handlers.keys()))
+
     # Initialize the OpenAI client (same factory the app uses — handles
     # Azure/proxy/standard mode).  Eagerly created so aws_mode fails fast.
     from app.openai_factory import initialize as init_openai
@@ -63,9 +69,19 @@ async def main() -> None:
     await get_pool()
     logger.info("DB pool initialized")
 
+    from app.streams import get_redis
+    r = await get_redis()
+    await r.ping()
+    logger.info("Redis connection verified")
+
     # Start workflow consumer
     from worker.consumer import WorkflowConsumer
     consumer = WorkflowConsumer()
+
+    if settings.worker_health_port:
+        from worker.health import start_health_server
+        await start_health_server(settings.worker_health_port, consumer)
+        logger.info("Health server listening on port %d", settings.worker_health_port)
 
     # Optionally start entity extraction worker
     extraction_task = None

@@ -11,9 +11,6 @@ from __future__ import annotations
 import json
 import logging
 
-
-from app.openai_factory import get_openai_client
-
 logger = logging.getLogger(__name__)
 
 MAX_CLUSTER_SIZE = 10  # Cap per devil's advocate recommendation
@@ -68,6 +65,7 @@ Return JSON:
     ]
 }}"""
 
+    from app.openai_factory import get_openai_client
     resp = await get_openai_client().chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],

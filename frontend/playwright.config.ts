@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const TEST_PORT = process.env.CI ? 5173 : 5174;
+
 export default defineConfig({
 	testDir: './e2e',
 	fullyParallel: true,
@@ -8,7 +10,7 @@ export default defineConfig({
 	workers: process.env.CI ? 1 : undefined,
 	reporter: 'html',
 	use: {
-		baseURL: 'http://localhost:5173',
+		baseURL: `http://localhost:${TEST_PORT}`,
 		trace: 'on-first-retry',
 	},
 	projects: [
@@ -21,9 +23,17 @@ export default defineConfig({
 			use: { ...devices['Pixel 5'] },
 		},
 	],
-	webServer: {
-		command: 'npm run dev',
-		url: 'http://localhost:5173',
-		reuseExistingServer: !process.env.CI,
-	},
+	webServer: [
+		{
+			command: 'npx tsx e2e/mock-api-server.ts',
+			url: 'http://localhost:8001/health',
+			reuseExistingServer: !process.env.CI,
+		},
+		{
+			command: `npx vite dev --port ${TEST_PORT}`,
+			url: `http://localhost:${TEST_PORT}`,
+			reuseExistingServer: !process.env.CI,
+			env: { API_TARGET: 'http://localhost:8001' },
+		},
+	],
 });
