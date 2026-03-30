@@ -1,7 +1,7 @@
 """
 Entity & Relationship Extraction Worker.
 
-Consumes reports from the Redis 'entity_extraction' stream, calls GPT-4o-mini
+Consumes reports from the Redis 'entity_extraction' stream, calls GPT-5.1
 to extract named entities and relationships, deduplicates them against the
 global knowledge graph in PostgreSQL, and detects/logs predicate conflicts.
 
@@ -53,7 +53,7 @@ async def extract_entities_and_relationships(
     max_chars: int | None = 12_000,
 ) -> ExtractionResult:
     """
-    Call GPT-4o-mini to extract named entities and relationships from text.
+    Call GPT-5.1 to extract named entities and relationships from text.
 
     When is_document=True, uses an enhanced prompt that emphasizes:
     - Table structure preservation (markdown tables → relationships)
@@ -113,10 +113,10 @@ Text to extract from:
         from app.openai_factory import get_openai_client
 
         resp = await get_openai_client().chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.1",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            max_tokens=4000,
+            max_completion_tokens=4000,
         )
         raw = json.loads(resp.choices[0].message.content)
         return ExtractionResult.model_validate(raw)

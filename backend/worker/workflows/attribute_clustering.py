@@ -68,10 +68,10 @@ Return JSON:
     from app.openai_factory import get_openai_client
     client = get_openai_client()
     resp = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
-        max_tokens=3000,
+        max_completion_tokens=3000,
     )
     content = resp.choices[0].message.content
     if not content:

@@ -45,8 +45,7 @@ async def clarify_endpoint(clarification_id: str, body: ClarifyRequest, user: di
 def available_models() -> list[dict[str, str]]:
     """Return the list of available AI models."""
     models = [
-        {"id": "openai:gpt-4o", "label": "GPT-4o", "description": "Flagship"},
-        {"id": "openai:gpt-4o-mini", "label": "GPT-4o Mini", "description": "Fast & efficient"},
+        {"id": "openai:gpt-5.1", "label": "GPT-5.1", "description": "Flagship"},
     ]
     if settings.anthropic_api_key:
         models.append({

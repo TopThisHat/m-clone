@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 async def extract_memories(session_id: str, query: str, report: str) -> None:
     """
-    Call GPT-4o-mini to extract named entities + facts from a research report
+    Call GPT-5.1 to extract named entities + facts from a research report
     and save them to the agent_memory table. Non-blocking — failures are logged
     but not raised.
     """
@@ -34,9 +34,9 @@ async def extract_memories(session_id: str, query: str, report: str) -> None:
             f"Query: {query}\n\nReport:\n{report[:6000]}"
         )
         resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.1",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1000,
+            max_completion_tokens=1000,
             temperature=0,
         )
         raw = resp.choices[0].message.content or "[]"
@@ -77,7 +77,7 @@ async def extract_memories(session_id: str, query: str, report: str) -> None:
 
 async def generate_suggestions(query: str, report: str) -> list[str]:
     """
-    Call GPT-4o-mini to generate 3 follow-up research questions based on the
+    Call GPT-5.1 to generate 3 follow-up research questions based on the
     query and completed report. Returns a list of strings (empty on error).
     """
     try:
@@ -88,9 +88,9 @@ async def generate_suggestions(query: str, report: str) -> list[str]:
             f"Query: {query}\n\nReport:\n{report[:4000]}"
         )
         resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5.1",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
+            max_completion_tokens=300,
             temperature=0.7,
         )
         raw = (resp.choices[0].message.content or "[]").strip()

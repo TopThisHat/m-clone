@@ -354,7 +354,8 @@ _MAX_HISTORY_TOKENS = 100_000
 
 try:
     import tiktoken
-    _enc = tiktoken.encoding_for_model("gpt-4o")
+    # Use o200k_base encoding (GPT-5.1 family); fall back if unavailable
+    _enc = tiktoken.get_encoding("o200k_base")
 except Exception:
     _enc = None
 
@@ -444,7 +445,7 @@ class ResearchOrchestrator:
 
     def __init__(self, model: str | None = None) -> None:
         self.client: AsyncOpenAI = get_openai_client()
-        # Strip provider prefix if present (e.g. "openai:gpt-4o" → "gpt-4o")
+        # Strip provider prefix if present (e.g. "openai:gpt-5.1" → "gpt-5.1")
         raw = model or settings.default_model
         self.model = raw.split(":", 1)[-1] if ":" in raw else raw
 

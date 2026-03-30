@@ -31,7 +31,7 @@ from app.routers.import_export import router as import_export_router
 
 app = FastAPI(
     title="m-clone Research Agent",
-    description="Deep research agent powered by GPT-4o with A2A interoperability",
+    description="Deep research agent powered by GPT-5.1 with A2A interoperability",
     version="1.0.0",
 )
 
