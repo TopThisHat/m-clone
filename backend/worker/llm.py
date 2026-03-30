@@ -1,5 +1,5 @@
 """
-GPT-4o-mini structured output to determine attribute presence from a research report.
+GPT-5.1 structured output to determine attribute presence from a research report.
 
 Supports both single-attribute (legacy) and multi-attribute (clustered) verification.
 """
@@ -22,7 +22,7 @@ LOW_CONFIDENCE_THRESHOLD = 0.5
 
 async def determine_presence(entity: dict, attribute: dict, report_md: str) -> dict:
     """
-    Ask GPT-4o-mini whether the entity possesses the attribute, based on the report.
+    Ask GPT-5.1 whether the entity possesses the attribute, based on the report.
     Returns: {"present": bool, "confidence": float, "evidence": str}
 
     LEGACY — kept for backward compat with validation_pair workflow.
@@ -39,10 +39,10 @@ Return JSON only: {{"present": true|false, "confidence": 0.0-1.0, "evidence": "q
     try:
         async with _LLM_SEM:
             resp = await get_openai_client().chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5.1",
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
-                max_tokens=300,
+                max_completion_tokens=300,
             )
         return json.loads(resp.choices[0].message.content)
     except Exception as exc:
@@ -114,10 +114,10 @@ Return JSON with a "results" array in the same order as the attributes above:
     try:
         async with _LLM_SEM:
             resp = await get_openai_client().chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5.1",
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
-                max_tokens=3000,
+                max_completion_tokens=3000,
             )
         raw = json.loads(resp.choices[0].message.content)
         results_raw = raw.get("results", [])

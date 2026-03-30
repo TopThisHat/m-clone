@@ -67,7 +67,7 @@
 		<!-- Status / version -->
 		<div class="flex items-center gap-6">
 			<div class="hidden sm:flex items-center gap-4 text-xs text-slate-600">
-				<span>GPT-4o</span>
+				<span>GPT-5.1</span>
 				<span class="w-px h-3 bg-navy-600"></span>
 				<span>Tavily Search</span>
 				<span class="w-px h-3 bg-navy-600"></span>

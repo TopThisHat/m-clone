@@ -23,7 +23,7 @@
 
 	// ── Model selection ─────────────────────────────────────────────────────
 	let models = $state<{ id: string; label: string; description: string }[]>([]);
-	let selectedModel = $state('openai:gpt-4o');
+	let selectedModel = $state('openai:gpt-5.1');
 
 	onMount(async () => {
 		try {

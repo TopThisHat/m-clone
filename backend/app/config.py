@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # AI models
     anthropic_api_key: str = ""
-    default_model: str = "openai:gpt-4o"
+    default_model: str = "openai:gpt-5.1"
 
     # AWS Secrets Manager (set in dev/uat/prod instead of DATABASE_URL / REDIS_URL)
     aws_secret_name: str = ""              # e.g. "prod/myapp/db"

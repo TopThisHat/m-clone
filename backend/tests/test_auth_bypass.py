@@ -45,7 +45,7 @@ def client():
                 mock_settings.openai_api_key = "fake"
                 mock_settings.tavily_api_key = "fake"
                 mock_settings.anthropic_api_key = ""
-                mock_settings.default_model = "openai:gpt-4o"
+                mock_settings.default_model = "openai:gpt-5.1"
                 mock_settings.max_pdf_size_mb = 20
 
                 from app.main import app

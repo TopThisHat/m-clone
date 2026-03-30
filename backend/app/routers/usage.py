@@ -9,7 +9,7 @@ from app.db import DatabaseNotConfigured, get_pool
 
 router = APIRouter(prefix="/api/usage", tags=["usage"])
 
-# Blended GPT-4o cost estimate (input + output average)
+# Blended GPT-5.1 cost estimate (input + output average)
 _COST_PER_TOKEN = 0.0000025
 
 

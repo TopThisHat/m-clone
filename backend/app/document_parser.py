@@ -6,7 +6,7 @@ Supported formats:
   - DOCX (.docx)        — python-docx (paragraphs + tables)
   - Excel (.xlsx, .xls) — openpyxl (all sheets, preserving table structure)
   - CSV/TSV (.csv, .tsv)— stdlib csv
-  - Images (.png, .jpg, .jpeg, .gif, .webp) — GPT-4o vision
+  - Images (.png, .jpg, .jpeg, .gif, .webp) — GPT-5.1 vision
 """
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ _MAX_PDF_PAGES = 500
 _MAX_EXCEL_SHEETS = 50
 # Maximum rows processed per sheet
 _MAX_EXCEL_ROWS = 100_000
-# Maximum image size for GPT-4o vision (20 MB)
+# Maximum image size for GPT-5.1 vision (20 MB)
 _MAX_IMAGE_SIZE = 20 * 1024 * 1024
 
 
@@ -196,7 +196,7 @@ def extract_csv(contents: bytes, filename: str = "") -> str:
 
 
 async def extract_image(contents: bytes, filename: str = "", mime_type: str = "") -> str:
-    """Extract text from an image using GPT-4o vision."""
+    """Extract text from an image using GPT-5.1 vision."""
     if len(contents) > _MAX_IMAGE_SIZE:
         raise ValueError(f"Image too large ({len(contents) // 1024 // 1024} MB). Maximum is {_MAX_IMAGE_SIZE // 1024 // 1024} MB.")
 
@@ -211,7 +211,7 @@ async def extract_image(contents: bytes, filename: str = "", mime_type: str = ""
     b64 = base64.b64encode(contents).decode("utf-8")
 
     resp = await get_openai_client().chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{
             "role": "user",
             "content": [
@@ -231,7 +231,7 @@ async def extract_image(contents: bytes, filename: str = "", mime_type: str = ""
                 },
             ],
         }],
-        max_tokens=4000,
+        max_completion_tokens=4000,
         timeout=60,
     )
     return resp.choices[0].message.content or ""
