@@ -54,7 +54,7 @@ async def enqueue(
             RETURNING id
             """,
             job_type,
-            json.dumps(payload),
+            json.dumps(_sanitize_payload(payload)),
             parent_job_id,
             root_job_id,
             max_attempts if max_attempts is not None else _DEFAULT_MAX_ATTEMPTS,
@@ -65,6 +65,36 @@ async def enqueue(
         job_id = str(row["id"])
         await conn.execute("SELECT pg_notify($1, $2)", listen_channel, job_id)
     return job_id
+
+
+def _sanitize_payload(payload: dict) -> dict:
+    """Ensure all values in a job payload are JSON-serializable.
+
+    Converts non-serializable values (functions, classes, etc.) to their
+    string representation and logs a warning so the root cause can be tracked.
+    """
+    clean: dict = {}
+    for k, v in payload.items():
+        if v is None or isinstance(v, (str, int, float, bool)):
+            clean[k] = v
+        elif isinstance(v, (list, tuple)):
+            clean[k] = [
+                item if isinstance(item, (str, int, float, bool, type(None)))
+                else str(item)
+                for item in v
+            ]
+        elif isinstance(v, dict):
+            clean[k] = _sanitize_payload(v)
+        elif callable(v):
+            logger.error(
+                "enqueue payload key %r has callable value %r — "
+                "this is a bug; converting to string",
+                k, v,
+            )
+            clean[k] = str(v)
+        else:
+            clean[k] = str(v)
+    return clean
 
 
 async def enqueue_many(
@@ -91,7 +121,7 @@ async def enqueue_many(
             raise ValueError(f"enqueue_many: {j['job_type']} job[{i}] missing 'validation_job_id'")
 
     job_types = [j["job_type"] for j in jobs]
-    payloads = [json.dumps(j.get("payload", {})) for j in jobs]
+    payloads = [json.dumps(_sanitize_payload(j.get("payload", {}))) for j in jobs]
     parent_ids = [j.get("parent_job_id") for j in jobs]
     root_ids = [j.get("root_job_id") for j in jobs]
     max_attempts_list = [j.get("max_attempts", max_attempts) for j in jobs]

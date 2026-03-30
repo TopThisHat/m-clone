@@ -137,13 +137,18 @@ async def publish_job(stream: str, job_data: dict[str, Any]) -> str:
     Publish a job to a Redis Stream. Returns the message ID.
     job_data values are serialised to strings (Redis requirement).
     """
+    from app.job_queue import _sanitize_payload
+
     r = await get_redis()
     # Flatten to string values for Redis
     fields = {}
     for k, v in job_data.items():
         if v is None:
             continue
-        fields[k] = json.dumps(v) if isinstance(v, (dict, list)) else str(v)
+        if isinstance(v, (dict, list)):
+            fields[k] = json.dumps(_sanitize_payload(v) if isinstance(v, dict) else v)
+        else:
+            fields[k] = str(v)
     msg_id = await r.xadd(stream, fields)
     return msg_id
 

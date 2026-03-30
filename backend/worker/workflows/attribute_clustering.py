@@ -66,13 +66,17 @@ Return JSON:
 }}"""
 
     from app.openai_factory import get_openai_client
-    resp = await get_openai_client().chat.completions.create(
+    client = get_openai_client()
+    resp = await client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
         max_tokens=3000,
     )
-    raw = json.loads(resp.choices[0].message.content)
+    content = resp.choices[0].message.content
+    if not content:
+        raise ValueError("LLM returned empty response for attribute clustering")
+    raw = json.loads(content)
     clusters = raw.get("clusters", [])
 
     # Post-process: enforce max cluster size by splitting
