@@ -31,7 +31,7 @@ class CandidateResult(BaseModel):
     name: str                         # display name for this candidate
     source: Literal["fuzzy_client", "high_priority_queue_client"]
     db_score: float                   # raw similarity() or word_similarity() score
-    companies: str | None = None      # populated from fuzzy_client only
+    companies: list[str] | None = None  # populated from fuzzy_client only
     label_excerpt: str | None = None  # first 200 chars of label; hpq only
 
 

@@ -1,7 +1,7 @@
 """DB query layer for client ID lookup.
 
 Two independent queries against separate schemas:
-  - playbook.fuzzy_client         — clean name list, similarity() scoring
+  - galileo.fuzzy_client           — clean name list, similarity() scoring
   - galileo.high_priority_queue_client — bio-text labels, word_similarity() scoring
 
 SET LOCAL is used inside a transaction so threshold changes are scoped to
@@ -63,7 +63,7 @@ async def search_fuzzy_client(
     company: str | None = None,  # noqa: ARG001 — reserved for future company boost
     limit: int = 10,
 ) -> list[CandidateResult]:
-    """Search playbook.fuzzy_client using pg_trgm similarity().
+    """Search galileo.fuzzy_client using pg_trgm similarity().
 
     Uses SET LOCAL inside a transaction to scope the threshold to this
     connection acquire only, preventing leakage on pooled connections.
@@ -86,7 +86,7 @@ async def search_fuzzy_client(
                         name,
                         companies,
                         similarity(LOWER(name), LOWER($1)) AS score
-                    FROM playbook.fuzzy_client
+                    FROM galileo.fuzzy_client
                     WHERE LOWER(name) % LOWER($1)
                     ORDER BY score DESC
                     LIMIT $2
@@ -100,7 +100,7 @@ async def search_fuzzy_client(
                 name=row["name"],
                 source="fuzzy_client",
                 db_score=float(row["score"]),
-                companies=row["companies"] or None,
+                companies=row["companies"] if row["companies"] else None,
             )
             for row in rows
         ]

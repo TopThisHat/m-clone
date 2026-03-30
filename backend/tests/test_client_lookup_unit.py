@@ -50,7 +50,7 @@ def _make_candidate(
     name: str = "John Smith",
     source: str = "fuzzy_client",
     db_score: float = 0.90,
-    companies: str | None = None,
+    companies: list[str] | None = None,
     label_excerpt: str | None = None,
 ) -> CandidateResult:
     return CandidateResult(
