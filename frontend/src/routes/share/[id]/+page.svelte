@@ -28,6 +28,7 @@
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { tableExport } from '$lib/actions/tableExport';
 	import { goto } from '$app/navigation';
+	import { browser } from '$app/environment';
 
 	let { data }: { data: PageData } = $props();
 	const session = $derived(data.session);
@@ -179,8 +180,10 @@
 	onDestroy(() => {
 		if (pollInterval) clearInterval(pollInterval);
 		if (presenceInterval) clearInterval(presenceInterval);
-		document.removeEventListener('visibilitychange', handleVisibility);
-		window.removeEventListener('resize', checkMobile);
+		if (browser) {
+			document.removeEventListener('visibilitychange', handleVisibility);
+			window.removeEventListener('resize', checkMobile);
+		}
 	});
 
 	function onCommentsOpen() {
