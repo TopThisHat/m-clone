@@ -85,40 +85,90 @@ async def _get_client() -> Any:
 
 
 async def _create_client() -> Any:
-    """Build and return a new redis.asyncio client, or None if unconfigured."""
+    """Build and return a new redis.asyncio client, or None if unconfigured.
+
+    Merges connection hardening (socket timeouts, retry-on-timeout,
+    health-check interval) with AWS ElastiCache / token rotation support.
+    Retries up to 3 times with exponential backoff before giving up.
+    """
     try:
         import redis.asyncio as aioredis
     except ImportError:
         return None
+
+    # Shared connection params for resilience
+    base_kwargs: dict[str, Any] = {
+        "decode_responses": True,
+        "socket_connect_timeout": 5,
+        "socket_timeout": 10,
+        "retry_on_timeout": True,
+        "health_check_interval": 30,
+    }
 
     if settings.aws_elasticache_secret_name:
         try:
             from app.secrets import build_redis_url, get_redis_secret
             secret = get_redis_secret(settings.aws_elasticache_secret_name, settings.aws_region)
             url, token = build_redis_url(secret)
-            kwargs: dict[str, Any] = {
-                "decode_responses": True,
-                "ssl_cert_reqs": "none",   # ElastiCache uses self-signed certs by default
-            }
+            kwargs = {**base_kwargs, "ssl_cert_reqs": "none"}
             if token:
                 kwargs["password"] = token
             client = aioredis.from_url(url, **kwargs)
+            await client.ping()
             logger.info("Redis client created via Secrets Manager")
             return client
         except Exception as exc:
             logger.error("Failed to create Redis client from secret: %s", exc)
             return None
 
-    if settings.redis_url:
+    url = settings.redis_url
+    if not url:
+        return None
+
+    last_exc: Exception | None = None
+    for attempt, delay in [(1, 1), (2, 2), (3, 4)]:
         try:
-            client = aioredis.from_url(settings.redis_url, decode_responses=True)
+            client = aioredis.from_url(url, **base_kwargs)
+            await client.ping()
             logger.info("Redis client created from REDIS_URL")
             return client
         except Exception as exc:
-            logger.error("Failed to create Redis client: %s", exc)
-            return None
+            last_exc = exc
+            if attempt < 3:
+                logger.warning(
+                    "Redis connection attempt %d/3 failed: %s — retrying in %ds",
+                    attempt, exc, delay,
+                )
+                await asyncio.sleep(delay)
 
+    logger.error("Redis connection failed after 3 retries: %s", last_exc)
     return None
+
+
+async def get_redis() -> Any:
+    """Return the shared Redis client, raising if unavailable.
+
+    This is the public entry point used by streams, workers, and the
+    job runner — anywhere Redis is *required* (not optional).
+    """
+    client = await _get_client()
+    if client is None:
+        raise RuntimeError(
+            "Redis is not available (REDIS_URL not set or connection failed)"
+        )
+    return client
+
+
+async def close_redis() -> None:
+    """Shut down the shared Redis client."""
+    global _redis_client
+    async with _get_lock():
+        client, _redis_client = _redis_client, None
+    if client is not None:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
 
 
 async def _reset_client() -> None:
