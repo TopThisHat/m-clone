@@ -1,3 +1,61 @@
+import { apiFetch } from './apiFetch';
+
+// ── Query types ────────────────────────────────────────────────────────────────
+
+export interface MatchEntry {
+	/** Extracted value — scalar for single-column, keyed dict for multi-column paired queries */
+	value: string | Record<string, string>;
+	/** Column name (string) or array of column names for paired queries */
+	source_column: string | string[];
+	/** 1-based row numbers where this match was found */
+	row_numbers: number[];
+	/** Extraction confidence in range [0, 1] */
+	confidence: number;
+	/** Character-level positions within source text (prose documents only) */
+	text_positions?: { start: number; end: number }[];
+}
+
+export interface QueryResult {
+	matches: MatchEntry[];
+	/** Human-readable summary of how the query was interpreted — always a non-empty string */
+	query_interpretation: string;
+	/** Full match count, even when matches array is truncated by limit */
+	total_matches: number;
+	/** Null on success; human-readable message on any failure condition */
+	error: string | null;
+}
+
+export interface ColumnClassificationDetail {
+	/** Import role assigned by the LLM classifier */
+	role: 'entity_label' | 'entity_gwm_id' | 'entity_description' | 'attribute';
+	/** Semantic category of the column's values */
+	semantic_type: 'person' | 'organization' | 'location' | 'date' | 'financial_amount' | 'generic';
+	/** Classifier confidence in range [0, 1] */
+	confidence: number;
+	/** LLM reasoning for the classification */
+	reasoning: string;
+}
+
+// ── API functions ───────────────────────────────────────────────────────────────
+
+export async function queryDocument(
+	sessionKey: string,
+	query: string,
+	limit?: number
+): Promise<QueryResult> {
+	const url = limit != null
+		? `/api/documents/query?limit=${limit}`
+		: '/api/documents/query';
+
+	return apiFetch(url, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ session_key: sessionKey, query }),
+	});
+}
+
+// ── Document types ──────────────────────────────────────────────────────────────
+
 export interface DocumentInfo {
 	filename: string;
 	type: string;
