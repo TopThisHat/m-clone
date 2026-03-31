@@ -519,6 +519,7 @@ class TestReturnDictCounters:
             "skipped_duplicates": 0,
             "filtered_by_unknown_predicate": 0,
             "filtered_by_relevance": 0,
+            "client_lookups": 0,
         }
 
 
