@@ -1576,3 +1576,145 @@ class TestQueryResultCaching:
 
         assert result.query_interpretation == "from cache"
         mock_client.chat.completions.create.assert_not_called()
+
+
+# ── per-query cost logging ─────────────────────────────────────────────────────
+
+
+class TestQueryCostLogging:
+    """Tests for _estimate_cost, _accumulate_usage, and _log_query_cost."""
+
+    def test_estimate_cost_known_model(self):
+        """_estimate_cost returns correct value for a known model."""
+        from app.document_intelligence import _estimate_cost
+
+        # gpt-4.1: 0.002/1k input, 0.008/1k output
+        cost = _estimate_cost("gpt-4.1", prompt_tokens=1000, completion_tokens=500)
+        # (1000/1000)*0.002 + (500/1000)*0.008 = 0.002 + 0.004 = 0.006
+        assert abs(cost - 0.006) < 1e-9
+
+    def test_estimate_cost_unknown_model_uses_default(self):
+        """_estimate_cost falls back to default pricing for unknown models."""
+        from app.document_intelligence import _estimate_cost, _DEFAULT_PRICING
+
+        in_rate, out_rate = _DEFAULT_PRICING
+        cost = _estimate_cost("unknown-model-xyz", prompt_tokens=1000, completion_tokens=1000)
+        expected = (1000 / 1000) * in_rate + (1000 / 1000) * out_rate
+        assert abs(cost - expected) < 1e-9
+
+    def test_estimate_cost_zero_tokens(self):
+        """_estimate_cost returns 0 for zero tokens."""
+        from app.document_intelligence import _estimate_cost
+
+        assert _estimate_cost("gpt-4.1", 0, 0) == 0.0
+
+    def test_accumulate_usage_sums_tokens(self):
+        """_accumulate_usage adds prompt and completion tokens from response."""
+        from app.document_intelligence import _accumulate_usage
+
+        usage_dict: dict[str, int] = {}
+        mock_response = MagicMock()
+        mock_response.usage.prompt_tokens = 200
+        mock_response.usage.completion_tokens = 50
+        _accumulate_usage(usage_dict, mock_response)
+        assert usage_dict["prompt_tokens"] == 200
+        assert usage_dict["completion_tokens"] == 50
+
+        # Second accumulation sums
+        _accumulate_usage(usage_dict, mock_response)
+        assert usage_dict["prompt_tokens"] == 400
+        assert usage_dict["completion_tokens"] == 100
+
+    def test_accumulate_usage_no_usage_attr(self):
+        """_accumulate_usage silently skips responses without a usage attribute."""
+        from app.document_intelligence import _accumulate_usage
+
+        usage_dict: dict[str, int] = {}
+        mock_response = MagicMock(spec=[])  # no attributes
+        _accumulate_usage(usage_dict, mock_response)  # should not raise
+        assert usage_dict == {}
+
+    @pytest.mark.asyncio
+    async def test_log_query_cost_writes_to_redis(self):
+        """_log_query_cost calls incrbyfloat and expire on the cost key."""
+        from app.document_intelligence import _log_query_cost
+
+        mock_redis = AsyncMock()
+        mock_redis.incrbyfloat = AsyncMock()
+        mock_redis.expire = AsyncMock()
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            await _log_query_cost(
+                "sess-cost", "find all", "simple", "gpt-4.1",
+                {"prompt_tokens": 1000, "completion_tokens": 500},
+            )
+
+        mock_redis.incrbyfloat.assert_called_once()
+        cost_key = mock_redis.incrbyfloat.call_args[0][0]
+        assert "doc_cost:sess-cost" == cost_key
+        added_value = mock_redis.incrbyfloat.call_args[0][1]
+        assert added_value > 0
+        mock_redis.expire.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_log_query_cost_redis_error_is_silent(self):
+        """Redis errors in _log_query_cost do not propagate."""
+        from app.document_intelligence import _log_query_cost
+
+        with patch(
+            "app.document_intelligence.get_redis",
+            AsyncMock(side_effect=RuntimeError("Redis down")),
+        ):
+            await _log_query_cost("sess-x", "query", "complex", "gpt-4o", {})  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_cost_logged_per_query_execution(self):
+        """After a full query execution, incrbyfloat is called for the session."""
+        session = _make_session(["| name |\n|---|\n| Alice |"])
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="name")])],
+            total_sheets=1,
+            summary="test",
+        )
+
+        call_count = [0]
+
+        async def mock_llm(**kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return _make_openai_response({
+                    "relevant_columns": ["name"],
+                    "extraction_instruction": "list all names",
+                    "document_type": "tabular",
+                    "complexity": "simple",
+                })
+            return _make_openai_response({"matches": []})
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=mock_llm)
+
+        schema_json = schema.model_dump_json()
+
+        async def get_by_key(key):
+            return schema_json if "doc_schema:" in key else None
+
+        incrbyfloat_calls: list = []
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=get_by_key)
+        mock_redis.expire = AsyncMock()
+        mock_redis.setex = AsyncMock()
+        mock_redis.sadd = AsyncMock()
+        mock_redis.incrbyfloat = AsyncMock(side_effect=lambda *a, **kw: incrbyfloat_calls.append(a))
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        await query_document("sess-cost-log", "list all names")
+
+        cost_calls = [c for c in incrbyfloat_calls if "doc_cost:" in str(c[0])]
+        assert len(cost_calls) == 1
+        assert cost_calls[0][0] == "doc_cost:sess-cost-log"

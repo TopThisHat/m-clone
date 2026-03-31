@@ -636,6 +636,66 @@ async def _generate_schema_summary(
     return f"{document_type.capitalize()} document."
 
 
+# ── per-query cost tracking ────────────────────────────────────────────────
+
+# (input_usd_per_1k_tokens, output_usd_per_1k_tokens)
+_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "gpt-4.1":        (0.002, 0.008),
+    "gpt-4.1-mini":   (0.0004, 0.0016),
+    "gpt-4o":         (0.0025, 0.010),
+    "gpt-4o-mini":    (0.00015, 0.0006),
+    "gpt-4":          (0.030, 0.060),
+    "gpt-3.5-turbo":  (0.001, 0.002),
+}
+_DEFAULT_PRICING: tuple[float, float] = (0.001, 0.003)
+_DOC_COST_PREFIX = "doc_cost:"
+_DOC_COST_TTL_SECONDS = 7 * 24 * 3600  # 7 days
+
+
+def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """Return estimated USD cost for a single LLM call."""
+    in_rate, out_rate = _MODEL_PRICING.get(model, _DEFAULT_PRICING)
+    return (prompt_tokens / 1000) * in_rate + (completion_tokens / 1000) * out_rate
+
+
+def _accumulate_usage(into: dict[str, int], response: Any) -> None:
+    """Add token counts from an OpenAI response object to *into* (in-place)."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    into["prompt_tokens"] = into.get("prompt_tokens", 0) + getattr(usage, "prompt_tokens", 0)
+    into["completion_tokens"] = into.get("completion_tokens", 0) + getattr(usage, "completion_tokens", 0)
+
+
+async def _log_query_cost(
+    session_key: str,
+    query: str,
+    complexity: str,
+    model: str,
+    usage: dict[str, int],
+) -> None:
+    """Log structured cost entry and increment the per-session cumulative cost in Redis."""
+    prompt_tokens = usage.get("prompt_tokens", 0)
+    completion_tokens = usage.get("completion_tokens", 0)
+    cost = _estimate_cost(model, prompt_tokens, completion_tokens)
+    query_hash = hashlib.md5(query.encode()).hexdigest()  # noqa: S324 — not security-sensitive
+
+    logger.info(
+        "query_cost session=%s query_hash=%s complexity=%s model=%s "
+        "prompt_tokens=%d completion_tokens=%d estimated_cost_usd=%.6f",
+        session_key, query_hash, complexity, model,
+        prompt_tokens, completion_tokens, cost,
+    )
+
+    cost_key = f"{_DOC_COST_PREFIX}{session_key}"
+    try:
+        redis = await get_redis()
+        await redis.incrbyfloat(cost_key, cost)
+        await redis.expire(cost_key, _DOC_COST_TTL_SECONDS)
+    except Exception as exc:
+        logger.warning("_log_query_cost: Redis update failed for session=%s: %s", session_key, exc)
+
+
 # ── query_document cache ──────────────────────────────────────────────────
 
 _QUERY_CACHE_PREFIX = "doc_query:"
@@ -748,8 +808,9 @@ async def _query_document_impl(session_key: str, query: str) -> QueryResult:
         logger.info("query_document: no cached schema for %s — computing synchronously", session_key)
         schema = await analyze_schema(session_key, session)
 
-    # --- Build QueryPlan via LLM ---
-    plan = await _build_query_plan(schema, query)
+    # --- Build QueryPlan via LLM (track token usage) ---
+    usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
+    plan = await _build_query_plan(schema, query, usage)
 
     # --- Phase 2: Extract data ---
     doc_type = schema.document_type if schema else "prose"
@@ -760,13 +821,16 @@ async def _query_document_impl(session_key: str, query: str) -> QueryResult:
     if doc_type == "tabular":
         if plan.complexity == "complex":
             matches, interpretation, chunks_processed, chunks_total = (
-                await _extract_tabular_llm(session, plan, schema)
+                await _extract_tabular_llm(session, plan, schema, usage)
             )
             partial = chunks_processed < chunks_total
         else:
             matches, interpretation = _extract_tabular(session, plan, query)
     else:
-        matches, interpretation = await _extract_prose(session, plan, query)
+        matches, interpretation = await _extract_prose(session, plan, query, usage)
+
+    # --- Log cost and update per-session cumulative cost ---
+    await _log_query_cost(session_key, query, plan.complexity, settings.query_model, usage)
 
     result = QueryResult(
         matches=matches,
@@ -801,6 +865,7 @@ async def _load_schema(session_key: str) -> DocumentSchema | None:
 async def _build_query_plan(
     schema: DocumentSchema | None,
     query: str,
+    usage: dict[str, int] | None = None,
 ) -> QueryPlan:
     """Call LLM with the document schema and user query to produce a QueryPlan."""
     if schema is None:
@@ -850,6 +915,8 @@ Return valid JSON:
             ],
         )
         raw = response.choices[0].message.content or "{}"
+        if usage is not None:
+            _accumulate_usage(usage, response)
         data = json.loads(raw)
         raw_complexity = data.get("complexity", "simple")
         complexity: Literal["simple", "complex"] = (
@@ -984,10 +1051,88 @@ _TABULAR_ROWS_PER_CHUNK = 100
 _TABULAR_CHUNK_MAX_CHARS = 8_000
 
 
+def _filter_columns(text: str, relevant_columns: list[str]) -> str:
+    """Return a markdown table containing only the specified columns.
+
+    Preserves the header and separator rows; data rows are filtered to the
+    matching column indices.  Non-table lines are kept as-is.  When no
+    matching columns are found, the original text is returned unchanged.
+
+    Args:
+        text: Raw document text (may contain one or more markdown tables).
+        relevant_columns: Column names to keep (case-insensitive).
+
+    Returns:
+        Filtered text with only the selected columns.
+    """
+    if not relevant_columns:
+        return text
+
+    relevant_lower = {c.lower() for c in relevant_columns}
+    lines = text.splitlines()
+    output_lines: list[str] = []
+    col_indices: list[int] | None = None
+
+    for line in lines:
+        stripped = line.rstrip()
+        m = _MD_TABLE_ROW_RE.match(stripped)
+        if not m:
+            output_lines.append(stripped)
+            col_indices = None  # reset on non-table line
+            continue
+
+        cells = [c.strip() for c in m.group(1).split("|")]
+        is_sep = all(re.match(r"^[-:]+$", c) for c in cells if c)
+
+        if is_sep:
+            if col_indices is not None:
+                sep = "| " + " | ".join(["---"] * len(col_indices)) + " |"
+                output_lines.append(sep)
+            continue
+
+        if col_indices is None:
+            # Header row — determine which indices to keep
+            col_indices = [i for i, h in enumerate(cells) if h.lower() in relevant_lower]
+            if not col_indices:
+                return text  # no match — return original
+            selected = [cells[i] for i in col_indices]
+            output_lines.append("| " + " | ".join(selected) + " |")
+        else:
+            selected = [cells[i] if i < len(cells) else "" for i in col_indices]
+            output_lines.append("| " + " | ".join(selected) + " |")
+
+    return "\n".join(output_lines)
+
+
+def _merge_chunk_results(chunk_results: list[list[MatchEntry]]) -> list[MatchEntry]:
+    """Merge and deduplicate MatchEntry lists from parallel chunk extraction.
+
+    Two entries are considered duplicates when their ``value`` field serialises
+    to the same JSON string.  The first occurrence is kept; insertion order is
+    preserved across chunks.
+
+    Args:
+        chunk_results: Per-chunk MatchEntry lists returned by LLM extraction tasks.
+
+    Returns:
+        Flat, deduplicated list of MatchEntry objects.
+    """
+    seen: set[str] = set()
+    merged: list[MatchEntry] = []
+    for chunk in chunk_results:
+        for entry in chunk:
+            key = json.dumps(entry.value, sort_keys=True, default=str)
+            if key not in seen:
+                seen.add(key)
+                merged.append(entry)
+    return merged
+
+
 async def _extract_tabular_llm(
     session: DocumentSession,
     plan: QueryPlan,
     schema: DocumentSchema | None,  # noqa: ARG001 — reserved for future column-type hints
+    usage: dict[str, int] | None = None,
 ) -> tuple[list[MatchEntry], str, int, int]:
     """LLM-based extraction for complex tabular queries.
 
@@ -1014,12 +1159,12 @@ async def _extract_tabular_llm(
     chunks_total = len(all_chunks)
     semaphore = asyncio.Semaphore(_TABULAR_SEMAPHORE_LIMIT)
     tasks = [
-        _extract_tabular_chunk(chunk, plan, semaphore)
+        _extract_tabular_chunk(chunk, plan, semaphore, usage)
         for chunk in all_chunks
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    matches: list[MatchEntry] = []
+    chunk_results: list[list[MatchEntry]] = []
     chunks_processed = 0
     for result in results:
         if isinstance(result, Exception):
@@ -1027,18 +1172,14 @@ async def _extract_tabular_llm(
             continue
         chunks_processed += 1
         if isinstance(result, list):
-            matches.extend(result)
+            chunk_results.append(result)
 
-    # Deduplicate by serialised value
-    seen: set[str] = set()
-    deduped: list[MatchEntry] = []
-    for match in matches:
-        key = json.dumps(match.value, sort_keys=True, default=str)
-        if key not in seen:
-            seen.add(key)
-            deduped.append(match)
-
-    return deduped, plan.extraction_instruction or "", chunks_processed, chunks_total
+    return (
+        _merge_chunk_results(chunk_results),
+        plan.extraction_instruction or "",
+        chunks_processed,
+        chunks_total,
+    )
 
 
 def _chunk_tabular_text(
@@ -1105,6 +1246,7 @@ async def _extract_tabular_chunk(
     chunk_text: str,
     plan: QueryPlan,
     semaphore: asyncio.Semaphore,
+    usage: dict[str, int] | None = None,
 ) -> list[MatchEntry]:
     """Call LLM on a single filtered table chunk to extract matching rows."""
     async with semaphore:
@@ -1147,6 +1289,8 @@ Table:
             ],
         )
         raw = response.choices[0].message.content or "{}"
+        if usage is not None:
+            _accumulate_usage(usage, response)
         data = json.loads(raw)
         raw_matches = data.get("matches", [])
 
@@ -1177,6 +1321,7 @@ async def _extract_prose(
     session: DocumentSession,
     plan: QueryPlan,
     query: str,
+    usage: dict[str, int] | None = None,
 ) -> tuple[list[MatchEntry], str]:
     """Extract from prose/mixed documents using chunked LLM calls."""
     # Build chunks from all document texts
@@ -1194,7 +1339,7 @@ async def _extract_prose(
 
     semaphore = asyncio.Semaphore(_PROSE_SEMAPHORE_LIMIT)
     tasks = [
-        _extract_from_chunk(chunk, plan, query, semaphore)
+        _extract_from_chunk(chunk, plan, query, semaphore, usage)
         for chunk in all_chunks
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1226,6 +1371,7 @@ async def _extract_from_chunk(
     plan: QueryPlan,
     query: str,
     semaphore: asyncio.Semaphore,
+    usage: dict[str, int] | None = None,
 ) -> list[MatchEntry]:
     """Call LLM on a single text chunk to extract matching entities."""
     async with semaphore:
@@ -1263,6 +1409,8 @@ Text:
             ],
         )
         raw = response.choices[0].message.content or "{}"
+        if usage is not None:
+            _accumulate_usage(usage, response)
         data = json.loads(raw)
         raw_matches = data.get("matches", [])
 
