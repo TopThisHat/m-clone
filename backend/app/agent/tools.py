@@ -559,29 +559,54 @@ async def sec_edgar_search(
 
 @_register(
     "search_uploaded_documents",
-    "Search through text extracted from documents the user uploaded (PDF, DOCX, Excel, CSV, images, etc.). "
-    "Use the optional 'filename' parameter to restrict search to a specific file when the user "
-    "references a particular document by name or type.",
+    "Search through text extracted from documents the user uploaded (PDF, DOCX, Excel, CSV, "
+    "images, etc.). You MUST provide specific content keywords from the document — wildcards "
+    'like "*" do NOT work and will return no results. Use concrete terms (e.g. "revenue", '
+    '"team names", "Q3 results") that you expect to appear in the document text.',
     {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Keywords or a question to search for in the uploaded documents."},
+            "query": {
+                "type": "string",
+                "description": (
+                    "Specific keywords or a question to search for in the uploaded documents. "
+                    'Do NOT use wildcards like "*" — use concrete content keywords instead.'
+                ),
+            },
             "filename": {
                 "type": "string",
-                "description": "Optional exact filename to restrict search to (e.g. 'sports.csv'). "
-                "Use when the user references a specific file.",
+                "description": (
+                    "Optional filename to restrict the search to a specific uploaded file "
+                    "(e.g. 'report.pdf', 'data.xlsx'). Case-insensitive. "
+                    "Omit to search across all uploaded files."
+                ),
             },
         },
         "required": ["query"],
     },
 )
-async def search_uploaded_documents(deps: AgentDeps, query: str, filename: str | None = None) -> str:
+async def search_uploaded_documents(
+    deps: AgentDeps, query: str, filename: str | None = None,
+) -> str:
     _RESPONSE_CAP = 15_000
 
     if not deps.doc_context and not deps.doc_texts:
         return "No documents have been uploaded for this research session."
 
-    # Try chunk-based search when doc_texts is available
+    # ── Collect available filenames for guidance messages ─────────────
+    available_filenames = _get_available_filenames(deps)
+
+    # ── Wildcard / non-keyword query guard ───────────────────────────
+    if _is_non_keyword_query(query):
+        file_list = ", ".join(available_filenames) if available_filenames else "unknown"
+        return (
+            "Wildcard and empty queries are not supported. "
+            "Please provide specific content keywords (e.g. 'revenue', 'team names', "
+            "'Q3 results') that you expect to appear in the document text.\n\n"
+            f"**Available files:** {file_list}"
+        )
+
+    # ── Chunk-based search when doc_texts is available ───────────────
     if deps.doc_texts and deps.uploaded_doc_metadata:
         cache_key = "chunked_docs"
         if cache_key in deps.tool_cache:
@@ -594,37 +619,60 @@ async def search_uploaded_documents(deps: AgentDeps, query: str, filename: str |
         if not chunk_dicts:
             return f"No relevant passages found in uploaded documents for: '{query}'"
 
-        # Filter to a specific file when filename is provided
+        # ── Filename filtering (case-insensitive) ────────────────────
         if filename:
-            target = filename.lower()
-            chunk_dicts = [c for c in chunk_dicts if c.get("filename", "").lower() == target]
-            if not chunk_dicts:
-                return f"No document found with filename '{filename}'."
+            filtered = [
+                c for c in chunk_dicts
+                if c.get("filename", "").lower() == filename.lower()
+            ]
+            if not filtered:
+                file_list = ", ".join(available_filenames) if available_filenames else "none"
+                return (
+                    f"No uploaded file matches filename '{filename}'. "
+                    f"Available files: {file_list}"
+                )
+            search_chunks = filtered
+        else:
+            search_chunks = chunk_dicts
 
-        chunk_texts = [c["text"] for c in chunk_dicts]
+        chunk_texts = [c["text"] for c in search_chunks]
 
         # Short-circuit: if <=3 chunks, return them all
         if len(chunk_texts) <= 3:
             formatted = []
-            for c in chunk_dicts:
+            for c in search_chunks:
                 label = _chunk_label(c)
                 formatted.append(f"{label}\n{c['text']}")
             result = "\n\n---\n\n".join(formatted)
             return result[:_RESPONSE_CAP]
 
-        # BM25 search over chunks (cache only when not filename-filtered)
-        bm25_key = f"chunked_bm25:{filename or ''}"
-        if bm25_key in deps.tool_cache:
-            bm25 = deps.tool_cache[bm25_key]
+        # BM25 search over (possibly filtered) chunks
+        # Cache key includes filename to avoid stale BM25 indices
+        bm25_cache_key = f"chunked_bm25:{filename.lower() if filename else '_all'}"
+        if bm25_cache_key in deps.tool_cache:
+            bm25 = deps.tool_cache[bm25_cache_key]
         else:
             bm25 = BM25Okapi([t.lower().split() for t in chunk_texts])
-            deps.tool_cache[bm25_key] = bm25
+            deps.tool_cache[bm25_cache_key] = bm25
 
         scores = bm25.get_scores(query.lower().split())
         top_indices = sorted(range(len(chunk_texts)), key=lambda i: scores[i], reverse=True)[:5]
-        relevant = [(chunk_dicts[i], scores[i]) for i in top_indices if scores[i] > 0]
+        relevant = [(search_chunks[i], scores[i]) for i in top_indices if scores[i] > 0]
 
         if not relevant:
+            # ── BM25 zero-result fallback for filename-targeted searches ──
+            if filename:
+                fallback_chunks = search_chunks[:5]
+                formatted = []
+                for c in fallback_chunks:
+                    label = _chunk_label(c)
+                    formatted.append(f"{label}\n{c['text']}")
+                result = "\n\n---\n\n".join(formatted)
+                return (
+                    f"No keyword matches found for '{query}' in '{filename}'. "
+                    "Returning the first chunks of the file for context:\n\n"
+                    + result
+                )[:_RESPONSE_CAP]
             return f"No relevant passages found in uploaded documents for: '{query}'"
 
         formatted = []
@@ -634,7 +682,7 @@ async def search_uploaded_documents(deps: AgentDeps, query: str, filename: str |
         result = "\n\n---\n\n".join(formatted)
         return result[:_RESPONSE_CAP]
 
-    # Fallback: old doc_context.split approach
+    # Fallback: old doc_context.split approach (no filename filtering available)
     chunks = [c.strip() for c in deps.doc_context.split("\n\n") if c.strip()]
     if not chunks:
         return f"No relevant passages found in uploaded documents for: '{query}'"
@@ -650,6 +698,33 @@ async def search_uploaded_documents(deps: AgentDeps, query: str, filename: str |
     result = "\n\n---\n\n".join(relevant)
     filenames = ", ".join(deps.uploaded_filenames) if deps.uploaded_filenames else "uploaded document"
     return f"**From {filenames}:**\n\n{result}"[:_RESPONSE_CAP]
+
+
+def _is_non_keyword_query(query: str) -> bool:
+    """Return True if the query is a wildcard, empty, or single-punctuation string."""
+    stripped = query.strip()
+    if not stripped:
+        return True
+    if stripped == "*":
+        return True
+    # Single punctuation character (e.g. "?", "!", ".")
+    if len(stripped) == 1 and not stripped.isalnum():
+        return True
+    return False
+
+
+def _get_available_filenames(deps: AgentDeps) -> list[str]:
+    """Collect unique filenames from metadata or uploaded_filenames."""
+    if deps.uploaded_doc_metadata:
+        seen: set[str] = set()
+        names: list[str] = []
+        for meta in deps.uploaded_doc_metadata:
+            name = meta.get("filename", "unknown")
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+        return names
+    return list(deps.uploaded_filenames) if deps.uploaded_filenames else []
 
 
 def _chunk_label(chunk: dict) -> str:

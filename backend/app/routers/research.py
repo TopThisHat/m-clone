@@ -12,7 +12,7 @@ from app.agent.clarification import clarification_store
 from app.agent.streaming import stream_research
 from app.auth import get_current_user, get_optional_user
 from app.config import settings
-from app.db import db_is_super_admin, db_is_team_member, db_list_user_teams
+from app.db import db_get_session_doc_key, db_is_super_admin, db_is_team_member, db_list_user_teams
 from app.dependencies import get_agent_deps
 from app.models.job import AsyncResearchRequest, JobStatus
 from app.models.request import ResearchRequest
@@ -59,7 +59,25 @@ def available_models() -> list[dict[str, str]]:
 @router.post("/research")
 async def research_endpoint(body: ResearchRequest, request: Request, user: dict[str, Any] | None = Depends(get_optional_user)) -> StreamingResponse:
     """Stream a research session as Server-Sent Events."""
-    doc_session = await get_document_text(body.doc_session_key)
+    # Recover doc_session_key from PG when the frontend lost its local copy
+    # but still has a session_id referencing a session that stored the key.
+    doc_key = body.doc_session_key
+    if doc_key is None and body.session_id is not None:
+        try:
+            recovered = await db_get_session_doc_key(body.session_id)
+            if recovered:
+                logger.info(
+                    "Recovered doc_session_key from session %s", body.session_id,
+                )
+                doc_key = recovered
+        except Exception:
+            logger.warning(
+                "Failed to recover doc_session_key for session %s",
+                body.session_id,
+                exc_info=True,
+            )
+
+    doc_session = await get_document_text(doc_key)
 
     # Retrieve prior memory context
     memory_ctx = ""

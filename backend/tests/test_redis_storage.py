@@ -2,14 +2,17 @@
 
 All tests run WITHOUT a Redis server by patching ``_get_client`` to return
 ``None``, which forces every function through the ``_memory_store`` fallback.
+Section 7 tests use a mocked Redis client to verify sliding TTL behaviour.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.config import settings
 from app.redis_client import (
     DocumentSession,
     _infer_type_from_filename,
@@ -209,7 +212,7 @@ class TestAppendDocument:
                 _upload("c"),
             )
 
-        results = loop.run_until_complete(_run())
+        loop.run_until_complete(_run())
 
         # The final state must contain all 3 documents.
         from app.redis_client import get_documents
@@ -293,3 +296,72 @@ class TestCharCount:
         assert session is not None
         assert session.metadata[0]["char_count"] == 3
         assert session.metadata[1]["char_count"] == 6
+
+
+# ------------------------------------------------------------------
+# 7. Sliding TTL refresh on document reads
+# ------------------------------------------------------------------
+
+class TestSlidingTTLRefresh:
+    """Verify that get_documents() refreshes the Redis TTL on successful reads."""
+
+    def _make_mock_redis(self, key_prefix: str, payload: str) -> AsyncMock:
+        """Build a mock Redis client that returns *payload* for the given prefix."""
+        mock_client = AsyncMock()
+
+        async def _fake_get(k: str) -> str | None:
+            if k == f"{key_prefix}:test-session":
+                return payload
+            return None
+
+        mock_client.get = AsyncMock(side_effect=_fake_get)
+        mock_client.expire = AsyncMock()
+        return mock_client
+
+    def test_ttl_refreshed_on_doc_prefix_read(self):
+        """EXPIRE is called with correct key and TTL when doc: prefix is hit."""
+        docs = [{"filename": "a.pdf", "text": "hello", "type": "pdf", "char_count": 5}]
+        payload = json.dumps(docs)
+        mock_client = self._make_mock_redis("doc", payload)
+
+        with patch("app.redis_client._get_client", new_callable=AsyncMock, return_value=mock_client):
+            session = asyncio.get_event_loop().run_until_complete(
+                get_documents("test-session")
+            )
+
+        assert session is not None
+        assert session.filenames == ["a.pdf"]
+
+        expected_ttl = settings.redis_ttl_hours * 3600
+        mock_client.expire.assert_called_once_with("doc:test-session", expected_ttl)
+
+    def test_ttl_refreshed_on_pdf_prefix_fallback(self):
+        """EXPIRE is called on the pdf: key when falling back to legacy prefix."""
+        old_doc = {"text": "legacy content", "filename": "report.pdf"}
+        payload = json.dumps(old_doc)
+        mock_client = self._make_mock_redis("pdf", payload)
+
+        with patch("app.redis_client._get_client", new_callable=AsyncMock, return_value=mock_client):
+            session = asyncio.get_event_loop().run_until_complete(
+                get_documents("test-session")
+            )
+
+        assert session is not None
+        assert session.filenames == ["report.pdf"]
+
+        expected_ttl = settings.redis_ttl_hours * 3600
+        mock_client.expire.assert_called_once_with("pdf:test-session", expected_ttl)
+
+    def test_no_expire_when_key_missing(self):
+        """EXPIRE is NOT called when neither doc: nor pdf: key exists."""
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=None)
+        mock_client.expire = AsyncMock()
+
+        with patch("app.redis_client._get_client", new_callable=AsyncMock, return_value=mock_client):
+            session = asyncio.get_event_loop().run_until_complete(
+                get_documents("nonexistent")
+            )
+
+        assert session is None
+        mock_client.expire.assert_not_called()

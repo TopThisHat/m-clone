@@ -1,12 +1,11 @@
 """Tests for search_uploaded_documents rewrite and KG extraction batching."""
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.dependencies import AgentDeps, get_agent_deps
+from app.dependencies import AgentDeps
 
 
 # ---------------------------------------------------------------------------
@@ -111,50 +110,148 @@ async def test_search_caches_chunks():
     assert "chunked_docs" in deps.tool_cache
 
 
-@pytest.mark.asyncio
-async def test_search_filename_filter_returns_matching_file():
-    """When filename is provided, only chunks from that file should be returned."""
-    from app.agent.tools import search_uploaded_documents
+# ---------------------------------------------------------------------------
+# search_uploaded_documents — filename filtering (Tasks 4.1, 4.2)
+# ---------------------------------------------------------------------------
 
-    deps = _make_deps(
+
+def _make_multi_file_deps() -> "AgentDeps":
+    """Create deps with two uploaded files for filename-filter tests."""
+    return _make_deps(
         doc_texts=[
-            "Sports teams include the Lakers, Celtics, and Warriors.",
-            "Media companies include Disney, Netflix, and Warner.",
+            "[Page 1]\nAlpha revenue Q3 results.\n[Page 2]\nBeta bravo charlie.",
+            "Team names roster players stats NBA MLB.",
         ],
         metadata=[
-            {"filename": "sports.docx", "type": "docx", "char_count": 55},
-            {"filename": "media.docx", "type": "docx", "char_count": 52},
+            {"filename": "financials.pdf", "type": "pdf", "char_count": 60},
+            {"filename": "sports.csv", "type": "csv", "char_count": 50},
         ],
     )
-    result = await search_uploaded_documents(deps=deps, query="teams", filename="sports.docx")
-    assert "sports.docx" in result
-    assert "media.docx" not in result
 
 
 @pytest.mark.asyncio
-async def test_search_filename_filter_no_match():
-    """When filename doesn't match any uploaded file, return helpful error."""
+async def test_filename_filter_returns_only_matching_file():
+    """Task 6.1: filename param restricts results to that file only."""
     from app.agent.tools import search_uploaded_documents
 
-    deps = _make_deps(
-        doc_texts=["Some content about reports."],
-        metadata=[{"filename": "report.docx", "type": "docx", "char_count": 26}],
+    deps = _make_multi_file_deps()
+    result = await search_uploaded_documents(
+        deps=deps, query="revenue", filename="financials.pdf",
     )
-    result = await search_uploaded_documents(deps=deps, query="data", filename="missing.csv")
-    assert "No document found" in result
+    assert "financials.pdf" in result
+    assert "sports.csv" not in result
 
 
 @pytest.mark.asyncio
-async def test_search_filename_filter_case_insensitive():
-    """Filename filtering should be case-insensitive."""
+async def test_filename_filter_nonmatching_returns_error_with_available():
+    """Task 6.2: non-matching filename returns error listing available files."""
     from app.agent.tools import search_uploaded_documents
 
-    deps = _make_deps(
-        doc_texts=["Content here about various topics."],
-        metadata=[{"filename": "Report.DOCX", "type": "docx", "char_count": 34}],
+    deps = _make_multi_file_deps()
+    result = await search_uploaded_documents(
+        deps=deps, query="anything", filename="missing.xlsx",
     )
-    result = await search_uploaded_documents(deps=deps, query="content", filename="report.docx")
-    assert "Report.DOCX" in result
+    assert "missing.xlsx" in result
+    assert "financials.pdf" in result
+    assert "sports.csv" in result
+
+
+@pytest.mark.asyncio
+async def test_filename_filter_case_insensitive():
+    """Task 6.3: filename matching is case-insensitive."""
+    from app.agent.tools import search_uploaded_documents
+
+    deps = _make_multi_file_deps()
+    result = await search_uploaded_documents(
+        deps=deps, query="revenue", filename="FINANCIALS.PDF",
+    )
+    # Should match financials.pdf despite uppercase input
+    assert "No uploaded file matches" not in result
+    assert "financials.pdf" in result
+
+
+# ---------------------------------------------------------------------------
+# search_uploaded_documents — wildcard / non-keyword guard (Task 4.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wildcard_query_returns_guidance():
+    """Task 6.4: wildcard query '*' returns guidance, not dead-end error."""
+    from app.agent.tools import search_uploaded_documents
+
+    deps = _make_multi_file_deps()
+    result = await search_uploaded_documents(deps=deps, query="*")
+    assert "not supported" in result.lower() or "Wildcard" in result
+    assert "financials.pdf" in result
+    assert "sports.csv" in result
+
+
+@pytest.mark.asyncio
+async def test_empty_query_returns_guidance():
+    """Task 6.5: empty query '' returns guidance message."""
+    from app.agent.tools import search_uploaded_documents
+
+    deps = _make_multi_file_deps()
+    result = await search_uploaded_documents(deps=deps, query="")
+    assert "not supported" in result.lower() or "Wildcard" in result
+    assert "Available files" in result
+
+
+@pytest.mark.asyncio
+async def test_single_punctuation_query_returns_guidance():
+    """Single punctuation char like '?' should be caught by the guard."""
+    from app.agent.tools import search_uploaded_documents
+
+    deps = _make_multi_file_deps()
+    result = await search_uploaded_documents(deps=deps, query="?")
+    assert "not supported" in result.lower() or "Wildcard" in result
+
+
+# ---------------------------------------------------------------------------
+# search_uploaded_documents — BM25 zero-result fallback (Task 4.4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bm25_zero_result_with_filename_returns_fallback():
+    """Task 6.6: BM25 miss + filename returns first chunks of targeted file."""
+    from app.agent.tools import search_uploaded_documents
+
+    # Create a file with enough chunks to skip the short-circuit (>3 chunks)
+    long_text = "\n\n".join(
+        f"[Page {i}]\nContent for page {i} with some filler words." for i in range(1, 10)
+    )
+    deps = _make_deps(
+        doc_texts=[long_text],
+        metadata=[{"filename": "report.pdf", "type": "pdf", "char_count": len(long_text)}],
+    )
+    # Query with a keyword that will never match any chunk text
+    result = await search_uploaded_documents(
+        deps=deps, query="xyzzyspoon", filename="report.pdf",
+    )
+    assert "No keyword matches found" in result
+    assert "report.pdf" in result
+    # Should still have actual file content returned as fallback
+    assert "Content for page" in result
+
+
+@pytest.mark.asyncio
+async def test_bm25_zero_result_without_filename_returns_standard_error():
+    """Task 6.7: BM25 miss without filename returns standard error, no fallback."""
+    from app.agent.tools import search_uploaded_documents
+
+    long_text = "\n\n".join(
+        f"[Page {i}]\nContent for page {i} with some filler words." for i in range(1, 10)
+    )
+    deps = _make_deps(
+        doc_texts=[long_text],
+        metadata=[{"filename": "report.pdf", "type": "pdf", "char_count": len(long_text)}],
+    )
+    result = await search_uploaded_documents(deps=deps, query="xyzzyspoon")
+    assert "No relevant passages found" in result
+    # Should NOT have the fallback message
+    assert "No keyword matches found" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +268,7 @@ async def test_kg_non_document_single_call():
         mock_extract.return_value = ExtractionResult()
         # _process_message with is_document=False takes a different path,
         # so we test _extract_document_batched directly for the document path
-        result = await _extract_document_batched("Short text no markers.")
+        await _extract_document_batched("Short text no markers.")
         # Should still call extract at least once (single batch)
         assert mock_extract.call_count >= 1
 

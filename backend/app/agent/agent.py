@@ -179,6 +179,11 @@ prior context alone, even if you think you already know the answer.
   is asking — different queries, not repeats of earlier searches
 - Call `wiki_lookup` if background on an entity or concept is needed
 - Call `get_financials` if the follow-up touches on financial data
+- If documents are uploaded and the follow-up relates to document content, call
+  `search_uploaded_documents` — this counts toward the minimum tool call requirement.
+  For questions purely about uploaded document content, you MAY skip `web_search` entirely
+  and use only `search_uploaded_documents`. For mixed queries (document data + external
+  research), use both `search_uploaded_documents` and `web_search`.
 - Minimum 2 tool calls. Maximum 4. You MUST NOT skip this phase.
 
 ---
@@ -341,28 +346,53 @@ def _build_system_content(deps: AgentDeps) -> str:
                 desc += ", " + ", ".join(extras)
             desc += ")"
             lines.append(desc)
-        parts.append(
+
+        doc_section = (
             "\n## Uploaded Documents\n\n"
             "The user has uploaded the following documents for this research session. "
             "Use `search_uploaded_documents` to search their contents.\n\n"
             + "\n".join(lines)
-            + "\n\n### Document Reference Resolution\n\n"
-            "When the user refers to a document, resolve it automatically without asking "
-            "for clarification:\n"
-            "- **Single document uploaded:** Any reference like \"this file\", \"the document\", "
-            "\"the uploaded file\", or \"extract data from this\" refers to that document.\n"
-            "- **Multiple documents — match by filename:** If the user says \"the sports file\" "
-            "and there is a file named `sports.csv`, use that file. Match partial names "
-            "(e.g. \"sports\" matches `sports.csv`, `sports_data.xlsx`, etc.).\n"
-            "- **Multiple documents — match by file type:** If the user says \"the Excel file\" "
-            "or \"the spreadsheet\", match files with extensions `.xlsx`/`.xls`. \"The PDF\" "
-            "matches `.pdf`. \"The CSV\" matches `.csv`/`.tsv`. \"The image\" matches "
-            "`.png`/`.jpg`/`.jpeg`/`.gif`/`.webp`.\n"
-            "- **Combined context:** Use both name and type together — \"the sports spreadsheet\" "
-            "matches `sports.xlsx` over `sports.pdf`.\n"
-            "- **Only ask for clarification** if there are multiple documents and neither the "
-            "filename nor the file type narrows it down to a single match."
         )
+
+        # -- Document Reference Resolution rules --
+        filenames = deps.uploaded_filenames or [
+            m.get("filename", "unknown") for m in deps.uploaded_doc_metadata
+        ]
+
+        doc_section += "\n\n### Document Reference Resolution\n\n"
+
+        if len(filenames) == 1:
+            doc_section += (
+                f"Only one document is uploaded: **{filenames[0]}**. "
+                "When the user says \"this file\", \"the document\", \"the uploaded file\", "
+                "or any similar reference, resolve it to this file automatically — "
+                "do not ask for clarification.\n\n"
+            )
+        else:
+            doc_section += (
+                "Multiple documents are uploaded. When the user refers to a document "
+                "without using its exact filename, resolve the reference using these rules "
+                "in order:\n\n"
+                "1. **Filename matching** — Match keywords in the user's reference against "
+                "filenames. E.g., \"the sports file\" → `sports.csv`, \"the annual report\" → "
+                "`annual_report.pdf`.\n"
+                "2. **Type matching** — Match type references to file extensions. "
+                "\"The Excel file\" → `.xlsx`/`.xls`, \"the PDF\" → `.pdf`, "
+                "\"the spreadsheet\" → `.xlsx`/`.xls`/`.csv`, \"the Word doc\" → `.docx`.\n"
+                "3. **Combined matching** — Use both name and type together. "
+                "E.g., \"the sports spreadsheet\" → match \"sports\" in the filename AND "
+                "spreadsheet type (`.xlsx`/`.csv`) to pick the best match.\n"
+                "4. **Ambiguous reference** — Only ask for clarification when the reference "
+                "cannot be narrowed to a single file using the rules above.\n\n"
+            )
+
+        doc_section += (
+            "When you resolve a document reference, pass the resolved filename to "
+            "`search_uploaded_documents` using the `filename` parameter to scope the "
+            "search to that file."
+        )
+
+        parts.append(doc_section)
 
     if deps.user_rules:
         rules_text = "\n".join(f"- {r}" for r in deps.user_rules)

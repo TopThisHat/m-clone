@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 class ResearchRequest(BaseModel):
     query: str
     doc_session_key: str | None = None
+    session_id: str | None = None
     message_history: list[Any] | None = None
     depth: str = "balanced"   # "fast" | "balanced" | "deep"
     model: str | None = None

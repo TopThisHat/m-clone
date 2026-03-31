@@ -6,6 +6,7 @@ from ._schema import verify_client_lookup_prerequisites as verify_client_lookup_
 from .sessions import (
     db_list_sessions as db_list_sessions,
     db_get_session as db_get_session,
+    db_get_session_doc_key as db_get_session_doc_key,
     db_get_public_session as db_get_public_session,
     db_create_session as db_create_session,
     db_update_session as db_update_session,
