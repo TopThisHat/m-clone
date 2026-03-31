@@ -793,6 +793,111 @@ async def lookup_client(deps: AgentDeps, name: str, company: str | None = None) 
 
 
 @_register(
+    "batch_lookup_clients",
+    "Look up GWM client IDs for a list of people. Use this when you have 5 or more "
+    "pre-extracted person names to resolve. Returns a formatted markdown table with "
+    "match results, confidence scores, and status for every name.",
+    {
+        "type": "object",
+        "properties": {
+            "people": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Person name to look up (e.g. 'John Smith').",
+                        },
+                        "company": {
+                            "type": "string",
+                            "description": "Optional company name for disambiguation.",
+                        },
+                    },
+                    "required": ["name"],
+                },
+                "description": "List of people to look up. Each entry must have a 'name' and optionally a 'company'.",
+            },
+        },
+        "required": ["people"],
+    },
+)
+async def batch_lookup_clients(deps: AgentDeps, people: list[dict]) -> str:
+    if not people:
+        return "No names provided."
+    from app.agent.batch_resolver import batch_resolve_clients, format_results_as_markdown
+    results = await batch_resolve_clients(people)
+    return format_results_as_markdown(results)
+
+
+@_register(
+    "extract_and_lookup_entities",
+    "Extract person names from an uploaded document and look up GWM client IDs for each. "
+    "Use this when the user wants to extract entities from a document and check for client IDs. "
+    "Handles CSV, PDF, prose, and mixed formats. Supports a specific filename or 'all' to "
+    "process every uploaded document.",
+    {
+        "type": "object",
+        "properties": {
+            "filename": {
+                "type": "string",
+                "description": "The uploaded document filename to extract from, or 'all' to process all documents.",
+            },
+        },
+        "required": ["filename"],
+    },
+)
+async def extract_and_lookup_entities(deps: AgentDeps, filename: str) -> str:
+    from app.agent.batch_resolver import batch_resolve_clients, extract_person_names, format_results_as_markdown
+
+    if not deps.doc_texts and not deps.uploaded_doc_metadata:
+        return "No documents have been uploaded."
+
+    available_filenames = _get_available_filenames(deps)
+
+    # Collect matched documents
+    if filename.lower() == "all":
+        matched_texts = list(deps.doc_texts) if deps.doc_texts else []
+        display_name = "all documents"
+    else:
+        # Exact match first, then case-insensitive fallback
+        matched_texts = []
+        matched_name = None
+        for meta, text in zip(deps.uploaded_doc_metadata or [], deps.doc_texts or []):
+            meta_filename = meta.get("filename", "")
+            if meta_filename == filename:
+                matched_texts.append(text)
+                matched_name = meta_filename
+                break
+        if not matched_texts:
+            for meta, text in zip(deps.uploaded_doc_metadata or [], deps.doc_texts or []):
+                meta_filename = meta.get("filename", "")
+                if meta_filename.lower() == filename.lower():
+                    matched_texts.append(text)
+                    matched_name = meta_filename
+                    break
+        if not matched_texts:
+            file_list = ", ".join(available_filenames) if available_filenames else "none"
+            return f"No uploaded file matches filename '{filename}'. Available files: {file_list}"
+        display_name = matched_name or filename
+
+    text = "\n\n".join(matched_texts)
+    names, total_mentions = await extract_person_names(text)
+
+    if not names:
+        return f"No person names found in {display_name}."
+
+    people = [{"name": n} for n in names]
+    results = await batch_resolve_clients(people)
+    markdown_table = format_results_as_markdown(results)
+
+    return (
+        f"Extracted {len(names)} unique names from {display_name} "
+        f"({total_mentions} total mentions). {markdown_table}"
+    )
+
+
+@_register(
     "query_knowledge_graph",
     "Search the internal knowledge graph for entities and relationships. "
     "Use this to answer questions about known people, companies, deals, and relationships. "
