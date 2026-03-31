@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 class ExtractedEntity(BaseModel):
     name: str
-    type: str  # person | company | sports_team | location | product | other
+    type: str  # person | sports_team | sports_league | company | pe_fund | sports_foundation | transaction_event | location | life_event | media_rights_deal
     aliases: list[str] = []
     disambiguation_context: str = ""
 
@@ -34,7 +34,7 @@ class ExtractedEntity(BaseModel):
 class ExtractedRelationship(BaseModel):
     subject: str
     predicate: str
-    predicate_family: str  # ownership | employment | transaction | location | partnership
+    predicate_family: str  # ownership | investment | role | deal_network | affinity | life_event | location
     object: str
     confidence: float = 1.0
     evidence: str = ""
@@ -60,9 +60,9 @@ async def extract_entities_and_relationships(
     - Canonical predicate usage
     - Disambiguation context for people
     """
-    from app.predicate_normalization import get_canonical_predicates_prompt
+    from app.kg_ontology import get_lm_prompt_section
 
-    canonical_section = get_canonical_predicates_prompt()
+    canonical_section = get_lm_prompt_section()
 
     document_instructions = ""
     if is_document:
@@ -85,13 +85,13 @@ IMPORTANT — Document Processing Rules:
 Return ONLY valid JSON matching this schema:
 {{
   "entities": [
-    {{"name": "string", "type": "person|company|sports_team|location|product|other", "aliases": ["alt name", ...], "disambiguation_context": "brief context to identify this entity uniquely, e.g. role/title/affiliation"}}
+    {{"name": "string", "type": "person|sports_team|sports_league|company|pe_fund|sports_foundation|transaction_event|location|life_event|media_rights_deal", "aliases": ["alt name", ...], "disambiguation_context": "brief context to identify this entity uniquely, e.g. role/title/affiliation"}}
   ],
   "relationships": [
     {{
       "subject": "entity name",
       "predicate": "canonical predicate from the list below",
-      "predicate_family": "ownership|employment|transaction|location|partnership",
+      "predicate_family": "ownership|investment|role|deal_network|affinity|life_event|location",
       "object": "entity name",
       "confidence": 0.0-1.0,
       "evidence": "brief quote or explanation"
@@ -105,6 +105,7 @@ Only include entities and relationships that are clearly stated in the text.
 Use canonical, full names for entities. Use "sports_team" type for sports franchises/clubs
 (not "company"). For each entity, provide a "disambiguation_context" that helps distinguish
 people with the same name (e.g. "CEO of Goldman Sachs", "NFL quarterback").
+If an entity does not fit any of the listed types, DO NOT extract it.
 {document_instructions}
 Text to extract from:
 {report_md[:max_chars] if max_chars else report_md}"""
@@ -138,7 +139,14 @@ async def _relationship_already_exists(
     predicate: str,
     predicate_family: str,
 ) -> bool:
-    """Check if an equivalent relationship already exists (active, same canonical predicate)."""
+    """Check if an equivalent relationship already exists (active, same canonical predicate).
+
+    Uses the ontology's per-predicate symmetry flag to decide whether to check
+    the reverse direction (e.g. ``co_owns`` is symmetric but ``owns`` is not,
+    even though both belong to the ``ownership`` family).
+    """
+    from app.kg_ontology import RELATIONSHIP_FAMILIES
+
     row = await conn.fetchrow(
         """
         SELECT id FROM playbook.kg_relationships
@@ -151,17 +159,23 @@ async def _relationship_already_exists(
     if row:
         return True
 
-    # Also check reverse direction for symmetric relationships
-    symmetric_families = {"partnership"}
-    if predicate_family in symmetric_families:
+    # Check reverse direction only for symmetric predicates (per-predicate, not per-family)
+    is_symmetric = False
+    fam = RELATIONSHIP_FAMILIES.get(predicate_family)
+    if fam:
+        pred_spec = fam.predicates.get(predicate)
+        if pred_spec:
+            is_symmetric = pred_spec.symmetric
+
+    if is_symmetric:
         row = await conn.fetchrow(
             """
             SELECT id FROM playbook.kg_relationships
             WHERE subject_id = $2::uuid AND object_id = $1::uuid
-              AND predicate_family = $3
+              AND predicate = $3 AND predicate_family = $4
               AND is_active = TRUE
             """,
-            subject_id, object_id, predicate_family,
+            subject_id, object_id, predicate, predicate_family,
         )
         if row:
             return True
@@ -281,11 +295,16 @@ async def _process_message(
       groups, then batch and extract.
     For non-document mode: single extract call with report_md[:12000].
 
-    Returns counts: {"entities": N, "relationships": N, "skipped_duplicates": N}
+    Returns counts: {"entities": N, "relationships": N, "skipped_duplicates": N,
+        "filtered_by_unknown_predicate": N, "filtered_by_relevance": N}
     """
     from app.db import db_find_or_create_entity, db_upsert_relationship
     from app.db._pool import _acquire
-    from app.predicate_normalization import normalize_predicate
+    from app.kg_ontology import (
+        ALLOWED_ENTITY_TYPE_NAMES,
+        normalize_predicate,
+        should_keep_relationship,
+    )
 
     if is_document:
         result = await _extract_document_batched(report_md)
@@ -294,11 +313,24 @@ async def _process_message(
 
     if not result.entities and not result.relationships:
         logger.debug("Extraction for session_id=%s yielded no results", session_id)
-        return {"entities": 0, "relationships": 0, "skipped_duplicates": 0}
+        return {
+            "entities": 0,
+            "relationships": 0,
+            "skipped_duplicates": 0,
+            "filtered_by_unknown_predicate": 0,
+            "filtered_by_relevance": 0,
+        }
 
-    # Pre-create all entities and build name→id map
+    # Pre-create all entities and build name→id map (skip invalid types)
     entity_id_map: dict[str, str] = {}
+    entities_created = 0
     for ent in result.entities:
+        if ent.type not in ALLOWED_ENTITY_TYPE_NAMES:
+            logger.debug(
+                "Skipping entity '%s' with invalid type '%s' (not in ontology)",
+                ent.name, ent.type,
+            )
+            continue
         try:
             eid = await db_find_or_create_entity(
                 ent.name, ent.type, ent.aliases,
@@ -306,35 +338,66 @@ async def _process_message(
                 disambiguation_context=ent.disambiguation_context,
             )
             entity_id_map[ent.name.lower().strip()] = eid
+            entities_created += 1
         except Exception as exc:
             logger.warning("db_find_or_create_entity failed for '%s': %s", ent.name, exc)
 
-    # Process relationships with normalization and dedup
+    # Process relationships: normalize → check None → check relevance → dedup → upsert
     skipped = 0
     inserted = 0
+    filtered_by_unknown_predicate = 0
+    filtered_by_relevance = 0
     async with _acquire() as conn:
         for rel in result.relationships:
             try:
+                # Step 1: Normalize predicate to canonical form
+                norm_result = normalize_predicate(
+                    rel.predicate, rel.predicate_family
+                )
+
+                # Step 2: Skip if predicate is unknown (normalize returned None)
+                if norm_result is None:
+                    logger.debug(
+                        "Skipping relationship with unknown predicate: %s %s %s",
+                        rel.subject, rel.predicate, rel.object,
+                    )
+                    filtered_by_unknown_predicate += 1
+                    continue
+
+                canonical_pred, canonical_family = norm_result
+
+                # Step 3: Check relevance via ontology rules
+                if not should_keep_relationship(
+                    canonical_family, canonical_pred, rel.confidence
+                ):
+                    logger.debug(
+                        "Filtered by relevance: %s %s %s (family=%s, confidence=%.2f)",
+                        rel.subject, canonical_pred, rel.object,
+                        canonical_family, rel.confidence,
+                    )
+                    filtered_by_relevance += 1
+                    continue
+
                 subject_key = rel.subject.lower().strip()
                 object_key = rel.object.lower().strip()
 
-                # Ensure subject/object entities exist
+                # Ensure subject/object entities exist (use "person" as default
+                # since "other" is no longer a valid entity type)
                 if subject_key not in entity_id_map:
-                    eid = await db_find_or_create_entity(rel.subject, "other", [], team_id=team_id)
+                    eid = await db_find_or_create_entity(
+                        rel.subject, "person", [], team_id=team_id,
+                    )
                     entity_id_map[subject_key] = eid
                 if object_key not in entity_id_map:
-                    eid = await db_find_or_create_entity(rel.object, "other", [], team_id=team_id)
+                    eid = await db_find_or_create_entity(
+                        rel.object, "person", [], team_id=team_id,
+                    )
                     entity_id_map[object_key] = eid
 
                 subject_id = entity_id_map[subject_key]
                 object_id = entity_id_map[object_key]
 
-                # Normalize predicate to canonical form
-                canonical_pred, canonical_family = normalize_predicate(
-                    rel.predicate, rel.predicate_family
-                )
-
-                # Check if relationship already exists before upserting
+                # Step 4: Check if relationship already exists before upserting
                 exists = await _relationship_already_exists(
                     conn, subject_id, object_id, canonical_pred, canonical_family
                 )
@@ -372,13 +435,18 @@ async def _process_message(
                 )
 
     logger.info(
-        "KG extraction complete for session=%s: %d entities, %d relationships inserted, %d duplicates skipped",
-        session_id, len(result.entities), inserted, skipped,
+        "KG extraction complete for session=%s: %d entities (%d created), "
+        "%d relationships inserted, %d duplicates skipped, "
+        "%d filtered by unknown predicate, %d filtered by relevance",
+        session_id, len(result.entities), entities_created, inserted, skipped,
+        filtered_by_unknown_predicate, filtered_by_relevance,
     )
     return {
-        "entities": len(result.entities),
+        "entities": entities_created,
         "relationships": inserted,
         "skipped_duplicates": skipped,
+        "filtered_by_unknown_predicate": filtered_by_unknown_predicate,
+        "filtered_by_relevance": filtered_by_relevance,
     }
 
 
