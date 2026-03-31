@@ -1,7 +1,7 @@
-"""Query execution for the document intelligence package.
+"""Document query execution for the document intelligence package.
 
-Implementations are defined in ``app.document_intelligence`` and re-exported here
-so that consumers can import from either location.
+Implementation lives in ``app.document_intelligence``.  Symbols are re-exported
+here so consumers can import from either location.
 """
 from __future__ import annotations
 
