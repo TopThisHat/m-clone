@@ -14,12 +14,15 @@ Prompt constants live in app.intelligence.prompts.
 from __future__ import annotations
 
 import asyncio
+import collections
 import csv
 import hashlib
 import io
 import json
 import logging
 import re
+import statistics
+import time
 from typing import Any, Literal
 
 from app.column_utils import _classify_columns
@@ -47,6 +50,58 @@ from app.openai_factory import get_openai_client
 from app.redis_client import DocumentSession, get_documents, get_redis
 
 logger = logging.getLogger(__name__)
+
+
+# ── Query latency tracker ────────────────────────────────────────────────────
+
+_LATENCY_WINDOW = 1000  # keep the last N latency samples in memory
+
+
+class _LatencyTracker:
+    """Thread-safe ring buffer for query latency percentile computation.
+
+    Stores the most recent *window* latency samples (in milliseconds).
+    Percentile queries are O(n log n) — fine for the small window size.
+    """
+
+    def __init__(self, window: int = _LATENCY_WINDOW) -> None:
+        self._samples: collections.deque[float] = collections.deque(maxlen=window)
+
+    def record(self, latency_ms: float, complexity: str) -> None:
+        self._samples.append(latency_ms)
+        logger.info(
+            "query_latency_ms=%.1f complexity=%s",
+            latency_ms,
+            complexity,
+        )
+
+    def percentiles(self) -> dict[str, float | int]:
+        """Return P50/P95/P99 and sample count.  Returns zeros if no data."""
+        data = list(self._samples)
+        if not data:
+            return {"p50": 0.0, "p95": 0.0, "p99": 0.0, "count": 0}
+        sorted_data = sorted(data)
+        n = len(sorted_data)
+
+        def _pct(p: float) -> float:
+            idx = max(0, min(n - 1, int(p / 100 * n)))
+            return round(sorted_data[idx], 2)
+
+        return {
+            "p50": _pct(50),
+            "p95": _pct(95),
+            "p99": _pct(99),
+            "count": n,
+            "mean": round(statistics.mean(data), 2),
+        }
+
+
+_latency_tracker = _LatencyTracker()
+
+
+def get_latency_metrics() -> dict[str, float | int]:
+    """Return query latency percentiles from the in-memory ring buffer."""
+    return _latency_tracker.percentiles()
 
 
 # ── classify_columns_semantic ────────────────────────────────────────────────
@@ -725,9 +780,12 @@ async def query_document(session_key: str, query: str) -> QueryResult:
 
 async def _query_document_impl(session_key: str, query: str) -> QueryResult:
     """Internal query implementation — exceptions bubble up to query_document."""
+    _t0 = time.monotonic()
+
     # --- Cache hit check ---
     cached = await _load_query_cache(session_key, query)
     if cached is not None:
+        _latency_tracker.record((time.monotonic() - _t0) * 1000, "cached")
         return cached
 
     # --- Budget check ---
@@ -810,6 +868,8 @@ async def _query_document_impl(session_key: str, query: str) -> QueryResult:
     # Only cache complete (non-partial) results so reruns can fill gaps
     if not result.partial:
         await _store_query_cache(session_key, query, result)
+
+    _latency_tracker.record((time.monotonic() - _t0) * 1000, plan.complexity)
     return result
 
 

@@ -10,7 +10,12 @@ from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
 from app.config import settings
-from app.document_intelligence import analyze_schema, invalidate_query_cache, query_document
+from app.document_intelligence import (
+    analyze_schema,
+    get_latency_metrics,
+    invalidate_query_cache,
+    query_document,
+)
 from app.document_parser import (
     SUPPORTED_EXTENSIONS,
     extract_text,
@@ -433,3 +438,50 @@ async def query_document_endpoint(
         total_matches=result.total_matches,
         error=result.error,
     )
+
+
+# ── Cost dashboard endpoint ──────────────────────────────────────────────────
+
+
+@router.get("/session-cost")
+async def get_session_cost(
+    session_key: str = Query(...),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict:
+    """Return the cumulative LLM query cost for a document session.
+
+    Reads the ``doc_cost:{session_key}`` key from Redis.  Returns zero when
+    the session has had no queries or when Redis is unavailable.
+    """
+    from app.redis_client import get_redis as _get_redis
+    try:
+        redis = await _get_redis()
+        raw = await redis.get(f"doc_cost:{session_key}")
+        cost = float(raw) if raw else 0.0
+    except Exception:
+        cost = 0.0
+    return {
+        "session_key": session_key,
+        "cumulative_cost_usd": round(cost, 6),
+        "budget_usd": settings.max_session_cost,
+        "budget_remaining_usd": round(max(0.0, settings.max_session_cost - cost), 6),
+        "budget_exceeded": cost >= settings.max_session_cost,
+    }
+
+
+# ── Latency metrics endpoint ─────────────────────────────────────────────────
+
+
+@router.get("/metrics")
+async def get_query_metrics(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict:
+    """Return query latency percentiles (P50/P95/P99) from the in-memory ring buffer.
+
+    Metrics are computed from the last 1 000 completed queries in this process
+    instance.  Useful for operational health checks and performance dashboards.
+    """
+    return {
+        "latency_ms": get_latency_metrics(),
+        "description": "Query latency percentiles (milliseconds) — last 1000 queries",
+    }
