@@ -467,9 +467,16 @@ class TestQueryDocument:
         mock_client = AsyncMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
 
+        schema_json = cached_schema.model_dump_json()
+
+        async def get_by_key(key):
+            return schema_json if "doc_schema:" in key else None
+
         mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=cached_schema.model_dump_json())
+        mock_redis.get = AsyncMock(side_effect=get_by_key)
         mock_redis.expire = AsyncMock()
+        mock_redis.setex = AsyncMock()
+        mock_redis.sadd = AsyncMock()
 
         with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
             with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
@@ -559,9 +566,16 @@ class TestQueryDocument:
         mock_client = AsyncMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
 
+        schema_json = cached_schema.model_dump_json()
+
+        async def get_by_key(key):
+            return schema_json if "doc_schema:" in key else None
+
         mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=cached_schema.model_dump_json())
+        mock_redis.get = AsyncMock(side_effect=get_by_key)
         mock_redis.expire = AsyncMock()
+        mock_redis.setex = AsyncMock()
+        mock_redis.sadd = AsyncMock()
 
         with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
             with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
@@ -611,9 +625,16 @@ class TestQueryDocument:
         mock_client = AsyncMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
 
+        schema_json = cached_schema.model_dump_json()
+
+        async def get_by_key(key):
+            return schema_json if "doc_schema:" in key else None
+
         mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=cached_schema.model_dump_json())
+        mock_redis.get = AsyncMock(side_effect=get_by_key)
         mock_redis.expire = AsyncMock()
+        mock_redis.setex = AsyncMock()
+        mock_redis.sadd = AsyncMock()
 
         with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
             with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
@@ -1351,8 +1372,12 @@ class TestExtractTabularLlm:
 
         mock_client = AsyncMock()
         mock_client.chat.completions.create = AsyncMock(side_effect=flaky_llm)
+
+        async def get_by_key(key):
+            return schema_json if "doc_schema:" in key else None
+
         mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=schema_json)
+        mock_redis.get = AsyncMock(side_effect=get_by_key)
         mock_redis.expire = AsyncMock()
 
         session = _make_session([table])
@@ -1368,3 +1393,186 @@ class TestExtractTabularLlm:
         assert result.partial is True
         assert result.chunks_total == 2
         assert result.chunks_processed == 1
+
+
+# ── query result caching ───────────────────────────────────────────────────────
+
+
+class TestQueryResultCaching:
+    """Tests for _load_query_cache, _store_query_cache, and invalidate_query_cache."""
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_returns_cached_result(self):
+        """_load_query_cache returns stored QueryResult on cache hit."""
+        from app.document_intelligence import _load_query_cache
+
+        stored = QueryResult(
+            matches=[],
+            query_interpretation="cached interp",
+            total_matches=0,
+        )
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=stored.model_dump_json())
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            result = await _load_query_cache("sess-a", "find all names")
+
+        assert result is not None
+        assert result.query_interpretation == "cached interp"
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_returns_none(self):
+        """_load_query_cache returns None when no cached result exists."""
+        from app.document_intelligence import _load_query_cache
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=None)
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            result = await _load_query_cache("sess-b", "find all names")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_store_sets_ttl_and_registers_key(self):
+        """_store_query_cache calls setex with 3600s TTL and registers key in set."""
+        from app.document_intelligence import _store_query_cache
+
+        stored = QueryResult(matches=[], query_interpretation="x", total_matches=0)
+        mock_redis = AsyncMock()
+        mock_redis.setex = AsyncMock()
+        mock_redis.sadd = AsyncMock()
+        mock_redis.expire = AsyncMock()
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            await _store_query_cache("sess-c", "my query", stored)
+
+        mock_redis.setex.assert_called_once()
+        call_args = mock_redis.setex.call_args[0]
+        assert "sess-c" in call_args[0]  # key contains session_key
+        assert call_args[1] == 3600       # TTL is 1 hour
+        mock_redis.sadd.assert_called_once()
+        mock_redis.expire.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_invalidate_deletes_registered_keys(self):
+        """invalidate_query_cache deletes all keys registered for the session."""
+        from app.document_intelligence import invalidate_query_cache
+
+        registered_key = b"doc_query:sess-d:abc123"
+        mock_redis = AsyncMock()
+        mock_redis.smembers = AsyncMock(return_value={registered_key})
+        mock_redis.delete = AsyncMock()
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            await invalidate_query_cache("sess-d")
+
+        mock_redis.delete.assert_called_once()
+        deleted_keys = mock_redis.delete.call_args[0]
+        assert registered_key in deleted_keys
+        assert any(b"doc_query_keys:sess-d" in str(k).encode() or "doc_query_keys:sess-d" in k
+                   for k in deleted_keys if isinstance(k, str))
+
+    @pytest.mark.asyncio
+    async def test_invalidate_handles_empty_set(self):
+        """invalidate_query_cache handles sessions with no cached queries gracefully."""
+        from app.document_intelligence import invalidate_query_cache
+
+        mock_redis = AsyncMock()
+        mock_redis.smembers = AsyncMock(return_value=set())
+        mock_redis.delete = AsyncMock()
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            await invalidate_query_cache("sess-e")  # should not raise
+
+        mock_redis.delete.assert_called_once()  # still deletes the keys_set_key itself
+
+    @pytest.mark.asyncio
+    async def test_cache_redis_error_is_silent(self):
+        """Redis errors in _load_query_cache return None (no exception propagates)."""
+        from app.document_intelligence import _load_query_cache
+
+        with patch(
+            "app.document_intelligence.get_redis",
+            AsyncMock(side_effect=RuntimeError("Redis down")),
+        ):
+            result = await _load_query_cache("sess-f", "any query")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_partial_result_not_cached(self):
+        """Partial results (chunks_processed < chunks_total) are NOT stored in cache."""
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="Name")])],
+            total_sheets=1,
+            summary="test",
+        )
+        table = "| Name |\n| --- |\n" + "\n".join(f"| row_{i} |" for i in range(150))
+        session = _make_session([table])
+
+        call_count = [0]
+
+        async def plan_then_fail(**kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return _make_openai_response({
+                    "relevant_columns": ["Name"],
+                    "extraction_instruction": "find all",
+                    "document_type": "tabular",
+                    "complexity": "complex",
+                })
+            if call_count[0] == 2:
+                raise RuntimeError("chunk error")
+            return _make_openai_response({"matches": []})
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=plan_then_fail)
+
+        schema_json = schema.model_dump_json()
+        setex_calls: list = []
+
+        async def get_by_key(key):
+            return schema_json if "doc_schema:" in key else None
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=get_by_key)
+        mock_redis.set = AsyncMock(return_value=True)
+        mock_redis.setex = AsyncMock(side_effect=lambda *a, **kw: setex_calls.append(a))
+        mock_redis.expire = AsyncMock()
+        mock_redis.delete = AsyncMock()
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        result = await query_document("sess-partial-cache", "find all")
+
+        assert result.partial is True
+        # _store_query_cache's setex should NOT have been called (partial result)
+        query_cache_setex = [c for c in setex_calls if "doc_query:" in str(c[0])]
+        assert query_cache_setex == []
+
+    @pytest.mark.asyncio
+    async def test_query_document_uses_cache_on_second_call(self):
+        """Second query_document call returns cached result without touching LLM."""
+        stored = QueryResult(
+            matches=[],
+            query_interpretation="from cache",
+            total_matches=0,
+        )
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=stored.model_dump_json())
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock()
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                result = await query_document("sess-hit", "find names")
+
+        assert result.query_interpretation == "from cache"
+        mock_client.chat.completions.create.assert_not_called()

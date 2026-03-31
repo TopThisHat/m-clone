@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
 from app.config import settings
-from app.document_intelligence import analyze_schema, query_document
+from app.document_intelligence import analyze_schema, invalidate_query_cache, query_document
 from app.document_parser import (
     SUPPORTED_EXTENSIONS,
     extract_text,
@@ -66,6 +66,45 @@ class KGUploadResult(BaseModel):
     char_count: int
     status: str
     message: str
+
+
+@router.get("/schema")
+async def get_document_schema_endpoint(
+    session_key: str = Query(...),
+    user: dict[str, Any] = Depends(get_current_user),
+):
+    """Return cached schema analysis for a document session.
+
+    Returns ``{"ready": false}`` while background schema analysis is still
+    running, or a full schema object once it completes.  Safe to poll.
+    """
+    from app.document_intelligence import get_cached_schema, generate_query_suggestions
+
+    schema = await get_cached_schema(session_key)
+    if schema is None:
+        return {"ready": False}
+
+    session = await get_documents(session_key)
+    filename = session.filenames[0] if session and session.filenames else ""
+
+    columns = [
+        {
+            "name": c.name,
+            "inferred_type": c.inferred_type or "text",
+            "semantic_type": c.semantic_type.value,
+        }
+        for s in schema.sheets
+        for c in s.columns
+    ]
+
+    return {
+        "ready": True,
+        "document_type": schema.document_type,
+        "total_sheets": schema.total_sheets,
+        "summary": schema.summary,
+        "columns": columns[:30],
+        "suggestions": generate_query_suggestions(schema, filename),
+    }
 
 
 @router.get("/status")
@@ -182,6 +221,8 @@ async def upload_document(
     session_for_bg: DocumentSession
 
     if is_append:
+        # Invalidate cached query results before appending — the dataset is changing
+        await invalidate_query_cache(session_key)
         docs_list, truncated = await append_document(
             session_key,
             filename,

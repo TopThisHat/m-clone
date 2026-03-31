@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import io
 import json
 import logging
@@ -635,6 +636,60 @@ async def _generate_schema_summary(
     return f"{document_type.capitalize()} document."
 
 
+# ── query_document cache ──────────────────────────────────────────────────
+
+_QUERY_CACHE_PREFIX = "doc_query:"
+_QUERY_KEYS_PREFIX = "doc_query_keys:"
+_QUERY_CACHE_TTL_SECONDS = 3600  # 1 hour
+
+
+def _get_query_cache_key(session_key: str, query: str) -> str:
+    query_hash = hashlib.md5(query.encode()).hexdigest()  # noqa: S324 — not security-sensitive
+    return f"{_QUERY_CACHE_PREFIX}{session_key}:{query_hash}"
+
+
+async def _load_query_cache(session_key: str, query: str) -> QueryResult | None:
+    """Return a cached QueryResult, or None on miss/error."""
+    cache_key = _get_query_cache_key(session_key, query)
+    try:
+        redis = await get_redis()
+        raw = await redis.get(cache_key)
+        if raw:
+            return QueryResult.model_validate_json(raw)
+    except Exception as exc:
+        logger.debug("_load_query_cache: miss or error for %s: %s", session_key, exc)
+    return None
+
+
+async def _store_query_cache(session_key: str, query: str, result: QueryResult) -> None:
+    """Cache a QueryResult and register its key for session-level invalidation."""
+    cache_key = _get_query_cache_key(session_key, query)
+    keys_set_key = f"{_QUERY_KEYS_PREFIX}{session_key}"
+    try:
+        redis = await get_redis()
+        await redis.setex(cache_key, _QUERY_CACHE_TTL_SECONDS, result.model_dump_json())
+        await redis.sadd(keys_set_key, cache_key)
+        await redis.expire(keys_set_key, _QUERY_CACHE_TTL_SECONDS)
+    except Exception as exc:
+        logger.warning("_store_query_cache: failed for %s: %s", session_key, exc)
+
+
+async def invalidate_query_cache(session_key: str) -> None:
+    """Delete all cached query results for a session.
+
+    Call this whenever a document is appended to an existing session so
+    that stale results are not served for the updated dataset.
+    """
+    keys_set_key = f"{_QUERY_KEYS_PREFIX}{session_key}"
+    try:
+        redis = await get_redis()
+        members = await redis.smembers(keys_set_key)
+        keys_to_delete = list(members) + [keys_set_key]
+        await redis.delete(*keys_to_delete)
+    except Exception as exc:
+        logger.warning("invalidate_query_cache: failed for session=%s: %s", session_key, exc)
+
+
 # ── query_document ─────────────────────────────────────────────────────────
 
 
@@ -662,6 +717,11 @@ async def query_document(session_key: str, query: str) -> QueryResult:
 
 async def _query_document_impl(session_key: str, query: str) -> QueryResult:
     """Internal query implementation — exceptions bubble up to query_document."""
+    # --- Cache hit check ---
+    cached = await _load_query_cache(session_key, query)
+    if cached is not None:
+        return cached
+
     # --- Load document session ---
     try:
         session = await get_documents(session_key)
@@ -708,7 +768,7 @@ async def _query_document_impl(session_key: str, query: str) -> QueryResult:
     else:
         matches, interpretation = await _extract_prose(session, plan, query)
 
-    return QueryResult(
+    result = QueryResult(
         matches=matches,
         query_interpretation=interpretation or plan.extraction_instruction or query,
         total_matches=len(matches),
@@ -717,6 +777,10 @@ async def _query_document_impl(session_key: str, query: str) -> QueryResult:
         chunks_processed=chunks_processed,
         chunks_total=chunks_total,
     )
+    # Only cache complete (non-partial) results so reruns can fill gaps
+    if not result.partial:
+        await _store_query_cache(session_key, query, result)
+    return result
 
 
 async def _load_schema(session_key: str) -> DocumentSchema | None:
@@ -1221,3 +1285,47 @@ Text:
                 text_positions=positions,
             ))
         return entries
+
+
+# ── Public helpers for schema endpoint ───────────────────────────────────────
+
+
+async def get_cached_schema(session_key: str) -> DocumentSchema | None:
+    """Return the cached DocumentSchema for a session if available, else None."""
+    return await _load_schema(session_key)
+
+
+def generate_query_suggestions(schema: DocumentSchema, filename: str = "") -> list[str]:
+    """Generate up to 3 contextual query suggestions from document schema.
+
+    Heuristic: prefer financial → person/org → date columns for targeted
+    questions, then fall back to generic prompts.
+    """
+    suggestions: list[str] = []
+    all_columns = [c for s in schema.sheets for c in s.columns]
+
+    financial_cols = [c for c in all_columns if c.semantic_type == SemanticType.financial_amount]
+    person_cols = [c for c in all_columns if c.semantic_type == SemanticType.person]
+    date_cols = [c for c in all_columns if c.semantic_type == SemanticType.date]
+    org_cols = [c for c in all_columns if c.semantic_type == SemanticType.organization]
+
+    if financial_cols:
+        suggestions.append(f"What is the total {financial_cols[0].name}?")
+    if person_cols:
+        suggestions.append(f"List all {person_cols[0].name}s")
+    elif org_cols:
+        suggestions.append(f"List all {org_cols[0].name}s")
+    if date_cols and len(suggestions) < 3:
+        suggestions.append(f"What is the date range in {date_cols[0].name}?")
+
+    fallback = [
+        f"Summarize the key data in {filename}" if filename else "Summarize the key data",
+        "What are the most common values in this dataset?",
+        "Show me the first 10 rows of data",
+    ]
+    for g in fallback:
+        if len(suggestions) >= 3:
+            break
+        suggestions.append(g)
+
+    return suggestions[:3]
