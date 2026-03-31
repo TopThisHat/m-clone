@@ -95,6 +95,32 @@ export interface KGUploadResult {
 	message: string;
 }
 
+// ── Schema types ───────────────────────────────────────────────────────────────
+
+export interface SchemaColumn {
+	name: string;
+	inferred_type: string;
+	semantic_type: string;
+}
+
+export interface DocumentSchemaResult {
+	ready: boolean;
+	document_type?: string;
+	total_sheets?: number;
+	summary?: string;
+	columns?: SchemaColumn[];
+	suggestions?: string[];
+}
+
+export async function getDocumentSchema(sessionKey: string): Promise<DocumentSchemaResult> {
+	const res = await fetch(
+		`/api/documents/schema?session_key=${encodeURIComponent(sessionKey)}`,
+		{ credentials: 'include' }
+	);
+	if (!res.ok) return { ready: false };
+	return res.json();
+}
+
 export const SUPPORTED_EXTENSIONS = [
 	'.pdf',
 	'.docx',

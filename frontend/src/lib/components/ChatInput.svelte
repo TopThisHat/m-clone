@@ -6,8 +6,10 @@
 		uploadDocument,
 		uploadDocumentToSession,
 		validateDroppedFile,
+		getDocumentSchema,
 		ACCEPT_STRING,
-		type UploadFileStatus
+		type UploadFileStatus,
+		type DocumentSchemaResult
 	} from '$lib/api/documents';
 	import { get } from 'svelte/store';
 	import { isStreaming, errorMessage, messageHistory, chatMessages, docSessionKey } from '$lib/stores/reportStore';
@@ -17,6 +19,12 @@
 	let documents = $state<UploadFileStatus[]>([]);
 	let fileInput = $state<HTMLInputElement | undefined>();
 	let textareaEl = $state<HTMLTextAreaElement | undefined>();
+
+	// ── Document understanding indicator ────────────────────────────────────────
+	let schemaPhase = $state<'idle' | 'analyzing' | 'ready' | 'error'>('idle');
+	let schemaResult = $state<DocumentSchemaResult | null>(null);
+	let showSchemaPanel = $state(false);
+	let _schemaPollId = 0; // increment to abort an in-flight poll
 
 	// ── Research depth ──────────────────────────────────────────────────────
 	let depth = $state<'fast' | 'balanced' | 'deep'>('balanced');
@@ -50,6 +58,7 @@
 			revokePreviewUrls(documents);
 			documents = [];
 			if (fileInput) fileInput.value = '';
+			resetSchemaState();
 		});
 	});
 
@@ -80,6 +89,40 @@
 	}
 
 	onDestroy(() => revokePreviewUrls(documents));
+
+	/** Poll /api/documents/schema until ready, capped at ~30 s. */
+	async function startSchemaPoll(sessionKey: string) {
+		const myId = ++_schemaPollId;
+		schemaPhase = 'analyzing';
+		schemaResult = null;
+		showSchemaPanel = false;
+
+		for (let i = 0; i < 20; i++) {
+			if (_schemaPollId !== myId) return; // superseded by a newer poll
+			await new Promise<void>((r) => setTimeout(r, 1500));
+			if (_schemaPollId !== myId) return;
+			try {
+				const result = await getDocumentSchema(sessionKey);
+				if (result.ready) {
+					if (_schemaPollId === myId) {
+						schemaResult = result;
+						schemaPhase = 'ready';
+					}
+					return;
+				}
+			} catch {
+				// ignore transient errors — keep polling
+			}
+		}
+		if (_schemaPollId === myId) schemaPhase = 'idle'; // timed out silently
+	}
+
+	function resetSchemaState() {
+		_schemaPollId++; // abort any in-flight poll
+		schemaPhase = 'idle';
+		schemaResult = null;
+		showSchemaPanel = false;
+	}
 
 	function getTypeLabel(filename: string): string {
 		const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
@@ -157,6 +200,8 @@
 					j === idx ? { ...d, status: 'success' as const, result } : d
 				);
 				srAnnouncement = `${file.name} uploaded successfully.`;
+				// Start or restart schema analysis polling for the session
+				startSchemaPoll(result.session_key);
 			} catch (err) {
 				const errorMsg = err instanceof Error ? err.message : 'Upload failed';
 				// store file ref on upload errors only — enables retry
@@ -205,6 +250,7 @@
 		documents = documents.filter((_, i) => i !== index);
 		if (documents.length === 0) {
 			if (fileInput) fileInput.value = '';
+			resetSchemaState();
 			// Only clear the doc session store if no messages have been sent yet.
 			// Once messages exist, session docs persist in Redis — chip removal is visual-only.
 			if (get(chatMessages).length === 0) {
@@ -318,7 +364,7 @@
 					       {doc.status === 'error' ? 'border-red-800/50' : 'border-navy-600'}"
 				>
 					{#if doc.status === 'uploading'}
-						<span class="flex gap-0.5">
+						<span class="flex gap-0.5" aria-label="Reading file">
 							{#each [0, 1, 2] as j (j)}
 								<span
 									class="w-1 h-1 bg-gold rounded-full motion-safe:animate-bounce"
@@ -326,6 +372,7 @@
 								></span>
 							{/each}
 						</span>
+						<span class="text-xs text-slate-500" data-testid="schema-phase-reading">Reading…</span>
 					{:else if doc.previewUrl}
 						<img
 							src={doc.previewUrl}
@@ -347,12 +394,31 @@
 						{#if meta}
 							<span class="text-xs text-slate-500">{meta}</span>
 						{/if}
+						<!-- Phase indicator inline in chip -->
+						{#if schemaPhase === 'analyzing'}
+							<span class="flex gap-0.5 flex-shrink-0" aria-label="Analyzing document">
+								{#each [0, 1, 2] as j (j)}
+									<span
+										class="w-0.5 h-0.5 bg-slate-600 rounded-full motion-safe:animate-bounce"
+										style="animation-delay:{j * 0.1}s"
+									></span>
+								{/each}
+							</span>
+						{:else if schemaPhase === 'ready'}
+							<button
+								onclick={(e) => { e.stopPropagation(); showSchemaPanel = !showSchemaPanel; }}
+								class="text-xs text-gold/60 hover:text-gold flex-shrink-0 transition-colors leading-none"
+								title="View document analysis"
+								aria-label="View document analysis"
+								aria-expanded={showSchemaPanel}
+							>⊞</button>
+						{/if}
 					{/if}
 					{#if doc.status === 'error'}
 						<span class="text-xs text-red-400 truncate max-w-[100px]" role="alert">{doc.error}</span>
 						{#if doc.file}
 							<button
-								onclick={() => retryDocument(i)}
+								onclick={(e) => { e.stopPropagation(); retryDocument(i); }}
 								class="text-xs text-slate-500 hover:text-gold transition-colors flex-shrink-0"
 								aria-label="Retry upload for {doc.filename}"
 							>
@@ -362,7 +428,7 @@
 					{/if}
 					{#if doc.status !== 'uploading'}
 						<button
-							onclick={() => removeDocument(i)}
+							onclick={(e) => { e.stopPropagation(); removeDocument(i); }}
 							class="text-slate-500 hover:text-red-400 transition-colors text-xs ml-0.5 flex-shrink-0"
 							aria-label="Remove {doc.filename}"
 						>
@@ -373,6 +439,76 @@
 			{/each}
 		</div>
 
+		<!-- Understanding indicator: three-phase status line -->
+		{#if schemaPhase === 'analyzing'}
+			<div
+				class="flex items-center gap-1.5 text-xs text-slate-600"
+				aria-live="polite"
+				aria-label="Analyzing document structure"
+				data-testid="schema-phase-analyzing"
+			>
+				<span class="flex gap-0.5">
+					{#each [0, 1, 2] as j (j)}
+						<span
+							class="w-1 h-1 bg-slate-600 rounded-full motion-safe:animate-bounce"
+							style="animation-delay:{j * 0.12}s"
+						></span>
+					{/each}
+				</span>
+				Analyzing document structure…
+			</div>
+		{:else if schemaPhase === 'ready'}
+			<div
+				class="text-xs text-slate-600 flex items-center gap-1"
+				aria-live="polite"
+				data-testid="schema-phase-ready"
+			>
+				<span class="text-gold/60">✓</span>
+				Document understood — click ⊞ to see what was found
+			</div>
+		{/if}
+
+		<!-- Schema details panel (shown when ⊞ is clicked) -->
+		{#if schemaPhase === 'ready' && schemaResult && showSchemaPanel}
+			<div
+				class="bg-navy-800 border border-gold/20 rounded-lg p-3 text-xs space-y-2"
+				role="region"
+				aria-label="Document understanding summary"
+				data-testid="schema-panel"
+			>
+				<div class="flex items-center justify-between">
+					<span class="text-gold font-medium">Document understood</span>
+					<button
+						onclick={() => (showSchemaPanel = false)}
+						class="text-slate-500 hover:text-slate-300 transition-colors"
+						aria-label="Close document summary"
+					>✕</button>
+				</div>
+				{#if schemaResult.summary}
+					<p class="text-slate-400">{schemaResult.summary}</p>
+				{/if}
+				{#if schemaResult.columns?.length}
+					<div>
+						<p class="text-slate-500 uppercase tracking-wider text-[10px] mb-1.5">
+							Columns detected ({schemaResult.columns.length})
+						</p>
+						<div class="flex flex-wrap gap-1">
+							{#each schemaResult.columns.slice(0, 12) as col (col.name)}
+								<span class="px-1.5 py-0.5 bg-navy-700 border border-navy-600 rounded text-slate-300">
+									{col.name}{#if col.inferred_type && col.inferred_type !== 'text'}<span class="text-slate-600"> · {col.inferred_type}</span>{/if}
+								</span>
+							{/each}
+							{#if (schemaResult.columns.length ?? 0) > 12}
+								<span class="text-slate-600 self-center">+{schemaResult.columns.length - 12} more</span>
+							{/if}
+						</div>
+					</div>
+				{:else}
+					<p class="text-slate-500 capitalize">{schemaResult.document_type ?? 'Document'} content</p>
+				{/if}
+			</div>
+		{/if}
+
 		{#if isTruncated}
 			<div class="flex items-center gap-2 px-2.5 py-1.5 bg-amber-900/20 border border-amber-700/40 rounded text-xs text-amber-400" role="status">
 				<svg class="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -380,6 +516,23 @@
 						d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
 				</svg>
 				Some documents were truncated to fit within the session size limit.
+			</div>
+		{/if}
+
+		<!-- Contextual query suggestions from document schema -->
+		{#if schemaPhase === 'ready' && schemaResult?.suggestions?.length && !$isStreaming && !query.trim()}
+			<div class="flex flex-wrap items-center gap-1.5" aria-label="Suggested queries based on document">
+				<span class="text-xs text-slate-600">Try:</span>
+				{#each schemaResult.suggestions as suggestion (suggestion)}
+					<button
+						onclick={() => { query = suggestion; autoResize(); textareaEl?.focus(); }}
+						class="text-xs px-2.5 py-1 border border-navy-700 rounded-full text-slate-500
+							hover:text-gold hover:border-gold/30 hover:bg-navy-800/50 transition-all"
+						data-testid="schema-suggestion"
+					>
+						{suggestion}
+					</button>
+				{/each}
 			</div>
 		{/if}
 	{/if}

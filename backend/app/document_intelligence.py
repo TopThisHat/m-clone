@@ -667,6 +667,24 @@ def _accumulate_usage(into: dict[str, int], response: Any) -> None:
     into["completion_tokens"] = into.get("completion_tokens", 0) + getattr(usage, "completion_tokens", 0)
 
 
+async def _check_budget(session_key: str) -> float | None:
+    """Return current cumulative cost for the session, or None on Redis error.
+
+    Returns the current cumulative USD cost.  Callers compare against
+    settings.max_session_cost to decide whether to block the query.
+    """
+    cost_key = f"{_DOC_COST_PREFIX}{session_key}"
+    try:
+        redis = await get_redis()
+        raw = await redis.get(cost_key)
+        if raw is None:
+            return 0.0
+        return float(raw)
+    except Exception as exc:
+        logger.warning("_check_budget: failed for session=%s: %s", session_key, exc)
+        return None  # on failure, allow the query to proceed
+
+
 async def _log_query_cost(
     session_key: str,
     query: str,
@@ -781,6 +799,24 @@ async def _query_document_impl(session_key: str, query: str) -> QueryResult:
     cached = await _load_query_cache(session_key, query)
     if cached is not None:
         return cached
+
+    # --- Budget check ---
+    current_cost = await _check_budget(session_key)
+    if current_cost is not None and current_cost >= settings.max_session_cost:
+        logger.warning(
+            "query_document: session=%s budget exceeded (%.4f >= %.4f USD)",
+            session_key, current_cost, settings.max_session_cost,
+        )
+        return QueryResult(
+            matches=[],
+            query_interpretation="",
+            total_matches=0,
+            error=(
+                f"Session query budget exceeded "
+                f"(${current_cost:.4f} of ${settings.max_session_cost:.2f} used). "
+                "Upload a fresh session to continue querying."
+            ),
+        )
 
     # --- Load document session ---
     try:
