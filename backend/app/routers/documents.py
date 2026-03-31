@@ -118,10 +118,13 @@ async def upload_document(
 
     # Session handling
     is_append = False
+    existing: DocumentSession | None = None
     if session_key:
         existing = await get_documents(session_key)
         if existing and existing.filenames:
             is_append = True
+
+    session_for_bg: DocumentSession
 
     if is_append:
         # session_total and truncation are computed *inside* append_document's
@@ -144,6 +147,19 @@ async def upload_document(
                 doc_meta["char_count"],
             )
         session_total = sum(d.get("char_count", 0) for d in docs_list)
+
+        # Build DocumentSession directly from existing session + new document.
+        # Avoids re-reading from Redis in the background task (race condition fix).
+        appended_text = text[:doc_meta["char_count"]] if truncated else text
+        # existing is guaranteed non-None when is_append is True
+        prior_texts = existing.texts if existing and existing.texts else []
+        prior_text = existing.text if existing else ""
+        session_for_bg = DocumentSession(
+            text=(prior_text + "\n\n" + appended_text).strip() if prior_text else appended_text,
+            texts=prior_texts + [appended_text],
+            filenames=(existing.filenames if existing else []) + [filename],
+            metadata=(existing.metadata if existing else []) + [dict(doc_meta)],
+        )
     else:
         # New session — generate a fresh key
         session_key = str(uuid.uuid4())
@@ -158,15 +174,23 @@ async def upload_document(
         docs_list = [doc_meta]
         session_total = len(text)
 
-    # Trigger background schema analysis (fire-and-forget, does not block response)
-    async def _bg_analyze_schema(sk: str) -> None:
+        # Build DocumentSession directly — avoids re-reading from Redis in bg task
+        session_for_bg = DocumentSession(
+            text=text,
+            texts=[text],
+            filenames=[filename],
+            metadata=[dict(doc_meta)],
+        )
+
+    # Trigger background schema analysis — pass session directly to avoid
+    # re-reading from Redis before the write has propagated (race condition fix)
+    async def _bg_analyze_schema(sk: str, session: DocumentSession) -> None:
         try:
-            session = await get_document_text(sk)
             await analyze_schema(sk, session)
         except Exception:
             logger.exception("Background schema analysis failed for session %s", sk)
 
-    background_tasks.add_task(_bg_analyze_schema, session_key)
+    background_tasks.add_task(_bg_analyze_schema, session_key, session_for_bg)
 
     # Build unified response
     response: dict = {

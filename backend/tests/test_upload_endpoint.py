@@ -5,7 +5,7 @@ Uses unittest.mock — no database or Redis required.
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -318,3 +318,126 @@ async def test_get_document_text_with_session(mock_get):
     mock_get.return_value = session
     result = await get_document_text("key-123")
     assert result is session
+
+
+# ---------------------------------------------------------------------------
+# Race condition fix — background task receives DocumentSession directly
+# (m-clone-jak6: Fix schema analysis race condition)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("app.routers.documents.analyze_schema", new_callable=AsyncMock, return_value=None)
+@patch("app.routers.documents.set_documents", new_callable=AsyncMock)
+@patch("app.routers.documents.extract_text", new_callable=AsyncMock, return_value=_EXTRACTED)
+@patch("app.routers.documents.get_format_metadata", return_value=_META_PDF)
+async def test_bg_task_receives_session_directly_new_session(
+    mock_meta, mock_extract, mock_set, mock_analyze, client
+):
+    """New session: background task receives DocumentSession directly, not a session key."""
+    resp = await _upload(client, filename="report.pdf")
+    assert resp.status_code == 200
+
+    mock_analyze.assert_called_once()
+    sk, session = mock_analyze.call_args.args
+    assert isinstance(session, DocumentSession)
+    assert session.texts == [_EXTRACTED]
+    assert session.filenames == ["report.pdf"]
+    assert session.text == _EXTRACTED
+    assert session.metadata[0]["type"] == "pdf"
+
+
+@pytest.mark.asyncio
+@patch("app.routers.documents.analyze_schema", new_callable=AsyncMock, return_value=None)
+@patch("app.routers.documents.append_document", new_callable=AsyncMock)
+@patch("app.routers.documents.get_documents", new_callable=AsyncMock)
+@patch("app.routers.documents.extract_text", new_callable=AsyncMock, return_value=_EXTRACTED)
+@patch("app.routers.documents.get_format_metadata", return_value=_META_PDF)
+async def test_bg_task_receives_session_directly_append(
+    mock_meta, mock_extract, mock_get, mock_append, mock_analyze, client
+):
+    """Append session: background task receives combined DocumentSession, not just a key."""
+    existing_key = str(uuid.uuid4())
+    existing_session = DocumentSession(
+        text="existing text",
+        texts=["existing text"],
+        filenames=["old.pdf"],
+        metadata=[{"filename": "old.pdf", "type": "pdf", "char_count": 13}],
+    )
+    mock_get.return_value = existing_session
+    mock_append.return_value = (
+        [
+            {"filename": "old.pdf", "type": "pdf", "char_count": 13},
+            {"filename": "new.pdf", "type": "pdf", "char_count": len(_EXTRACTED), "pages": 3},
+        ],
+        False,
+    )
+
+    resp = await _upload(client, filename="new.pdf", session_key=existing_key)
+    assert resp.status_code == 200
+
+    mock_analyze.assert_called_once()
+    sk, session = mock_analyze.call_args.args
+    assert sk == existing_key
+    assert isinstance(session, DocumentSession)
+    # Combined session must include both the existing and new document
+    assert "old.pdf" in session.filenames
+    assert "new.pdf" in session.filenames
+    assert "existing text" in session.texts
+    assert _EXTRACTED in session.texts
+
+
+@pytest.mark.asyncio
+@patch("app.routers.documents.analyze_schema", new_callable=AsyncMock, return_value=None)
+@patch("app.routers.documents.append_document", new_callable=AsyncMock)
+@patch("app.routers.documents.get_documents", new_callable=AsyncMock)
+@patch("app.routers.documents.extract_text", new_callable=AsyncMock)
+@patch("app.routers.documents.get_format_metadata", return_value=_META_PDF)
+async def test_bg_task_truncated_append_passes_correct_text(
+    mock_meta, mock_extract, mock_get, mock_append, mock_analyze, client
+):
+    """Truncated append: background task receives the truncated text, not the original."""
+    existing_key = str(uuid.uuid4())
+    existing_chars = SESSION_TEXT_CAP - 50
+    existing_session = DocumentSession(
+        text="x" * existing_chars,
+        texts=["x" * existing_chars],
+        filenames=["big.pdf"],
+        metadata=[{"filename": "big.pdf", "type": "pdf", "char_count": existing_chars}],
+    )
+    mock_get.return_value = existing_session
+    full_text = "A" * 500
+    mock_extract.return_value = full_text
+    # append_document returns char_count=50 (truncated to fill remaining cap)
+    mock_append.return_value = (
+        [
+            {"filename": "big.pdf", "type": "pdf", "char_count": existing_chars},
+            {"filename": "extra.pdf", "type": "pdf", "char_count": 50, "pages": 3},
+        ],
+        True,
+    )
+
+    resp = await _upload(client, filename="extra.pdf", session_key=existing_key)
+    assert resp.status_code == 200
+    assert resp.json()["truncated"] is True
+
+    mock_analyze.assert_called_once()
+    _, session = mock_analyze.call_args.args
+    # The appended text in the session must be truncated (50 chars), not full 500
+    assert session.texts[-1] == "A" * 50
+    assert len(session.texts[-1]) == 50
+
+
+@pytest.mark.asyncio
+@patch("app.routers.documents.analyze_schema", new_callable=AsyncMock, return_value=None)
+@patch("app.routers.documents.set_documents", new_callable=AsyncMock)
+@patch("app.routers.documents.extract_text", new_callable=AsyncMock, return_value=_EXTRACTED)
+@patch("app.routers.documents.get_format_metadata", return_value=_META_PDF)
+async def test_bg_task_no_redis_reread(
+    mock_meta, mock_extract, mock_set, mock_analyze, client
+):
+    """Background task must not call get_document_text (the pre-fix Redis re-read)."""
+    with patch("app.routers.documents.get_document_text", new_callable=AsyncMock) as mock_get_text:
+        resp = await _upload(client, filename="report.pdf")
+        assert resp.status_code == 200
+        mock_get_text.assert_not_called()
