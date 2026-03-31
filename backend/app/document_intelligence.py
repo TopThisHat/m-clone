@@ -90,6 +90,9 @@ class QueryResult(BaseModel):
     query_interpretation: str = ""
     total_matches: int = 0
     error: str | None = None
+    partial: bool = False
+    chunks_processed: int = 0
+    chunks_total: int = 0
 
 
 # ── Prompt injection mitigation constants ────────────────────────────────────
@@ -690,8 +693,18 @@ async def _query_document_impl(session_key: str, query: str) -> QueryResult:
 
     # --- Phase 2: Extract data ---
     doc_type = schema.document_type if schema else "prose"
+    chunks_processed = 0
+    chunks_total = 0
+    partial = False
+
     if doc_type == "tabular":
-        matches, interpretation = _extract_tabular(session, plan, query)
+        if plan.complexity == "complex":
+            matches, interpretation, chunks_processed, chunks_total = (
+                await _extract_tabular_llm(session, plan, schema)
+            )
+            partial = chunks_processed < chunks_total
+        else:
+            matches, interpretation = _extract_tabular(session, plan, query)
     else:
         matches, interpretation = await _extract_prose(session, plan, query)
 
@@ -700,6 +713,9 @@ async def _query_document_impl(session_key: str, query: str) -> QueryResult:
         query_interpretation=interpretation or plan.extraction_instruction or query,
         total_matches=len(matches),
         error=None,
+        partial=partial,
+        chunks_processed=chunks_processed,
+        chunks_total=chunks_total,
     )
 
 
@@ -895,6 +911,196 @@ def _parse_markdown_table(
                             ))
 
     return matches
+
+
+# ── Phase 2: LLM tabular extraction (complex queries) ───────────────────────
+
+_TABULAR_SEMAPHORE_LIMIT = 5
+_TABULAR_ROWS_PER_CHUNK = 100
+_TABULAR_CHUNK_MAX_CHARS = 8_000
+
+
+async def _extract_tabular_llm(
+    session: DocumentSession,
+    plan: QueryPlan,
+    schema: DocumentSchema | None,  # noqa: ARG001 — reserved for future column-type hints
+) -> tuple[list[MatchEntry], str, int, int]:
+    """LLM-based extraction for complex tabular queries.
+
+    Chunks table data into row batches, filters to relevant columns to reduce
+    token usage, runs parallel LLM extraction with Semaphore(5), then merges
+    and deduplicates results.  Handles messy headers, abbreviations, and
+    inconsistent cell values.
+
+    Returns:
+        (matches, interpretation, chunks_processed, chunks_total)
+    """
+    relevant_cols = {c.lower() for c in plan.relevant_columns}
+
+    all_chunks: list[str] = []
+    for text in session.texts:
+        if not text or not text.strip():
+            continue
+        chunks = _chunk_tabular_text(text, relevant_cols, _TABULAR_ROWS_PER_CHUNK)
+        all_chunks.extend(chunks)
+
+    if not all_chunks:
+        return [], plan.extraction_instruction or "", 0, 0
+
+    chunks_total = len(all_chunks)
+    semaphore = asyncio.Semaphore(_TABULAR_SEMAPHORE_LIMIT)
+    tasks = [
+        _extract_tabular_chunk(chunk, plan, semaphore)
+        for chunk in all_chunks
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    matches: list[MatchEntry] = []
+    chunks_processed = 0
+    for result in results:
+        if isinstance(result, Exception):
+            logger.warning("_extract_tabular_llm: chunk extraction failed: %s", result)
+            continue
+        chunks_processed += 1
+        if isinstance(result, list):
+            matches.extend(result)
+
+    # Deduplicate by serialised value
+    seen: set[str] = set()
+    deduped: list[MatchEntry] = []
+    for match in matches:
+        key = json.dumps(match.value, sort_keys=True, default=str)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(match)
+
+    return deduped, plan.extraction_instruction or "", chunks_processed, chunks_total
+
+
+def _chunk_tabular_text(
+    text: str,
+    relevant_cols: set[str],
+    rows_per_chunk: int,
+) -> list[str]:
+    """Split a markdown table into row-batched chunks filtered to relevant columns.
+
+    Each chunk includes the header + separator rows so the LLM has full context.
+    When relevant_cols is empty all columns are kept.  Falls back to the full
+    text as a single chunk when no markdown table structure is detected.
+    """
+    lines = text.splitlines()
+    header_cells: list[str] = []
+    keep_indices: list[int] = []
+    data_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.rstrip()
+        m = _MD_TABLE_ROW_RE.match(stripped)
+        if not m:
+            continue
+        cells = [c.strip() for c in m.group(1).split("|")]
+        # Skip separator rows (|---|---|)
+        if all(re.match(r"^[-:]+$", c) for c in cells if c):
+            continue
+        if not header_cells:
+            header_cells = cells
+            if relevant_cols:
+                keep_indices = [i for i, h in enumerate(header_cells) if h.lower() in relevant_cols]
+            # If no relevant columns matched, keep all
+            if not keep_indices:
+                keep_indices = list(range(len(header_cells)))
+            continue
+        data_lines.append(stripped)
+
+    if not header_cells or not data_lines:
+        return [text] if text.strip() else []
+
+    filtered_headers = [header_cells[i] for i in keep_indices if i < len(header_cells)]
+    header_line = "| " + " | ".join(filtered_headers) + " |"
+    sep_line = "| " + " | ".join(["---"] * len(filtered_headers)) + " |"
+
+    # Filter each data row to the selected column indices
+    filtered_rows: list[str] = []
+    for line in data_lines:
+        m = _MD_TABLE_ROW_RE.match(line)
+        if not m:
+            continue
+        cells = [c.strip() for c in m.group(1).split("|")]
+        filtered = [cells[i] if i < len(cells) else "" for i in keep_indices]
+        filtered_rows.append("| " + " | ".join(filtered) + " |")
+
+    chunks: list[str] = []
+    for start in range(0, len(filtered_rows), rows_per_chunk):
+        batch = filtered_rows[start : start + rows_per_chunk]
+        chunks.append("\n".join([header_line, sep_line] + batch))
+
+    return chunks if chunks else [text]
+
+
+async def _extract_tabular_chunk(
+    chunk_text: str,
+    plan: QueryPlan,
+    semaphore: asyncio.Semaphore,
+) -> list[MatchEntry]:
+    """Call LLM on a single filtered table chunk to extract matching rows."""
+    async with semaphore:
+        instruction = plan.extraction_instruction or ""
+        safe_chunk = chunk_text[:_TABULAR_CHUNK_MAX_CHARS]
+
+        prompt = f"""You are analysing a data table to answer a query. Extract every row that satisfies the instruction below.
+
+Instruction: {instruction[:500]}
+
+Guidelines:
+- Column headers may use abbreviations, mixed case, or unusual punctuation — match semantically.
+- Cell values may be inconsistently formatted (e.g. "$1,000" vs "1000", "N/A" vs blank).
+- Include every relevant row; do not summarise or aggregate unless the instruction asks for it.
+
+Return valid JSON:
+{{
+  "matches": [
+    {{
+      "value": {{"col1": "val1", "col2": "val2"}},
+      "source_column": ["col1", "col2"],
+      "row_numbers": [1],
+      "confidence": 0.9
+    }}
+  ]
+}}
+
+Table:
+{safe_chunk}"""
+
+        client = get_openai_client()
+        response = await client.chat.completions.create(
+            model=settings.query_model,
+            response_format={"type": "json_object"},
+            temperature=0,
+            max_completion_tokens=2000,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT_DATA_CONTEXT},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        raw = response.choices[0].message.content or "{}"
+        data = json.loads(raw)
+        raw_matches = data.get("matches", [])
+
+        entries: list[MatchEntry] = []
+        for m in raw_matches:
+            value = m.get("value", "")
+            source = m.get("source_column", "")
+            row_nums_raw = m.get("row_numbers", [])
+            row_nums = [int(r) for r in row_nums_raw if isinstance(r, (int, float))]
+            confidence = float(m.get("confidence", 0.5))
+            entries.append(MatchEntry(
+                value=value,
+                source_column=source,
+                row_numbers=row_nums,
+                confidence=confidence,
+                text_positions=[],
+            ))
+        return entries
 
 
 # ── Phase 2: Prose extraction ────────────────────────────────────────────────

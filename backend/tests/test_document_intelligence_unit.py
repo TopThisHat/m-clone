@@ -9,11 +9,9 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
 from app.document_intelligence import (
     DocumentSchema,
-    MatchEntry,
     QueryResult,
     SemanticType,
     SheetSchema,
@@ -1062,3 +1060,311 @@ class TestQueryPlanComplexity:
 
         assert plan.complexity == "simple"
         assert plan.document_type == "prose"
+
+
+# ── _chunk_tabular_text ────────────────────────────────────────────────────────
+
+
+class TestChunkTabularText:
+    """Tests for _chunk_tabular_text helper."""
+
+    def _make_md_table(self, headers: list[str], rows: list[list[str]]) -> str:
+        header_line = "| " + " | ".join(headers) + " |"
+        sep_line = "| " + " | ".join(["---"] * len(headers)) + " |"
+        data_lines = ["| " + " | ".join(row) + " |" for row in rows]
+        return "\n".join([header_line, sep_line] + data_lines)
+
+    def test_no_column_filter_returns_all_columns(self):
+        """Empty relevant_cols → all columns kept."""
+        from app.document_intelligence import _chunk_tabular_text
+
+        table = self._make_md_table(["Name", "Revenue", "City"], [["Alice", "100", "NYC"]])
+        chunks = _chunk_tabular_text(table, set(), rows_per_chunk=100)
+
+        assert len(chunks) == 1
+        assert "Name" in chunks[0]
+        assert "Revenue" in chunks[0]
+        assert "City" in chunks[0]
+
+    def test_column_filter_removes_irrelevant_columns(self):
+        """Only columns matching relevant_cols appear in chunks."""
+        from app.document_intelligence import _chunk_tabular_text
+
+        table = self._make_md_table(
+            ["Name", "Revenue", "City"],
+            [["Alice", "100", "NYC"], ["Bob", "200", "LA"]],
+        )
+        chunks = _chunk_tabular_text(table, {"name", "city"}, rows_per_chunk=100)
+
+        assert len(chunks) == 1
+        assert "Name" in chunks[0]
+        assert "City" in chunks[0]
+        assert "Revenue" not in chunks[0]
+
+    def test_row_chunking_splits_large_table(self):
+        """Table with 250 rows → ceil(250/100) = 3 chunks."""
+        from app.document_intelligence import _chunk_tabular_text
+
+        rows = [[f"entity_{i}", str(i * 10)] for i in range(250)]
+        table = self._make_md_table(["Name", "Score"], rows)
+        chunks = _chunk_tabular_text(table, set(), rows_per_chunk=100)
+
+        assert len(chunks) == 3
+
+    def test_each_chunk_includes_header(self):
+        """Every chunk starts with the header row."""
+        from app.document_intelligence import _chunk_tabular_text
+
+        rows = [[f"row_{i}", str(i)] for i in range(150)]
+        table = self._make_md_table(["Label", "Value"], rows)
+        chunks = _chunk_tabular_text(table, set(), rows_per_chunk=100)
+
+        for chunk in chunks:
+            assert "| Label | Value |" in chunk
+
+    def test_no_match_in_relevant_cols_keeps_all(self):
+        """When relevant_cols has no intersection with headers, keep all columns."""
+        from app.document_intelligence import _chunk_tabular_text
+
+        table = self._make_md_table(["Name", "Age"], [["Alice", "30"]])
+        # Irrelevant col names that don't match any header
+        chunks = _chunk_tabular_text(table, {"nonexistent_col"}, rows_per_chunk=100)
+
+        assert "Name" in chunks[0]
+        assert "Age" in chunks[0]
+
+    def test_non_table_text_returned_as_single_chunk(self):
+        """Prose text with no markdown table → returned as single chunk unchanged."""
+        from app.document_intelligence import _chunk_tabular_text
+
+        prose = "This is a plain paragraph with no table structure."
+        chunks = _chunk_tabular_text(prose, set(), rows_per_chunk=100)
+
+        assert len(chunks) == 1
+        assert chunks[0] == prose
+
+    def test_empty_text_returns_empty_list(self):
+        """Empty/blank text → empty list."""
+        from app.document_intelligence import _chunk_tabular_text
+
+        assert _chunk_tabular_text("", set(), rows_per_chunk=100) == []
+        assert _chunk_tabular_text("   \n  ", set(), rows_per_chunk=100) == []
+
+
+# ── _extract_tabular_llm ─────────────────────────────────────────────────────
+
+
+class TestExtractTabularLlm:
+    """Tests for _extract_tabular_llm (complex-query LLM extraction)."""
+
+    def _make_md_table(self, headers: list[str], rows: list[list[str]]) -> str:
+        header_line = "| " + " | ".join(headers) + " |"
+        sep_line = "| " + " | ".join(["---"] * len(headers)) + " |"
+        data_lines = ["| " + " | ".join(row) + " |" for row in rows]
+        return "\n".join([header_line, sep_line] + data_lines)
+
+    @pytest.mark.asyncio
+    async def test_returns_matched_entries(self):
+        """LLM returns matches → MatchEntry list with correct fields."""
+        from app.document_intelligence import QueryPlan, _extract_tabular_llm
+
+        table = self._make_md_table(["Name", "Revenue"], [["Acme", "500"], ["Beta", "200"]])
+        session = _make_session([table])
+        plan = QueryPlan(
+            relevant_columns=["Name", "Revenue"],
+            extraction_instruction="Find all companies with revenue > 100",
+            document_type="tabular",
+            complexity="complex",
+        )
+
+        llm_payload = {
+            "matches": [
+                {"value": {"Name": "Acme", "Revenue": "500"}, "source_column": ["Name", "Revenue"], "row_numbers": [1], "confidence": 0.95},
+                {"value": {"Name": "Beta", "Revenue": "200"}, "source_column": ["Name", "Revenue"], "row_numbers": [2], "confidence": 0.9},
+            ]
+        }
+        mock_resp = _make_openai_response(llm_payload)
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                matches, interp, chunks_processed, chunks_total = await _extract_tabular_llm(
+                    session, plan, None
+                )
+
+        assert len(matches) == 2
+        assert chunks_processed == 1
+        assert chunks_total == 1
+        assert interp == plan.extraction_instruction
+
+    @pytest.mark.asyncio
+    async def test_deduplication_removes_duplicate_values(self):
+        """Same value extracted from multiple chunks is deduplicated."""
+        from app.document_intelligence import QueryPlan, _extract_tabular_llm
+
+        # Two texts with identical content → each produces a chunk
+        table = self._make_md_table(["Name"], [["Alice"]])
+        session = _make_session([table, table])
+        plan = QueryPlan(
+            relevant_columns=["Name"],
+            extraction_instruction="Find all names",
+            document_type="tabular",
+            complexity="complex",
+        )
+
+        llm_payload = {"matches": [{"value": {"Name": "Alice"}, "source_column": ["Name"], "row_numbers": [1], "confidence": 0.9}]}
+        mock_resp = _make_openai_response(llm_payload)
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                matches, _, chunks_processed, chunks_total = await _extract_tabular_llm(
+                    session, plan, None
+                )
+
+        assert len(matches) == 1  # deduplicated
+        assert chunks_total == 2
+        assert chunks_processed == 2
+
+    @pytest.mark.asyncio
+    async def test_chunk_exception_counts_as_failed_not_processed(self):
+        """A chunk that raises an exception is skipped; chunks_processed is lower."""
+        from app.document_intelligence import QueryPlan, _extract_tabular_llm
+
+        rows = [[f"row_{i}", str(i)] for i in range(150)]
+        table = self._make_md_table(["Name", "Score"], rows)
+        session = _make_session([table])
+        plan = QueryPlan(
+            relevant_columns=["Name"],
+            extraction_instruction="Find names",
+            document_type="tabular",
+            complexity="complex",
+        )
+
+        call_count = [0]
+
+        async def flaky_create(**kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RuntimeError("LLM error on first chunk")
+            return _make_openai_response({"matches": []})
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=flaky_create)
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                matches, _, chunks_processed, chunks_total = await _extract_tabular_llm(
+                    session, plan, None
+                )
+
+        assert chunks_total == 2  # 150 rows → 2 chunks of 100
+        assert chunks_processed == 1  # first chunk failed
+
+    @pytest.mark.asyncio
+    async def test_empty_session_returns_zero_counts(self):
+        """Session with no text content → ([], '', 0, 0)."""
+        from app.document_intelligence import QueryPlan, _extract_tabular_llm
+
+        session = _make_session([""])
+        plan = QueryPlan(relevant_columns=[], extraction_instruction="", document_type="tabular", complexity="complex")
+
+        matches, interp, chunks_processed, chunks_total = await _extract_tabular_llm(
+            session, plan, None
+        )
+
+        assert matches == []
+        assert chunks_processed == 0
+        assert chunks_total == 0
+
+    @pytest.mark.asyncio
+    async def test_column_filter_reduces_tokens_sent_to_llm(self):
+        """Only relevant columns appear in the prompt sent to the LLM."""
+        from app.document_intelligence import QueryPlan, _extract_tabular_llm
+
+        table = self._make_md_table(["Name", "SecretColumn", "Revenue"], [["Alice", "PRIVATE", "100"]])
+        session = _make_session([table])
+        plan = QueryPlan(
+            relevant_columns=["Name", "Revenue"],
+            extraction_instruction="List all",
+            document_type="tabular",
+            complexity="complex",
+        )
+
+        captured_prompts: list[str] = []
+
+        async def capture(**kwargs):
+            for msg in kwargs.get("messages", []):
+                captured_prompts.append(msg.get("content", ""))
+            return _make_openai_response({"matches": []})
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=capture)
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                await _extract_tabular_llm(session, plan, None)
+
+        combined = " ".join(captured_prompts)
+        assert "SecretColumn" not in combined
+        assert "Name" in combined
+        assert "Revenue" in combined
+
+    @pytest.mark.asyncio
+    async def test_partial_flag_set_when_chunks_failed(self):
+        """query_document sets partial=True when chunks_processed < chunks_total."""
+        table = self._make_md_table(
+            ["Name", "Score"],
+            [[f"entity_{i}", str(i)] for i in range(150)],
+        )
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="Name"), ColumnSchema(name="Score")])],
+            total_sheets=1,
+            summary="test",
+        )
+        schema_json = schema.model_dump_json()
+
+        call_count = [0]
+
+        async def flaky_llm(**kwargs):
+            call_count[0] += 1
+            # First call: query plan
+            if call_count[0] == 1:
+                return _make_openai_response({
+                    "relevant_columns": ["Name"],
+                    "extraction_instruction": "Find all names",
+                    "document_type": "tabular",
+                    "complexity": "complex",
+                })
+            # Second call (first chunk): fail
+            if call_count[0] == 2:
+                raise RuntimeError("chunk error")
+            # Third call (second chunk): succeed with empty matches
+            return _make_openai_response({"matches": []})
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=flaky_llm)
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=schema_json)
+        mock_redis.expire = AsyncMock()
+
+        session = _make_session([table])
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as mock_settings:
+                        mock_settings.query_model = "gpt-4.1"
+                        mock_settings.redis_ttl_hours = 24
+                        result = await query_document("sess-partial", "find names")
+
+        assert result.partial is True
+        assert result.chunks_total == 2
+        assert result.chunks_processed == 1
