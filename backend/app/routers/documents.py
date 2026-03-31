@@ -2,6 +2,7 @@ import datetime
 import logging
 import math
 import uuid
+from enum import Enum
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
@@ -30,6 +31,20 @@ logger = logging.getLogger(__name__)
 
 SESSION_TEXT_CAP = 500_000
 
+
+# ── Enums ────────────────────────────────────────────────────────────────────
+
+
+class UploadMode(str, Enum):
+    """Controls how an uploaded document is processed.
+
+    - session: store text in Redis for interactive querying (default)
+    - kg:      extract entities into the knowledge graph via the worker pipeline
+    """
+    session = "session"
+    kg = "kg"
+
+
 # ── Request / Response models ────────────────────────────────────────────────
 
 
@@ -43,6 +58,14 @@ class DocumentQueryResponse(BaseModel):
     query_interpretation: str = ""
     total_matches: int = 0
     error: str | None = None
+
+
+class KGUploadResult(BaseModel):
+    session_id: str
+    filename: str
+    char_count: int
+    status: str
+    message: str
 
 
 @router.get("/status")
@@ -61,9 +84,21 @@ async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session_key: str | None = Query(None),
+    mode: UploadMode = Query(UploadMode.session),
+    team_id: str | None = Query(None),
     user: dict[str, Any] = Depends(get_current_user),
 ):
-    """Upload a document for use in research sessions."""
+    """Upload a document for processing.
+
+    **mode=session** (default): stores extracted text in Redis for interactive
+    natural-language querying via POST /api/documents/query.
+
+    **mode=kg**: extracts entities and relationships into the knowledge graph
+    via the worker pipeline.  Returns a processing receipt; results arrive
+    asynchronously.
+
+    The ``team_id`` parameter is only used in ``mode=kg``.
+    """
     filename = file.filename or ""
     ext = get_extension(filename)
     if ext not in SUPPORTED_EXTENSIONS:
@@ -85,38 +120,58 @@ async def upload_document(
     except ValueError as exc:
         raise HTTPException(status_code=415, detail=str(exc)) from exc
 
-    # Extract metadata and text in a single try/except — if metadata fails,
-    # the same library would fail on text extraction too.
     try:
-        format_meta = get_format_metadata(contents, filename, ext)
-        text = await extract_text(contents, filename)
+        extracted_text = await extract_text(contents, filename)
     except Exception as exc:
         raise HTTPException(
             status_code=422,
             detail=f"Failed to extract text from '{filename}': {exc}",
         ) from exc
 
-    if not text or not text.strip():
+    if not extracted_text or not extracted_text.strip():
         raise HTTPException(
             status_code=422,
             detail="Could not extract any text from the file. It may be empty or corrupted.",
         )
 
+    # ── mode=kg: publish for KG entity extraction and return receipt ──────────
+    if mode == UploadMode.kg:
+        session_id = str(uuid.uuid4())
+        await publish_for_extraction(
+            session_id,
+            extracted_text,
+            team_id=team_id,
+            is_document=True,
+        )
+        return KGUploadResult(
+            session_id=session_id,
+            filename=filename,
+            char_count=len(extracted_text),
+            status="processing",
+            message="Document text extracted and queued for KG processing.",
+        )
+
+    # ── mode=session: store in Redis for interactive querying ─────────────────
+    try:
+        format_meta = get_format_metadata(contents, filename, ext)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Failed to extract text from '{filename}': {exc}",
+        ) from exc
+
     doc_type = format_meta.get("type", "unknown")
     truncated = False
 
-    # Build per-document metadata entry (for the response and Redis)
     doc_meta: dict = {
         "filename": filename,
         "type": doc_type,
-        "char_count": len(text),
+        "char_count": len(extracted_text),
     }
-    # Add format-specific fields (pages, sheets, rows)
     for key in ("pages", "sheets", "rows"):
         if key in format_meta:
             doc_meta[key] = format_meta[key]
 
-    # Session handling
     is_append = False
     existing: DocumentSession | None = None
     if session_key:
@@ -127,20 +182,16 @@ async def upload_document(
     session_for_bg: DocumentSession
 
     if is_append:
-        # session_total and truncation are computed *inside* append_document's
-        # atomic WATCH/MULTI/EXEC block, eliminating the TOCTOU window that
-        # existed when we read-then-wrote outside the transaction.
         docs_list, truncated = await append_document(
             session_key,
             filename,
-            text,
+            extracted_text,
             doc_type=doc_type,
-            char_count=len(text),
+            char_count=len(extracted_text),
             metadata_fields={k: v for k, v in doc_meta.items()
                              if k not in ("filename", "type", "char_count")},
             session_cap=SESSION_TEXT_CAP,
         )
-        # Reflect any truncation back into doc_meta for the response
         if truncated:
             doc_meta["char_count"] = next(
                 (d["char_count"] for d in docs_list if d.get("filename") == filename),
@@ -148,10 +199,7 @@ async def upload_document(
             )
         session_total = sum(d.get("char_count", 0) for d in docs_list)
 
-        # Build DocumentSession directly from existing session + new document.
-        # Avoids re-reading from Redis in the background task (race condition fix).
-        appended_text = text[:doc_meta["char_count"]] if truncated else text
-        # existing is guaranteed non-None when is_append is True
+        appended_text = extracted_text[:doc_meta["char_count"]] if truncated else extracted_text
         prior_texts = existing.texts if existing and existing.texts else []
         prior_text = existing.text if existing else ""
         session_for_bg = DocumentSession(
@@ -161,29 +209,25 @@ async def upload_document(
             metadata=(existing.metadata if existing else []) + [dict(doc_meta)],
         )
     else:
-        # New session — generate a fresh key
         session_key = str(uuid.uuid4())
         await set_documents(session_key, [{
             "filename": filename,
-            "text": text,
+            "text": extracted_text,
             "type": doc_type,
-            "char_count": len(text),
+            "char_count": len(extracted_text),
             **{k: v for k, v in doc_meta.items()
                if k not in ("filename", "type", "char_count")},
         }])
         docs_list = [doc_meta]
-        session_total = len(text)
+        session_total = len(extracted_text)
 
-        # Build DocumentSession directly — avoids re-reading from Redis in bg task
         session_for_bg = DocumentSession(
-            text=text,
-            texts=[text],
+            text=extracted_text,
+            texts=[extracted_text],
             filenames=[filename],
             metadata=[dict(doc_meta)],
         )
 
-    # Trigger background schema analysis — pass session directly to avoid
-    # re-reading from Redis before the write has propagated (race condition fix)
     async def _bg_analyze_schema(sk: str, session: DocumentSession) -> None:
         try:
             await analyze_schema(sk, session)
@@ -192,7 +236,6 @@ async def upload_document(
 
     background_tasks.add_task(_bg_analyze_schema, session_key, session_for_bg)
 
-    # Build unified response
     response: dict = {
         "session_key": session_key,
         "filename": filename,
@@ -202,7 +245,6 @@ async def upload_document(
         "truncated": truncated,
         "documents": docs_list,
     }
-    # Add format-specific top-level fields
     for key in ("pages", "sheets", "rows"):
         if key in format_meta:
             response[key] = format_meta[key]
@@ -217,6 +259,10 @@ async def upload_to_kg(
     user: dict[str, Any] = Depends(get_current_user),
 ):
     """Upload a document and extract entities/relationships into the knowledge graph.
+
+    **Deprecated** — use ``POST /api/documents/upload?mode=kg`` instead.
+    This endpoint is kept for backward compatibility and delegates to the
+    unified upload handler.
 
     Supported formats: PDF, DOCX, Excel (.xlsx/.xls), CSV, TSV, PNG, JPEG, GIF, WebP.
     """
@@ -241,7 +287,6 @@ async def upload_to_kg(
     except ValueError as exc:
         raise HTTPException(status_code=415, detail=str(exc)) from exc
 
-    # Extract text from the document
     try:
         extracted_text = await extract_text(contents, filename)
     except Exception as exc:
@@ -256,7 +301,6 @@ async def upload_to_kg(
             detail="Could not extract any text from the file. It may be empty or corrupted.",
         )
 
-    # Publish to the entity_extraction stream for KG processing
     session_id = str(uuid.uuid4())
     await publish_for_extraction(
         session_id,
