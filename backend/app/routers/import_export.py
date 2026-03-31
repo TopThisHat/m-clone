@@ -12,11 +12,12 @@ import io
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.auth import get_current_user
+from app.document_intelligence import classify_columns_semantic
 from app.db import (
     DatabaseNotConfigured,
     db_bulk_create_attributes,
@@ -127,30 +128,6 @@ def _parse_csv_bytes(data: bytes) -> list[dict[str, str]]:
     return rows
 
 
-def _classify_columns(
-    headers: list[str],
-) -> dict[str, str]:
-    """Map column names to their likely role.
-
-    Returns a dict of {header: role} where role is one of:
-      entity_label, entity_gwm_id, entity_description,
-      attribute (anything else).
-    """
-    mapping: dict[str, str] = {}
-    lower_headers = {h: h.lower().strip() for h in headers}
-
-    for h, lo in lower_headers.items():
-        if lo in ("entity", "entity_label", "entity name", "name", "label", "company"):
-            mapping[h] = "entity_label"
-        elif lo in ("gwm_id", "gwm id", "external_id", "external id"):
-            mapping[h] = "entity_gwm_id"
-        elif lo in ("entity_description", "description"):
-            mapping[h] = "entity_description"
-        else:
-            mapping[h] = "attribute"
-    return mapping
-
-
 def _validate_upload(
     rows: list[dict[str, str]],
     column_map: dict[str, str],
@@ -225,6 +202,7 @@ def _validate_upload(
 async def upload_import(
     campaign_id: str,
     file: UploadFile = File(...),
+    intent: str | None = Query(default=None),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Parse an uploaded CSV/TSV file and return a validated preview.
@@ -232,6 +210,9 @@ async def upload_import(
     The response includes entities, attributes, and cell values extracted
     from the file, along with any validation errors.  The caller should
     inspect the preview and then POST to ``/import/commit`` to persist.
+
+    Optional ``intent`` query parameter provides context for semantic column
+    classification (e.g. "loading portfolio companies").
     """
     await _get_owned_campaign(campaign_id, user["sub"])
 
@@ -261,7 +242,11 @@ async def upload_import(
         raise HTTPException(status_code=400, detail="No data rows found")
 
     headers = list(rows[0].keys())
-    column_map = _classify_columns(headers)
+
+    # Semantic classification with graceful fallback to exact-match
+    safe_intent = intent[:500] if intent else None
+    classification = await classify_columns_semantic(headers, rows[:5], user_intent=safe_intent)
+    column_map = {header: col.role for header, col in classification.items()}
 
     # If no entity_label column was detected, fail early
     if "entity_label" not in column_map.values():
@@ -272,6 +257,17 @@ async def upload_import(
         )
 
     preview = _validate_upload(rows, column_map)
+
+    # Surface classification details (confidence, semantic type, reasoning)
+    preview["classification_details"] = {
+        header: {
+            "role": col.role,
+            "semantic_type": col.semantic_type,
+            "confidence": col.confidence,
+            "reasoning": col.reasoning,
+        }
+        for header, col in classification.items()
+    }
     return preview
 
 

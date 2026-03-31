@@ -1,10 +1,15 @@
+import datetime
+import logging
+import math
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
 from app.config import settings
+from app.document_intelligence import analyze_schema, query_document
 from app.document_parser import (
     SUPPORTED_EXTENSIONS,
     extract_text,
@@ -21,8 +26,23 @@ from app.redis_client import (
 from app.streams import publish_for_extraction
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+logger = logging.getLogger(__name__)
 
 SESSION_TEXT_CAP = 500_000
+
+# ── Request / Response models ────────────────────────────────────────────────
+
+
+class DocumentQueryRequest(BaseModel):
+    session_key: str
+    query: str = Field(max_length=1000)
+
+
+class DocumentQueryResponse(BaseModel):
+    matches: list = []
+    query_interpretation: str = ""
+    total_matches: int = 0
+    error: str | None = None
 
 
 @router.get("/status")
@@ -38,6 +58,7 @@ async def document_status(
 
 @router.post("/upload")
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session_key: str | None = Query(None),
     user: dict[str, Any] = Depends(get_current_user),
@@ -137,6 +158,16 @@ async def upload_document(
         docs_list = [doc_meta]
         session_total = len(text)
 
+    # Trigger background schema analysis (fire-and-forget, does not block response)
+    async def _bg_analyze_schema(sk: str) -> None:
+        try:
+            session = await get_document_text(sk)
+            await analyze_schema(sk, session)
+        except Exception:
+            logger.exception("Background schema analysis failed for session %s", sk)
+
+    background_tasks.add_task(_bg_analyze_schema, session_key)
+
     # Build unified response
     response: dict = {
         "session_key": session_key,
@@ -227,3 +258,77 @@ async def get_document_text(session_key: str | None) -> DocumentSession:
     if not session:
         return DocumentSession(text="", filenames=[], metadata=[])
     return session
+
+
+# ── Rate limiting helpers ────────────────────────────────────────────────────
+
+_QUERY_RATE_LIMIT = 10       # requests per window
+_QUERY_RATE_WINDOW = 60      # seconds
+
+
+async def _check_rate_limit(user_id: str) -> None:
+    """Raise HTTP 429 if the user has exceeded the query rate limit.
+
+    Uses Redis key ``query_ratelimit:{user_id}:{minute_window}`` with a 60s TTL.
+    """
+    from app.redis_client import get_redis  # local import to avoid startup cycle
+
+    minute_window = math.floor(datetime.datetime.now(datetime.timezone.utc).timestamp() / _QUERY_RATE_WINDOW)
+    rate_key = f"query_ratelimit:{user_id}:{minute_window}"
+
+    try:
+        redis = await get_redis()
+        count = await redis.incr(rate_key)
+        if count == 1:
+            # First request in this window — set TTL
+            await redis.expire(rate_key, _QUERY_RATE_WINDOW)
+        if count > _QUERY_RATE_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded: 10 queries per minute.",
+                headers={"Retry-After": str(_QUERY_RATE_WINDOW)},
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Redis unavailable — allow request through (degrade gracefully)
+        logger.warning("_check_rate_limit: Redis error — skipping rate check: %s", exc)
+
+
+# ── Query endpoint ───────────────────────────────────────────────────────────
+
+
+@router.post("/query", response_model=DocumentQueryResponse)
+async def query_document_endpoint(
+    body: DocumentQueryRequest,
+    limit: int = Query(default=100, ge=1, le=500),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> DocumentQueryResponse:
+    """Query a document session using natural language.
+
+    Returns extracted matches with source provenance.  Rate-limited to
+    10 requests per minute per authenticated user.
+    """
+    user_id = user["sub"]
+
+    # Rate limiting
+    await _check_rate_limit(user_id)
+
+    # Validate session exists
+    session = await get_documents(body.session_key)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Document session not found")
+
+    # Execute query
+    result = await query_document(body.session_key, body.query)
+
+    # Apply limit to matches while preserving full total_matches count
+    all_matches = result.matches
+    limited_matches = all_matches[:limit]
+
+    return DocumentQueryResponse(
+        matches=[m.model_dump() for m in limited_matches],
+        query_interpretation=result.query_interpretation,
+        total_matches=result.total_matches,
+        error=result.error,
+    )
