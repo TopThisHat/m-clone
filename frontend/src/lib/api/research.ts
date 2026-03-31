@@ -96,7 +96,12 @@ export async function startResearch(
 	};
 	const teamId = get(scoutTeam);
 	if (teamId) body.team_id = teamId;
-	if (isFollowUp) body.message_history = msgHistory;
+	if (isFollowUp) {
+		body.message_history = msgHistory;
+		// Include the active session ID so the backend can recover doc_session_key from
+		// the PG session record if the frontend store no longer holds it.
+		body.session_id = get(activeSessionId) ?? null;
+	}
 
 	let response: Response;
 	try {
@@ -158,9 +163,10 @@ export async function startResearch(
 			}
 		}
 
-		// Stream completed successfully — clear the doc session key so it isn't re-sent.
-		// Compare-and-swap: only clear if it hasn't been replaced by a new upload during streaming.
-		if (capturedDocKey && get(docSessionKey) === capturedDocKey) docSessionKey.set(undefined);
+		// Stream completed successfully. docSessionKey is intentionally NOT cleared here.
+		// The key persists in the store so follow-up queries in the same session can still
+		// reference the uploaded document. The key is only cleared when the user explicitly
+		// starts a new research session via newResearch() in sessionStore.ts.
 
 		if (finalReportData) {
 			const currentId = get(activeSessionId);

@@ -75,6 +75,18 @@ async def db_get_session(session_id: str) -> dict[str, Any] | None:
     return _row_to_dict(row) if row else None
 
 
+async def db_get_session_doc_key(session_id: str) -> str | None:
+    """Return the doc_session_key stored on a session, or None."""
+    async with _acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT doc_session_key FROM playbook.sessions WHERE id = $1",
+            session_id,
+        )
+    if row is None:
+        return None
+    return row["doc_session_key"]
+
+
 async def db_get_public_session(session_id: str) -> dict[str, Any] | None:
     """Return session only if is_public=true."""
     async with _acquire() as conn:

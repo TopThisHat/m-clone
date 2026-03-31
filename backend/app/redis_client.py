@@ -474,14 +474,22 @@ async def get_documents(session_key: str) -> DocumentSession | None:
 
 
 async def _redis_get_documents(client: Any, key: str) -> DocumentSession | None:
-    """Load documents from Redis, trying ``doc:`` then ``pdf:`` prefix."""
+    """Load documents from Redis, trying ``doc:`` then ``pdf:`` prefix.
+
+    After a successful read, the key's TTL is refreshed (sliding window)
+    so active sessions don't lose documents mid-use.
+    """
+    ttl_seconds = settings.redis_ttl_hours * 3600
+
     raw = await client.get(f"doc:{key}")
     if raw:
+        await client.expire(f"doc:{key}", ttl_seconds)
         docs = json.loads(raw)
         return _docs_list_to_session(docs)
 
     raw = await client.get(f"pdf:{key}")
     if raw:
+        await client.expire(f"pdf:{key}", ttl_seconds)
         old = json.loads(raw)
         if isinstance(old, dict):
             old_text = old.get("text", "")
