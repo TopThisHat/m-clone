@@ -111,6 +111,52 @@ async def test_search_caches_chunks():
     assert "chunked_docs" in deps.tool_cache
 
 
+@pytest.mark.asyncio
+async def test_search_filename_filter_returns_matching_file():
+    """When filename is provided, only chunks from that file should be returned."""
+    from app.agent.tools import search_uploaded_documents
+
+    deps = _make_deps(
+        doc_texts=[
+            "Sports teams include the Lakers, Celtics, and Warriors.",
+            "Media companies include Disney, Netflix, and Warner.",
+        ],
+        metadata=[
+            {"filename": "sports.docx", "type": "docx", "char_count": 55},
+            {"filename": "media.docx", "type": "docx", "char_count": 52},
+        ],
+    )
+    result = await search_uploaded_documents(deps=deps, query="teams", filename="sports.docx")
+    assert "sports.docx" in result
+    assert "media.docx" not in result
+
+
+@pytest.mark.asyncio
+async def test_search_filename_filter_no_match():
+    """When filename doesn't match any uploaded file, return helpful error."""
+    from app.agent.tools import search_uploaded_documents
+
+    deps = _make_deps(
+        doc_texts=["Some content about reports."],
+        metadata=[{"filename": "report.docx", "type": "docx", "char_count": 26}],
+    )
+    result = await search_uploaded_documents(deps=deps, query="data", filename="missing.csv")
+    assert "No document found" in result
+
+
+@pytest.mark.asyncio
+async def test_search_filename_filter_case_insensitive():
+    """Filename filtering should be case-insensitive."""
+    from app.agent.tools import search_uploaded_documents
+
+    deps = _make_deps(
+        doc_texts=["Content here about various topics."],
+        metadata=[{"filename": "Report.DOCX", "type": "docx", "char_count": 34}],
+    )
+    result = await search_uploaded_documents(deps=deps, query="content", filename="report.docx")
+    assert "Report.DOCX" in result
+
+
 # ---------------------------------------------------------------------------
 # KG extraction paths
 # ---------------------------------------------------------------------------
