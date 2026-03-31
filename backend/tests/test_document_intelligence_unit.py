@@ -1555,10 +1555,10 @@ class TestQueryResultCaching:
         with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
             with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
                 with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
-                    with patch("app.document_intelligence.settings") as s:
-                        s.query_model = "gpt-4.1"
-                        s.redis_ttl_hours = 24
-                        s.max_session_cost = 1.0
+                    with patch("app.document_intelligence.settings") as mock_settings:
+                        mock_settings.query_model = "gpt-4.1"
+                        mock_settings.redis_ttl_hours = 24
+                        mock_settings.max_session_cost = 1.0
                         result = await query_document("sess-partial-cache", "find all")
 
         assert result.partial is True
@@ -1720,10 +1720,10 @@ class TestQueryCostLogging:
         with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
             with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
                 with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
-                    with patch("app.document_intelligence.settings") as s:
-                        s.query_model = "gpt-4.1"
-                        s.redis_ttl_hours = 24
-                        s.max_session_cost = 1.0
+                    with patch("app.document_intelligence.settings") as mock_settings:
+                        mock_settings.query_model = "gpt-4.1"
+                        mock_settings.redis_ttl_hours = 24
+                        mock_settings.max_session_cost = 1.0
                         await query_document("sess-cost-log", "list all names")
 
         cost_calls = [c for c in incrbyfloat_calls if "doc_cost:" in str(c[0])]
