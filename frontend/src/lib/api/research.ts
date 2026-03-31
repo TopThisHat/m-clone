@@ -158,8 +158,9 @@ export async function startResearch(
 			}
 		}
 
-		// Keep docSessionKey alive for follow-up queries in this session.
-		// It is only cleared by newResearch() when the user starts a brand-new session.
+		// Stream completed successfully — clear the doc session key so it isn't re-sent.
+		// Compare-and-swap: only clear if it hasn't been replaced by a new upload during streaming.
+		if (capturedDocKey && get(docSessionKey) === capturedDocKey) docSessionKey.set(undefined);
 
 		if (finalReportData) {
 			const currentId = get(activeSessionId);
