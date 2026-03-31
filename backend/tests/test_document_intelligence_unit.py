@@ -767,3 +767,298 @@ class TestSecurityEdgeCases:
         # Both columns fall back to exact-match
         assert result["name"].role == "entity_label"
         assert result["unknown_col"].role == "attribute"
+
+
+# ── QueryPlan complexity classification ───────────────────────────────────────
+
+
+class TestQueryPlanComplexity:
+    """Tests for the complexity field on QueryPlan and _build_query_plan classification."""
+
+    def test_query_plan_default_complexity_is_simple(self):
+        """QueryPlan.complexity defaults to 'simple'."""
+        plan = QueryPlan()
+        assert plan.complexity == "simple"
+
+    def test_query_plan_accepts_complex(self):
+        """QueryPlan accepts complexity='complex'."""
+        plan = QueryPlan(complexity="complex")
+        assert plan.complexity == "complex"
+
+    def test_query_plan_accepts_simple(self):
+        """QueryPlan accepts complexity='simple' explicitly."""
+        plan = QueryPlan(complexity="simple")
+        assert plan.complexity == "simple"
+
+    def test_query_plan_rejects_invalid_complexity(self):
+        """QueryPlan rejects values other than 'simple' or 'complex'."""
+        import pytest
+        with pytest.raises(Exception):
+            QueryPlan(complexity="medium")  # type: ignore[arg-type]
+
+    @pytest.mark.asyncio
+    async def test_lookup_query_classified_as_simple(self):
+        """Direct lookup query → LLM returns simple → plan.complexity == 'simple'."""
+        from app.document_intelligence import _build_query_plan
+
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="company")])],
+            total_sheets=1,
+            summary="company list",
+        )
+        plan_payload = {
+            "relevant_columns": ["company"],
+            "extraction_instruction": "Extract all company names",
+            "document_type": "tabular",
+            "complexity": "simple",
+        }
+        mock_resp = _make_openai_response(plan_payload)
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                plan = await _build_query_plan(schema, "list all companies")
+
+        assert plan.complexity == "simple"
+
+    @pytest.mark.asyncio
+    async def test_count_query_classified_as_complex(self):
+        """Count/aggregation query → LLM returns complex → plan.complexity == 'complex'."""
+        from app.document_intelligence import _build_query_plan
+
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="status")])],
+            total_sheets=1,
+            summary="status table",
+        )
+        plan_payload = {
+            "relevant_columns": ["status"],
+            "extraction_instruction": "Count rows where status is active",
+            "document_type": "tabular",
+            "complexity": "complex",
+        }
+        mock_resp = _make_openai_response(plan_payload)
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                plan = await _build_query_plan(schema, "how many companies are active?")
+
+        assert plan.complexity == "complex"
+
+    @pytest.mark.asyncio
+    async def test_aggregation_query_classified_as_complex(self):
+        """Sum/average query → LLM returns complex → plan.complexity == 'complex'."""
+        from app.document_intelligence import _build_query_plan
+
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="revenue")])],
+            total_sheets=1,
+            summary="revenue table",
+        )
+        plan_payload = {
+            "relevant_columns": ["revenue"],
+            "extraction_instruction": "Sum all revenue values",
+            "document_type": "tabular",
+            "complexity": "complex",
+        }
+        mock_resp = _make_openai_response(plan_payload)
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                plan = await _build_query_plan(schema, "what is the total revenue?")
+
+        assert plan.complexity == "complex"
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_match_query_classified_as_complex(self):
+        """Fuzzy matching query → LLM returns complex → plan.complexity == 'complex'."""
+        from app.document_intelligence import _build_query_plan
+
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="name")])],
+            total_sheets=1,
+            summary="name table",
+        )
+        plan_payload = {
+            "relevant_columns": ["name"],
+            "extraction_instruction": "Find names similar to 'Acme'",
+            "document_type": "tabular",
+            "complexity": "complex",
+        }
+        mock_resp = _make_openai_response(plan_payload)
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                plan = await _build_query_plan(schema, "find names similar to Acme Corp")
+
+        assert plan.complexity == "complex"
+
+    @pytest.mark.asyncio
+    async def test_filter_by_exact_value_classified_as_simple(self):
+        """Exact value filter → LLM returns simple → plan.complexity == 'simple'."""
+        from app.document_intelligence import _build_query_plan
+
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="status")])],
+            total_sheets=1,
+            summary="status table",
+        )
+        plan_payload = {
+            "relevant_columns": ["status"],
+            "extraction_instruction": "Extract rows where status is active",
+            "document_type": "tabular",
+            "complexity": "simple",
+        }
+        mock_resp = _make_openai_response(plan_payload)
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                plan = await _build_query_plan(schema, "find all active records")
+
+        assert plan.complexity == "simple"
+
+    @pytest.mark.asyncio
+    async def test_llm_omits_complexity_defaults_to_simple(self):
+        """LLM response without complexity field → defaults to 'simple'."""
+        from app.document_intelligence import _build_query_plan
+
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="name")])],
+            total_sheets=1,
+            summary="table",
+        )
+        # No 'complexity' key in response
+        plan_payload = {
+            "relevant_columns": ["name"],
+            "extraction_instruction": "Extract names",
+            "document_type": "tabular",
+        }
+        mock_resp = _make_openai_response(plan_payload)
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                plan = await _build_query_plan(schema, "list names")
+
+        assert plan.complexity == "simple"
+
+    @pytest.mark.asyncio
+    async def test_llm_returns_unknown_complexity_defaults_to_simple(self):
+        """LLM returns unrecognised complexity value → defaults to 'simple'."""
+        from app.document_intelligence import _build_query_plan
+
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="name")])],
+            total_sheets=1,
+            summary="table",
+        )
+        plan_payload = {
+            "relevant_columns": ["name"],
+            "extraction_instruction": "Extract names",
+            "document_type": "tabular",
+            "complexity": "medium",  # invalid value
+        }
+        mock_resp = _make_openai_response(plan_payload)
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                plan = await _build_query_plan(schema, "list names")
+
+        assert plan.complexity == "simple"
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_defaults_complexity_to_simple(self):
+        """LLM call failure → fallback QueryPlan has complexity='simple'."""
+        from app.document_intelligence import _build_query_plan
+
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[],
+            total_sheets=0,
+            summary="",
+        )
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=RuntimeError("LLM unavailable")
+        )
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                plan = await _build_query_plan(schema, "any query")
+
+        assert plan.complexity == "simple"
+
+    @pytest.mark.asyncio
+    async def test_prompt_includes_complexity_instructions(self):
+        """_build_query_plan prompt contains complexity classification guidance."""
+        from app.document_intelligence import _build_query_plan
+
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="name")])],
+            total_sheets=1,
+            summary="table",
+        )
+        captured_prompts: list[str] = []
+        plan_payload = {
+            "relevant_columns": [],
+            "extraction_instruction": "",
+            "document_type": "tabular",
+            "complexity": "simple",
+        }
+        mock_resp = _make_openai_response(plan_payload)
+
+        async def capture_call(**kwargs):
+            for msg in kwargs.get("messages", []):
+                captured_prompts.append(msg.get("content", ""))
+            return mock_resp
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = capture_call
+
+        with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+            with patch("app.document_intelligence.settings") as mock_settings:
+                mock_settings.query_model = "gpt-4.1"
+                await _build_query_plan(schema, "list all companies")
+
+        combined = " ".join(captured_prompts)
+        assert "complexity" in combined
+        assert "simple" in combined
+        assert "complex" in combined
+
+    @pytest.mark.asyncio
+    async def test_none_schema_returns_simple_plan(self):
+        """None schema → fallback QueryPlan with complexity='simple'."""
+        from app.document_intelligence import _build_query_plan
+
+        plan = await _build_query_plan(None, "any query")
+
+        assert plan.complexity == "simple"
+        assert plan.document_type == "prose"

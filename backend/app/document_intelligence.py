@@ -17,7 +17,7 @@ import json
 import logging
 import re
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -74,6 +74,7 @@ class QueryPlan(BaseModel):
     relevant_columns: list[str] = []
     extraction_instruction: str = ""
     document_type: str = "tabular"
+    complexity: Literal["simple", "complex"] = "simple"
 
 
 class MatchEntry(BaseModel):
@@ -744,12 +745,16 @@ Determine:
 1. Which columns or entity types are relevant to answering this query.
 2. A concise extraction instruction describing what to look for.
 3. Whether the document type is tabular, prose, or mixed.
+4. The query complexity: "simple" or "complex".
+   - simple: direct lookup, listing, or filtering by exact value (e.g. "list all companies", "find rows where status is active")
+   - complex: aggregation (count, sum, avg), fuzzy matching, cross-column reasoning, derived values, or computations (e.g. "how many", "total revenue", "average score", "find similar names", "which companies have both X and Y")
 
 Return valid JSON:
 {{
   "relevant_columns": ["col1", "col2"],
   "extraction_instruction": "Extract all rows where ...",
-  "document_type": "tabular | prose | mixed"
+  "document_type": "tabular | prose | mixed",
+  "complexity": "simple | complex"
 }}"""
 
     try:
@@ -766,10 +771,15 @@ Return valid JSON:
         )
         raw = response.choices[0].message.content or "{}"
         data = json.loads(raw)
+        raw_complexity = data.get("complexity", "simple")
+        complexity: Literal["simple", "complex"] = (
+            "complex" if raw_complexity == "complex" else "simple"
+        )
         return QueryPlan(
             relevant_columns=data.get("relevant_columns", []),
             extraction_instruction=data.get("extraction_instruction", query),
             document_type=data.get("document_type", schema.document_type),
+            complexity=complexity,
         )
     except Exception as exc:
         logger.warning("_build_query_plan: LLM call failed: %s", exc)
@@ -777,6 +787,7 @@ Return valid JSON:
             relevant_columns=[],
             extraction_instruction=query,
             document_type=schema.document_type if schema else "prose",
+            complexity="simple",
         )
 
 
