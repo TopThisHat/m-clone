@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     enable_semantic_classification: bool = True
     classification_model: str = "gpt-4.1"
     query_model: str = "gpt-4.1"
+    max_session_cost: float = 1.0  # USD cap on cumulative LLM cost per document session
 
     # AWS Secrets Manager (set in dev/uat/prod instead of DATABASE_URL / REDIS_URL)
     aws_secret_name: str = ""              # e.g. "prod/myapp/db"

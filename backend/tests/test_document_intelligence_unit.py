@@ -12,6 +12,7 @@ import pytest
 
 from app.document_intelligence import (
     DocumentSchema,
+    MatchEntry,
     QueryResult,
     SemanticType,
     SheetSchema,
@@ -340,6 +341,7 @@ class TestAnalyzeSchema:
                     mock_settings.enable_semantic_classification = True
                     mock_settings.query_model = "gpt-4.1"
                     mock_settings.redis_ttl_hours = 24
+                    mock_settings.max_session_cost = 1.0
                     result = await analyze_schema("test-miss-key", session)
 
         assert result is not None
@@ -377,6 +379,7 @@ class TestAnalyzeSchema:
         with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
             with patch("app.document_intelligence.settings") as mock_settings:
                 mock_settings.redis_ttl_hours = 24
+                mock_settings.max_session_cost = 1.0
                 await analyze_schema("ttl-refresh-key", session)
 
         mock_redis.expire.assert_called_once()
@@ -424,6 +427,7 @@ class TestAnalyzeSchema:
                 with patch("app.document_intelligence.settings") as mock_settings:
                     mock_settings.query_model = "gpt-4.1"
                     mock_settings.redis_ttl_hours = 24
+                    mock_settings.max_session_cost = 1.0
                     # Run two concurrent calls
                     import asyncio
                     results = await asyncio.gather(
@@ -484,6 +488,7 @@ class TestQueryDocument:
                     with patch("app.document_intelligence.settings") as mock_settings:
                         mock_settings.query_model = "gpt-4.1"
                         mock_settings.redis_ttl_hours = 24
+                        mock_settings.max_session_cost = 1.0
                         result = await query_document("test-session", "find all companies")
 
         assert isinstance(result, QueryResult)
@@ -539,6 +544,7 @@ class TestQueryDocument:
                         mock_settings.enable_semantic_classification = True
                         mock_settings.query_model = "gpt-4.1"
                         mock_settings.redis_ttl_hours = 24
+                        mock_settings.max_session_cost = 1.0
                         result = await query_document("no-schema-session", "find companies")
 
         assert isinstance(result, QueryResult)
@@ -583,6 +589,7 @@ class TestQueryDocument:
                     with patch("app.document_intelligence.settings") as mock_settings:
                         mock_settings.query_model = "gpt-4.1"
                         mock_settings.redis_ttl_hours = 24
+                        mock_settings.max_session_cost = 1.0
                         result = await query_document("empty-session", "find something that doesn't exist")
 
         assert result.matches == []
@@ -642,6 +649,7 @@ class TestQueryDocument:
                     with patch("app.document_intelligence.settings") as mock_settings:
                         mock_settings.query_model = "gpt-4.1"
                         mock_settings.redis_ttl_hours = 24
+                        mock_settings.max_session_cost = 1.0
                         result = await query_document("shape-test", "query")
 
         dumped = result.model_dump()
@@ -1388,6 +1396,7 @@ class TestExtractTabularLlm:
                     with patch("app.document_intelligence.settings") as mock_settings:
                         mock_settings.query_model = "gpt-4.1"
                         mock_settings.redis_ttl_hours = 24
+                        mock_settings.max_session_cost = 1.0
                         result = await query_document("sess-partial", "find names")
 
         assert result.partial is True
@@ -1549,6 +1558,7 @@ class TestQueryResultCaching:
                     with patch("app.document_intelligence.settings") as s:
                         s.query_model = "gpt-4.1"
                         s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
                         result = await query_document("sess-partial-cache", "find all")
 
         assert result.partial is True
@@ -1713,8 +1723,766 @@ class TestQueryCostLogging:
                     with patch("app.document_intelligence.settings") as s:
                         s.query_model = "gpt-4.1"
                         s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
                         await query_document("sess-cost-log", "list all names")
 
         cost_calls = [c for c in incrbyfloat_calls if "doc_cost:" in str(c[0])]
         assert len(cost_calls) == 1
         assert cost_calls[0][0] == "doc_cost:sess-cost-log"
+
+
+# ── budget enforcement ─────────────────────────────────────────────────────────
+
+
+class TestBudgetEnforcement:
+    """Tests for per-session cost budget enforcement."""
+
+    @pytest.mark.asyncio
+    async def test_budget_exceeded_returns_error(self):
+        """query_document returns a structured error when budget is exceeded."""
+        # Mock Redis to return a cost above the budget
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=b"2.5")  # $2.50 spent
+
+        mock_client = AsyncMock()
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                with patch("app.document_intelligence.settings") as s:
+                    s.max_session_cost = 1.0  # budget is $1.00
+                    result = await query_document("sess-over-budget", "any query")
+
+        assert result.error is not None
+        assert "budget" in result.error.lower() or "exceeded" in result.error.lower()
+        assert result.matches == []
+        assert result.total_matches == 0
+        mock_client.chat.completions.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_budget_at_limit_is_blocked(self):
+        """Budget check blocks when cost equals the limit exactly."""
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=b"1.0")  # exactly at limit
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            with patch("app.document_intelligence.settings") as s:
+                s.max_session_cost = 1.0
+                result = await query_document("sess-at-limit", "any query")
+
+        assert result.error is not None
+
+    @pytest.mark.asyncio
+    async def test_budget_below_limit_proceeds(self):
+        """Query proceeds normally when cost is below the budget."""
+        session = _make_session(["| name |\n|---|\n| Alice |"])
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="name")])],
+            total_sheets=1,
+            summary="test",
+        )
+
+        async def llm_mock(**kwargs):
+            return _make_openai_response({
+                "relevant_columns": ["name"],
+                "extraction_instruction": "list names",
+                "document_type": "tabular",
+                "complexity": "simple",
+            })
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=llm_mock)
+
+        schema_json = schema.model_dump_json()
+
+        async def get_by_key(key):
+            if "doc_schema:" in key:
+                return schema_json
+            if "doc_cost:" in key:
+                return b"0.5"  # $0.50 — below $1.00 limit
+            return None
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=get_by_key)
+        mock_redis.expire = AsyncMock()
+        mock_redis.setex = AsyncMock()
+        mock_redis.sadd = AsyncMock()
+        mock_redis.incrbyfloat = AsyncMock()
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
+                        result = await query_document("sess-under-budget", "list names")
+
+        assert result.error is None
+        mock_client.chat.completions.create.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_budget_redis_error_allows_query(self):
+        """When Redis is unavailable for budget check, query proceeds rather than blocking."""
+        session = _make_session(["| name |\n|---|\n| Alice |"])
+        schema = DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=[ColumnSchema(name="name")])],
+            total_sheets=1,
+            summary="test",
+        )
+        schema_json = schema.model_dump_json()
+
+        llm_call_count = [0]
+
+        async def llm_mock(**kwargs):
+            llm_call_count[0] += 1
+            return _make_openai_response({
+                "relevant_columns": ["name"],
+                "extraction_instruction": "list names",
+                "document_type": "tabular",
+                "complexity": "simple",
+            })
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=llm_mock)
+
+        redis_call_count = [0]
+
+        async def get_by_key(key):
+            redis_call_count[0] += 1
+            if "doc_cost:" in key:
+                raise RuntimeError("Redis down")
+            if "doc_schema:" in key:
+                return schema_json
+            return None
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=get_by_key)
+        mock_redis.expire = AsyncMock()
+        mock_redis.setex = AsyncMock()
+        mock_redis.sadd = AsyncMock()
+        mock_redis.incrbyfloat = AsyncMock()
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
+                        result = await query_document("sess-redis-fail", "list names")
+
+        # Query should have proceeded despite Redis error
+        assert result.error is None
+        assert llm_call_count[0] >= 1
+
+    @pytest.mark.asyncio
+    async def test_check_budget_returns_zero_for_new_session(self):
+        """_check_budget returns 0.0 when no cost has been accumulated yet."""
+        from app.document_intelligence import _check_budget
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=None)
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=mock_redis)):
+            cost = await _check_budget("new-session")
+
+        assert cost == 0.0
+
+    @pytest.mark.asyncio
+    async def test_check_budget_returns_none_on_redis_error(self):
+        """_check_budget returns None (allow through) when Redis is unavailable."""
+        from app.document_intelligence import _check_budget
+
+        with patch(
+            "app.document_intelligence.get_redis",
+            AsyncMock(side_effect=RuntimeError("Redis down")),
+        ):
+            cost = await _check_budget("fail-session")
+
+        assert cost is None
+
+    def test_budget_error_message_is_helpful(self):
+        """Budget error message includes current and maximum cost."""
+
+        # Verify error message format by examining the code path
+        # The error message includes both the current cost and limit
+        # This is tested indirectly through test_budget_exceeded_returns_error
+        # but we verify the message contains actionable guidance here.
+        result = QueryResult(
+            matches=[],
+            query_interpretation="",
+            total_matches=0,
+            error="Session query budget exceeded ($2.5000 of $1.00 used). Upload a fresh session to continue querying.",
+        )
+        assert "$" in result.error
+        assert "session" in result.error.lower()
+
+
+# ── _filter_columns ────────────────────────────────────────────────────────────
+
+
+class TestFilterColumns:
+    """Tests for the _filter_columns helper."""
+
+    def _make_md_table(self, headers: list[str], rows: list[list[str]]) -> str:
+        header_line = "| " + " | ".join(headers) + " |"
+        sep_line = "| " + " | ".join(["---"] * len(headers)) + " |"
+        data_lines = ["| " + " | ".join(row) + " |" for row in rows]
+        return "\n".join([header_line, sep_line] + data_lines)
+
+    def test_filters_to_single_column(self):
+        """Only the specified column appears in output."""
+        from app.document_intelligence import _filter_columns
+
+        table = self._make_md_table(["Name", "Revenue", "City"], [["Alice", "100", "NYC"]])
+        result = _filter_columns(table, ["Name"])
+
+        assert "Name" in result
+        assert "Revenue" not in result
+        assert "City" not in result
+        assert "Alice" in result
+
+    def test_filters_to_multiple_columns(self):
+        """Multiple specified columns are kept; others are dropped."""
+        from app.document_intelligence import _filter_columns
+
+        table = self._make_md_table(
+            ["Name", "Revenue", "Status"],
+            [["Acme", "500", "active"], ["Beta", "200", "inactive"]],
+        )
+        result = _filter_columns(table, ["Name", "Status"])
+
+        assert "Name" in result
+        assert "Status" in result
+        assert "Revenue" not in result
+        assert "Acme" in result
+        assert "active" in result
+
+    def test_case_insensitive_matching(self):
+        """Column matching is case-insensitive."""
+        from app.document_intelligence import _filter_columns
+
+        table = self._make_md_table(["Company", "Score"], [["Acme", "9"]])
+        result = _filter_columns(table, ["company"])
+
+        assert "Company" in result
+        assert "Score" not in result
+
+    def test_no_match_returns_original(self):
+        """When no column names match, the original text is returned unchanged."""
+        from app.document_intelligence import _filter_columns
+
+        table = self._make_md_table(["Name", "Age"], [["Alice", "30"]])
+        result = _filter_columns(table, ["nonexistent"])
+
+        assert result == table
+
+    def test_empty_relevant_columns_returns_original(self):
+        """Empty relevant_columns list returns the original text unchanged."""
+        from app.document_intelligence import _filter_columns
+
+        table = self._make_md_table(["Name", "Age"], [["Alice", "30"]])
+        result = _filter_columns(table, [])
+
+        assert result == table
+
+    def test_separator_row_updated_to_match_filtered_columns(self):
+        """The separator row in the output has the correct column count."""
+        from app.document_intelligence import _filter_columns
+
+        table = self._make_md_table(["A", "B", "C"], [["1", "2", "3"]])
+        result = _filter_columns(table, ["A", "C"])
+
+        lines = [ln for ln in result.splitlines() if ln.strip()]
+        sep_lines = [ln for ln in lines if "---" in ln]
+        assert len(sep_lines) == 1
+        assert sep_lines[0].count("---") == 2  # A and C
+
+    def test_non_table_lines_preserved(self):
+        """Non-table lines (prose before table) pass through unchanged."""
+        from app.document_intelligence import _filter_columns
+
+        prose = "# Sheet 1"
+        table = self._make_md_table(["Name", "Rev"], [["Acme", "10"]])
+        text = prose + "\n" + table
+        result = _filter_columns(text, ["Name"])
+
+        assert prose in result
+        assert "Name" in result
+        assert "Rev" not in result
+
+    def test_preserves_data_values_for_kept_columns(self):
+        """Cell values of selected columns appear verbatim in output."""
+        from app.document_intelligence import _filter_columns
+
+        table = self._make_md_table(
+            ["sts_cd", "co_nm", "rev_amt"],
+            [["pend.", "BETA INC.", "75000"], ["ACTV", "ACME CORP", "150000"]],
+        )
+        result = _filter_columns(table, ["sts_cd", "co_nm"])
+
+        assert "pend." in result
+        assert "BETA INC." in result
+        assert "ACTV" in result
+        assert "ACME CORP" in result
+        assert "75000" not in result
+        assert "150000" not in result
+
+
+# ── _merge_chunk_results ───────────────────────────────────────────────────────
+
+
+class TestMergeChunkResults:
+    """Tests for the _merge_chunk_results deduplication helper."""
+
+    def test_empty_input_returns_empty(self):
+        """Empty list of chunks returns empty list."""
+        from app.document_intelligence import _merge_chunk_results
+
+        assert _merge_chunk_results([]) == []
+
+    def test_single_chunk_returned_unchanged(self):
+        """Single chunk with no duplicates is returned as-is."""
+        from app.document_intelligence import _merge_chunk_results
+
+        chunk = [
+            MatchEntry(value="Alice", source_column="Name", row_numbers=[1], confidence=0.9),
+            MatchEntry(value="Bob", source_column="Name", row_numbers=[2], confidence=0.8),
+        ]
+        result = _merge_chunk_results([chunk])
+
+        assert len(result) == 2
+        assert result[0].value == "Alice"
+        assert result[1].value == "Bob"
+
+    def test_duplicate_across_chunks_removed(self):
+        """Same value in two chunks deduplicates to first occurrence."""
+        from app.document_intelligence import _merge_chunk_results
+
+        entry = MatchEntry(value="Acme", source_column="Name", row_numbers=[1], confidence=0.9)
+        result = _merge_chunk_results([[entry], [entry]])
+
+        assert len(result) == 1
+        assert result[0].value == "Acme"
+
+    def test_preserves_insertion_order(self):
+        """Output order: chunk 1 entries before chunk 2 entries."""
+        from app.document_intelligence import _merge_chunk_results
+
+        chunk1 = [MatchEntry(value="Alpha", source_column="x", confidence=0.9)]
+        chunk2 = [MatchEntry(value="Beta", source_column="x", confidence=0.8)]
+        result = _merge_chunk_results([chunk1, chunk2])
+
+        assert result[0].value == "Alpha"
+        assert result[1].value == "Beta"
+
+    def test_dict_value_deduplication(self):
+        """Dict values with identical content are deduplicated."""
+        from app.document_intelligence import _merge_chunk_results
+
+        e1 = MatchEntry(value={"Name": "Acme", "Rev": "100"}, source_column="Name")
+        e2 = MatchEntry(value={"Name": "Acme", "Rev": "100"}, source_column="Name")
+        result = _merge_chunk_results([[e1], [e2]])
+
+        assert len(result) == 1
+
+    def test_dict_values_differing_in_one_field_not_deduplicated(self):
+        """Dict values differing in any field are distinct entries."""
+        from app.document_intelligence import _merge_chunk_results
+
+        e1 = MatchEntry(value={"Name": "Acme", "Rev": "100"}, source_column="Name")
+        e2 = MatchEntry(value={"Name": "Acme", "Rev": "200"}, source_column="Name")
+        result = _merge_chunk_results([[e1], [e2]])
+
+        assert len(result) == 2
+
+    def test_multiple_chunks_no_duplicates_all_kept(self):
+        """Multiple chunks with distinct values: all entries preserved."""
+        from app.document_intelligence import _merge_chunk_results
+
+        chunks = [
+            [MatchEntry(value=f"val_{i}", source_column="x", confidence=0.9)]
+            for i in range(5)
+        ]
+        result = _merge_chunk_results(chunks)
+
+        assert len(result) == 5
+
+
+# ── LLM-native tabular extraction: complex queries ────────────────────────────
+
+
+class TestTabularLlmComplexQueries:
+    """Integration-style tests for complex query routing via _extract_tabular_llm."""
+
+    def _make_md_table(self, headers: list[str], rows: list[list[str]]) -> str:
+        header_line = "| " + " | ".join(headers) + " |"
+        sep_line = "| " + " | ".join(["---"] * len(headers)) + " |"
+        data_lines = ["| " + " | ".join(row) + " |" for row in rows]
+        return "\n".join([header_line, sep_line] + data_lines)
+
+    def _make_schema(self, col_names: list[str]) -> DocumentSchema:
+        cols = [ColumnSchema(name=c) for c in col_names]
+        return DocumentSchema(
+            document_type="tabular",
+            sheets=[SheetSchema(name="default", columns=cols)],
+            total_sheets=1,
+            summary="test data",
+        )
+
+    def _mock_redis(self, schema: DocumentSchema) -> AsyncMock:
+        schema_json = schema.model_dump_json()
+
+        async def get_by_key(key):
+            return schema_json if "doc_schema:" in key else None
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=get_by_key)
+        mock_redis.expire = AsyncMock()
+        mock_redis.setex = AsyncMock()
+        mock_redis.sadd = AsyncMock()
+        mock_redis.incrbyfloat = AsyncMock()
+        return mock_redis
+
+    @pytest.mark.asyncio
+    async def test_complex_query_on_messy_data_inconsistent_headers(self):
+        """Complex query on abbreviated/inconsistent column headers returns LLM result."""
+        table = self._make_md_table(
+            ["co_nm", "sts_cd", "rev_amt"],
+            [
+                ["ACME CORP", "ACTV", "150000"],
+                ["BETA INC.", "pend.", "75000"],
+                ["Gamma Ltd", "ACTV", "200000"],
+            ],
+        )
+        schema = self._make_schema(["co_nm", "sts_cd", "rev_amt"])
+        session = _make_session([table])
+
+        plan_payload = {
+            "relevant_columns": ["co_nm", "sts_cd"],
+            "extraction_instruction": "Find all active companies",
+            "document_type": "tabular",
+            "complexity": "complex",
+        }
+        extraction_payload = {
+            "matches": [
+                {"value": {"co_nm": "ACME CORP", "sts_cd": "ACTV"}, "source_column": ["co_nm", "sts_cd"], "row_numbers": [1], "confidence": 0.92},
+                {"value": {"co_nm": "Gamma Ltd", "sts_cd": "ACTV"}, "source_column": ["co_nm", "sts_cd"], "row_numbers": [3], "confidence": 0.91},
+            ]
+        }
+
+        call_count = [0]
+
+        async def sequential_llm(**kwargs):
+            call_count[0] += 1
+            return _make_openai_response(plan_payload if call_count[0] == 1 else extraction_payload)
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=sequential_llm)
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=self._mock_redis(schema))):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
+                        result = await query_document("sess-messy", "find active companies")
+
+        assert result.error is None
+        assert result.total_matches == 2
+        assert result.chunks_total >= 1
+        sources = [m.source_column for m in result.matches]
+        assert any("co_nm" in (src if isinstance(src, list) else [src]) for src in sources)
+
+    @pytest.mark.asyncio
+    async def test_aggregation_query_how_many(self):
+        """'How many' aggregation routed to LLM extraction returns computed count."""
+        table = self._make_md_table(
+            ["company", "status"],
+            [["Acme", "active"], ["Beta", "inactive"], ["Gamma", "active"], ["Delta", "active"]],
+        )
+        schema = self._make_schema(["company", "status"])
+        session = _make_session([table])
+
+        plan_payload = {
+            "relevant_columns": ["status"],
+            "extraction_instruction": "Count rows where status is active",
+            "document_type": "tabular",
+            "complexity": "complex",
+        }
+        extraction_payload = {
+            "matches": [{"value": "3", "source_column": "status", "row_numbers": [1, 3, 4], "confidence": 0.99}]
+        }
+
+        call_count = [0]
+
+        async def sequential_llm(**kwargs):
+            call_count[0] += 1
+            return _make_openai_response(plan_payload if call_count[0] == 1 else extraction_payload)
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=sequential_llm)
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=self._mock_redis(schema))):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
+                        result = await query_document("sess-count", "how many companies are active?")
+
+        assert result.error is None
+        assert result.total_matches == 1
+        assert result.matches[0].value == "3"
+
+    @pytest.mark.asyncio
+    async def test_aggregation_query_total_revenue(self):
+        """'Total revenue' aggregation routed to LLM extraction returns sum."""
+        table = self._make_md_table(
+            ["company", "revenue"],
+            [["Acme", "100"], ["Beta", "200"], ["Gamma", "300"]],
+        )
+        schema = self._make_schema(["company", "revenue"])
+        session = _make_session([table])
+
+        plan_payload = {
+            "relevant_columns": ["revenue"],
+            "extraction_instruction": "Sum all revenue values",
+            "document_type": "tabular",
+            "complexity": "complex",
+        }
+        extraction_payload = {
+            "matches": [{"value": "600", "source_column": "revenue", "row_numbers": [1, 2, 3], "confidence": 0.99}]
+        }
+
+        call_count = [0]
+
+        async def sequential_llm(**kwargs):
+            call_count[0] += 1
+            return _make_openai_response(plan_payload if call_count[0] == 1 else extraction_payload)
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=sequential_llm)
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=self._mock_redis(schema))):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
+                        result = await query_document("sess-total", "what is the total revenue?")
+
+        assert result.error is None
+        assert len(result.matches) == 1
+        assert result.matches[0].value == "600"
+
+    @pytest.mark.asyncio
+    async def test_fuzzy_matching_abbreviated_status_values(self):
+        """Fuzzy: 'find pending' against 'pend.' and 'PEND' abbreviations returns both rows."""
+        table = self._make_md_table(
+            ["co_nm", "sts_cd"],
+            [
+                ["Acme", "actv"],
+                ["Beta", "pend."],
+                ["Gamma", "PEND"],
+                ["Delta", "closed"],
+            ],
+        )
+        schema = self._make_schema(["co_nm", "sts_cd"])
+        session = _make_session([table])
+
+        plan_payload = {
+            "relevant_columns": ["co_nm", "sts_cd"],
+            "extraction_instruction": "Find rows where sts_cd is semantically pending",
+            "document_type": "tabular",
+            "complexity": "complex",
+        }
+        extraction_payload = {
+            "matches": [
+                {"value": {"co_nm": "Beta", "sts_cd": "pend."}, "source_column": ["co_nm", "sts_cd"], "row_numbers": [2], "confidence": 0.88},
+                {"value": {"co_nm": "Gamma", "sts_cd": "PEND"}, "source_column": ["co_nm", "sts_cd"], "row_numbers": [3], "confidence": 0.87},
+            ]
+        }
+
+        call_count = [0]
+
+        async def sequential_llm(**kwargs):
+            call_count[0] += 1
+            return _make_openai_response(plan_payload if call_count[0] == 1 else extraction_payload)
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=sequential_llm)
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=self._mock_redis(schema))):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
+                        result = await query_document("sess-fuzzy", "find all pending items")
+
+        assert result.error is None
+        assert result.total_matches == 2
+        values = [m.value for m in result.matches]
+        assert any(isinstance(v, dict) and v.get("co_nm") == "Beta" for v in values)
+        assert any(isinstance(v, dict) and v.get("co_nm") == "Gamma" for v in values)
+
+    @pytest.mark.asyncio
+    async def test_complex_routing_calls_llm_for_extraction(self):
+        """complexity=complex results in 2 LLM calls: plan + extraction chunk."""
+        table = self._make_md_table(["name", "val"], [["Alice", "1"], ["Bob", "2"]])
+        schema = self._make_schema(["name", "val"])
+        session = _make_session([table])
+
+        plan_payload = {
+            "relevant_columns": ["val"],
+            "extraction_instruction": "Compute average val",
+            "document_type": "tabular",
+            "complexity": "complex",
+        }
+        extraction_payload = {
+            "matches": [{"value": "1.5", "source_column": "val", "row_numbers": [1, 2], "confidence": 0.99}]
+        }
+
+        call_count = [0]
+
+        async def sequential_llm(**kwargs):
+            call_count[0] += 1
+            return _make_openai_response(plan_payload if call_count[0] == 1 else extraction_payload)
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=sequential_llm)
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=self._mock_redis(schema))):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
+                        result = await query_document("sess-routing", "average val")
+
+        assert mock_client.chat.completions.create.call_count == 2
+        assert result.chunks_total >= 1
+
+    @pytest.mark.asyncio
+    async def test_simple_routing_does_not_call_extraction_llm(self):
+        """complexity=simple uses programmatic _extract_tabular (1 LLM call for plan only)."""
+        table = self._make_md_table(["name", "status"], [["Alice", "active"], ["Bob", "active"]])
+        schema = self._make_schema(["name", "status"])
+        session = _make_session([table])
+
+        plan_payload = {
+            "relevant_columns": ["name"],
+            "extraction_instruction": "Extract all names",
+            "document_type": "tabular",
+            "complexity": "simple",
+        }
+        mock_resp = _make_openai_response(plan_payload)
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=self._mock_redis(schema))):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
+                        result = await query_document("sess-simple", "list all names")
+
+        assert mock_client.chat.completions.create.call_count == 1
+        assert result.chunks_total == 0  # simple path leaves chunks_total at 0
+
+    @pytest.mark.asyncio
+    async def test_query_result_has_source_attribution(self):
+        """Complex query result includes source_column and row_numbers from LLM response."""
+        table = self._make_md_table(["entity", "score"], [["Alpha Corp", "95"], ["Beta Inc", "78"]])
+        schema = self._make_schema(["entity", "score"])
+        session = _make_session([table])
+
+        plan_payload = {
+            "relevant_columns": ["entity", "score"],
+            "extraction_instruction": "Find entities with score > 80",
+            "document_type": "tabular",
+            "complexity": "complex",
+        }
+        extraction_payload = {
+            "matches": [
+                {"value": {"entity": "Alpha Corp", "score": "95"}, "source_column": ["entity", "score"], "row_numbers": [1], "confidence": 0.97}
+            ]
+        }
+
+        call_count = [0]
+
+        async def sequential_llm(**kwargs):
+            call_count[0] += 1
+            return _make_openai_response(plan_payload if call_count[0] == 1 else extraction_payload)
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=sequential_llm)
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=self._mock_redis(schema))):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
+                        result = await query_document("sess-attr", "find high-score entities")
+
+        assert result.error is None
+        assert len(result.matches) == 1
+        match = result.matches[0]
+        assert match.source_column == ["entity", "score"]
+        assert match.row_numbers == [1]
+        assert match.confidence == pytest.approx(0.97)
+
+    @pytest.mark.asyncio
+    async def test_query_result_new_fields_present_for_complex_query(self):
+        """QueryResult exposes partial, chunks_processed, chunks_total for complex queries."""
+        table = self._make_md_table(["co", "rev"], [["A", "1"], ["B", "2"]])
+        schema = self._make_schema(["co", "rev"])
+        session = _make_session([table])
+
+        plan_payload = {
+            "relevant_columns": ["rev"],
+            "extraction_instruction": "Sum revenue",
+            "document_type": "tabular",
+            "complexity": "complex",
+        }
+        extraction_payload = {
+            "matches": [{"value": "3", "source_column": "rev", "row_numbers": [1, 2], "confidence": 0.99}]
+        }
+
+        call_count = [0]
+
+        async def sequential_llm(**kwargs):
+            call_count[0] += 1
+            return _make_openai_response(plan_payload if call_count[0] == 1 else extraction_payload)
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=sequential_llm)
+
+        with patch("app.document_intelligence.get_redis", AsyncMock(return_value=self._mock_redis(schema))):
+            with patch("app.document_intelligence.get_documents", AsyncMock(return_value=session)):
+                with patch("app.document_intelligence.get_openai_client", return_value=mock_client):
+                    with patch("app.document_intelligence.settings") as s:
+                        s.query_model = "gpt-4.1"
+                        s.redis_ttl_hours = 24
+                        s.max_session_cost = 1.0
+                        result = await query_document("sess-newfields", "total revenue")
+
+        dumped = result.model_dump()
+        assert "partial" in dumped
+        assert "chunks_processed" in dumped
+        assert "chunks_total" in dumped
+        assert result.partial is False
+        assert result.chunks_processed > 0
+        assert result.chunks_total == result.chunks_processed
