@@ -559,16 +559,23 @@ async def sec_edgar_search(
 
 @_register(
     "search_uploaded_documents",
-    "Search through text extracted from documents the user uploaded (PDF, DOCX, Excel, CSV, images, etc.).",
+    "Search through text extracted from documents the user uploaded (PDF, DOCX, Excel, CSV, images, etc.). "
+    "Use the optional 'filename' parameter to restrict search to a specific file when the user "
+    "references a particular document by name or type.",
     {
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Keywords or a question to search for in the uploaded documents."},
+            "filename": {
+                "type": "string",
+                "description": "Optional exact filename to restrict search to (e.g. 'sports.csv'). "
+                "Use when the user references a specific file.",
+            },
         },
         "required": ["query"],
     },
 )
-async def search_uploaded_documents(deps: AgentDeps, query: str) -> str:
+async def search_uploaded_documents(deps: AgentDeps, query: str, filename: str | None = None) -> str:
     _RESPONSE_CAP = 15_000
 
     if not deps.doc_context and not deps.doc_texts:
@@ -587,6 +594,13 @@ async def search_uploaded_documents(deps: AgentDeps, query: str) -> str:
         if not chunk_dicts:
             return f"No relevant passages found in uploaded documents for: '{query}'"
 
+        # Filter to a specific file when filename is provided
+        if filename:
+            target = filename.lower()
+            chunk_dicts = [c for c in chunk_dicts if c.get("filename", "").lower() == target]
+            if not chunk_dicts:
+                return f"No document found with filename '{filename}'."
+
         chunk_texts = [c["text"] for c in chunk_dicts]
 
         # Short-circuit: if <=3 chunks, return them all
@@ -598,8 +612,8 @@ async def search_uploaded_documents(deps: AgentDeps, query: str) -> str:
             result = "\n\n---\n\n".join(formatted)
             return result[:_RESPONSE_CAP]
 
-        # BM25 search over chunks
-        bm25_key = "chunked_bm25"
+        # BM25 search over chunks (cache only when not filename-filtered)
+        bm25_key = f"chunked_bm25:{filename or ''}"
         if bm25_key in deps.tool_cache:
             bm25 = deps.tool_cache[bm25_key]
         else:

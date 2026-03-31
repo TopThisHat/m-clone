@@ -346,6 +346,22 @@ def _build_system_content(deps: AgentDeps) -> str:
             "The user has uploaded the following documents for this research session. "
             "Use `search_uploaded_documents` to search their contents.\n\n"
             + "\n".join(lines)
+            + "\n\n### Document Reference Resolution\n\n"
+            "When the user refers to a document, resolve it automatically without asking "
+            "for clarification:\n"
+            "- **Single document uploaded:** Any reference like \"this file\", \"the document\", "
+            "\"the uploaded file\", or \"extract data from this\" refers to that document.\n"
+            "- **Multiple documents — match by filename:** If the user says \"the sports file\" "
+            "and there is a file named `sports.csv`, use that file. Match partial names "
+            "(e.g. \"sports\" matches `sports.csv`, `sports_data.xlsx`, etc.).\n"
+            "- **Multiple documents — match by file type:** If the user says \"the Excel file\" "
+            "or \"the spreadsheet\", match files with extensions `.xlsx`/`.xls`. \"The PDF\" "
+            "matches `.pdf`. \"The CSV\" matches `.csv`/`.tsv`. \"The image\" matches "
+            "`.png`/`.jpg`/`.jpeg`/`.gif`/`.webp`.\n"
+            "- **Combined context:** Use both name and type together — \"the sports spreadsheet\" "
+            "matches `sports.xlsx` over `sports.pdf`.\n"
+            "- **Only ask for clarification** if there are multiple documents and neither the "
+            "filename nor the file type narrows it down to a single match."
         )
 
     if deps.user_rules:
