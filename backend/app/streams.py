@@ -126,8 +126,22 @@ async def publish_for_extraction(
     *,
     team_id: str | None = None,
     is_document: bool = False,
+    enable_client_lookup: bool = False,
 ) -> None:
-    """Publish a report to the entity_extraction Redis stream."""
+    """Publish a report to the entity_extraction Redis stream.
+
+    Args:
+        session_id: Unique identifier for this extraction task.
+        report_md: Text content to extract entities from.
+        team_id: Optional team scope for extracted entities.
+        is_document: True when text came from an uploaded file (enables
+            document-aware extraction prompt and batched page processing).
+        enable_client_lookup: When True, the worker will also run a GWM
+            client ID lookup for every extracted person entity.  Defaults
+            to False so automatic KG enrichment (e.g. from research reports
+            or document uploads) does not trigger expensive client lookups
+            unless the user explicitly requests matching.
+    """
     if not report_md or not report_md.strip():
         return
     try:
@@ -140,6 +154,8 @@ async def publish_for_extraction(
             fields["team_id"] = team_id
         if is_document:
             fields["is_document"] = "true"
+        if enable_client_lookup:
+            fields["enable_client_lookup"] = "true"
         await r.xadd(STREAM_ENTITY_EXTRACTION, fields, maxlen=1000, approximate=True)
         logger.debug("Published extraction task for session_id=%s", session_id)
     except RedisError as exc:

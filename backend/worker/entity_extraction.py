@@ -285,8 +285,11 @@ async def _process_message(
     report_md: str,
     team_id: str | None = None,
     is_document: bool = False,
+    enable_client_lookup: bool = False,
 ) -> dict[str, int]:
     """Process one extraction message: extract, normalize, deduplicate, and store.
+
+    Entity extraction and KG storage ALWAYS run regardless of ``enable_client_lookup``.
 
     For document mode (is_document=True):
     - If text has page markers: split by pages, batch via batch_page_texts,
@@ -295,8 +298,14 @@ async def _process_message(
       groups, then batch and extract.
     For non-document mode: single extract call with report_md[:12000].
 
+    When ``enable_client_lookup=True``, a GWM client ID resolution is performed
+    for every extracted person entity after KG storage completes.  This is
+    intentionally opt-in so automatic KG enrichment does not trigger expensive
+    client lookups unless the user explicitly requests matching.
+
     Returns counts: {"entities": N, "relationships": N, "skipped_duplicates": N,
-        "filtered_by_unknown_predicate": N, "filtered_by_relevance": N}
+        "filtered_by_unknown_predicate": N, "filtered_by_relevance": N,
+        "client_lookups": N}
     """
     from app.db import db_find_or_create_entity, db_upsert_relationship
     from app.db._pool import _acquire
@@ -319,6 +328,7 @@ async def _process_message(
             "skipped_duplicates": 0,
             "filtered_by_unknown_predicate": 0,
             "filtered_by_relevance": 0,
+            "client_lookups": 0,
         }
 
     # Pre-create all entities and build name→id map (skip invalid types)
@@ -441,12 +451,33 @@ async def _process_message(
         session_id, len(result.entities), entities_created, inserted, skipped,
         filtered_by_unknown_predicate, filtered_by_relevance,
     )
+
+    # Client lookup — gated on enable_client_lookup; entity extraction above
+    # always runs regardless of this flag.
+    client_lookups = 0
+    if enable_client_lookup:
+        person_names = [ent.name for ent in result.entities if ent.type == "person"]
+        if person_names:
+            try:
+                from app.agent.batch_resolver import batch_resolve_clients
+                people = [{"name": n} for n in person_names]
+                lookup_results = await batch_resolve_clients(people)
+                matched = sum(1 for r in lookup_results if r.get("status") == "matched")
+                client_lookups = len(lookup_results)
+                logger.info(
+                    "Client lookup complete for session=%s: %d/%d persons matched",
+                    session_id, matched, client_lookups,
+                )
+            except Exception as exc:
+                logger.warning("Client lookup failed for session=%s: %s", session_id, exc)
+
     return {
         "entities": entities_created,
         "relationships": inserted,
         "skipped_duplicates": skipped,
         "filtered_by_unknown_predicate": filtered_by_unknown_predicate,
         "filtered_by_relevance": filtered_by_relevance,
+        "client_lookups": client_lookups,
     }
 
 
@@ -528,10 +559,12 @@ async def run_extraction_worker() -> None:
             report_md = data.get("report_md", "")
             team_id = data.get("team_id") or None
             is_document = data.get("is_document", "false").lower() == "true"
+            enable_client_lookup = data.get("enable_client_lookup", "false").lower() == "true"
             try:
                 await _process_message(
                     session_id, report_md,
                     team_id=team_id, is_document=is_document,
+                    enable_client_lookup=enable_client_lookup,
                 )
                 # ACK only on success
                 await ack_message(msg_id)
