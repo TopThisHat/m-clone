@@ -66,6 +66,19 @@ _redis_client: Any = None
 _client_lock: asyncio.Lock | None = None
 
 
+async def _pg_write_session(key: str, docs: list[dict], ttl_hours: int) -> None:
+    """Fire-and-forget write to PostgreSQL document_sessions table.
+
+    Errors are logged at WARNING level — a PG write failure must never surface
+    to the caller.  Database may be unavailable during local dev without PG.
+    """
+    try:
+        from app.db.document_sessions import pg_upsert_document_session
+        await pg_upsert_document_session(key, docs, ttl_hours)
+    except Exception as exc:
+        logger.warning("_pg_write_session: PG write failed for session %r: %s", key, exc)
+
+
 def _get_lock() -> asyncio.Lock:
     global _client_lock
     if _client_lock is None:
@@ -200,13 +213,16 @@ async def set_documents(
 
     Each entry should contain at minimum ``filename``, ``text``, ``type``, and
     ``char_count``.  Falls back to in-memory dict if Redis is unavailable.
+    Writes the full docs list to PostgreSQL for durable fallback storage.
     """
-    ttl = (ttl_hours or settings.redis_ttl_hours) * 3600
+    resolved_ttl_hours = ttl_hours or settings.redis_ttl_hours
+    ttl = resolved_ttl_hours * 3600
     client = await _get_client()
     if client is not None:
         try:
             payload = json.dumps(docs)
             await client.setex(f"doc:{key}", ttl, payload)
+            await _pg_write_session(key, docs, resolved_ttl_hours)
             return
         except _RedisAuthError as exc:
             logger.warning("Redis auth error on set_documents — attempting rotation recovery: %s", exc)
@@ -216,12 +232,14 @@ async def set_documents(
                 try:
                     payload = json.dumps(docs)
                     await client.setex(f"doc:{key}", ttl, payload)
+                    await _pg_write_session(key, docs, resolved_ttl_hours)
                     return
                 except Exception:
                     pass
         except Exception:
             pass
     _memory_store[key] = docs
+    await _pg_write_session(key, docs, resolved_ttl_hours)
 
 
 # Maximum number of WATCH/MULTI/EXEC retries before giving up on an atomic append.
@@ -265,7 +283,8 @@ async def append_document(
         RuntimeError: If the atomic append fails after ``_APPEND_MAX_RETRIES``
             concurrent-write conflicts (extremely unlikely in practice).
     """
-    ttl = (ttl_hours or settings.redis_ttl_hours) * 3600
+    resolved_ttl_hours = ttl_hours or settings.redis_ttl_hours
+    ttl = resolved_ttl_hours * 3600
     resolved_type = doc_type or _infer_type_from_filename(filename)
     resolved_char_count = char_count if char_count is not None else len(text)
 
@@ -302,6 +321,9 @@ async def append_document(
             docs, truncated = _memory_append(session_key, entry, session_cap)
     else:
         docs, truncated = _memory_append(session_key, entry, session_cap)
+
+    # Dual-write full docs (with text) to PostgreSQL for durable fallback.
+    await _pg_write_session(session_key, docs, resolved_ttl_hours)
 
     # Return metadata only (strip text)
     return [{k: v for k, v in d.items() if k != "text"} for d in docs], truncated
@@ -451,26 +473,51 @@ def _memory_append(
 async def get_documents(session_key: str) -> DocumentSession | None:
     """Retrieve all documents for a session as a ``DocumentSession``.
 
-    Checks ``doc:`` prefix first, falls back to ``pdf:`` for migration.
-    Handles both old dict and old tuple formats in the in-memory store.
+    Read order:
+    1. Redis (``doc:`` prefix, with ``pdf:`` legacy fallback).
+    2. In-memory fallback store (when Redis is unavailable).
+    3. PostgreSQL ``document_sessions`` table — used when both Redis and memory
+       return nothing (e.g. the Redis key expired for a large-file session).
     """
     client = await _get_client()
     if client is not None:
         try:
-            return await _redis_get_documents(client, session_key)
+            session = await _redis_get_documents(client, session_key)
+            if session is not None:
+                return session
         except _RedisAuthError as exc:
             logger.warning("Redis auth error on get_documents — attempting rotation recovery: %s", exc)
             await _reset_client()
             client = await _get_client()
             if client is not None:
                 try:
-                    return await _redis_get_documents(client, session_key)
+                    session = await _redis_get_documents(client, session_key)
+                    if session is not None:
+                        return session
                 except Exception:
                     pass
         except Exception:
             pass
+    else:
+        mem_session = _memory_get_documents(session_key)
+        if mem_session is not None:
+            return mem_session
 
-    return _memory_get_documents(session_key)
+    # PG fallback — Redis miss or unavailable
+    return await _pg_read_session(session_key)
+
+
+async def _pg_read_session(session_key: str) -> DocumentSession | None:
+    """Attempt to reconstruct a DocumentSession from PostgreSQL storage."""
+    try:
+        from app.db.document_sessions import pg_get_document_session
+        docs = await pg_get_document_session(session_key)
+        if docs:
+            logger.debug("get_documents: PG fallback hit for session %r", session_key)
+            return _docs_list_to_session(docs)
+    except Exception as exc:
+        logger.warning("_pg_read_session: PG read failed for session %r: %s", session_key, exc)
+    return None
 
 
 async def _redis_get_documents(client: Any, key: str) -> DocumentSession | None:

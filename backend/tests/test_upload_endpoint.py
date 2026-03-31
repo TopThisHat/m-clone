@@ -13,10 +13,14 @@ from httpx import ASGITransport, AsyncClient
 
 from app.redis_client import DocumentSession
 from app.routers.documents import (
-    SESSION_TEXT_CAP,
     get_document_text,
     router,
 )
+
+# Previously SESSION_TEXT_CAP (500 000) was enforced in the router.
+# PostgreSQL storage removed that limit; tests use a local constant to
+# keep the mock setup readable without importing the removed symbol.
+_TEST_SESSION_CAP = 500_000
 
 # ---------------------------------------------------------------------------
 # App fixture — standalone, no DB
@@ -204,28 +208,35 @@ async def test_upload_with_stale_session_key(mock_meta, mock_extract, mock_get, 
 @patch("app.routers.documents.extract_text", new_callable=AsyncMock)
 @patch("app.routers.documents.get_format_metadata", return_value=_META_PDF)
 async def test_session_text_cap_truncation(mock_meta, mock_extract, mock_get, mock_append, client):
+    """SESSION_TEXT_CAP was removed; the router no longer adjusts char_count.
+
+    The response now always reports the full extracted text size regardless of
+    what append_document returns as char_count. The truncated flag is still
+    passed through from append_document for informational purposes.
+    """
     existing_key = str(uuid.uuid4())
-    existing_chars = SESSION_TEXT_CAP - 100  # Only 100 chars of room
+    existing_chars = _TEST_SESSION_CAP - 100  # Only 100 chars of room
     mock_get.return_value = DocumentSession(
         text="x" * existing_chars,
         filenames=["big.pdf"],
         metadata=[{"filename": "big.pdf", "type": "pdf", "char_count": existing_chars}],
     )
-    new_text = "A" * 500  # 500 chars — would exceed cap
+    new_text = "A" * 500  # 500 chars
     mock_extract.return_value = new_text
     mock_append.return_value = (
         [
             {"filename": "big.pdf", "type": "pdf", "char_count": existing_chars},
             {"filename": "extra.pdf", "type": "pdf", "char_count": 100, "pages": 3},
         ],
-        True,  # truncated
+        True,  # truncated flag from append_document
     )
 
     resp = await _upload(client, filename="extra.pdf", session_key=existing_key)
     assert resp.status_code == 200
     body = resp.json()
     assert body["truncated"] is True
-    assert body["char_count"] == 100  # truncated to 100
+    # Router no longer adjusts char_count — it reflects the full extraction size
+    assert body["char_count"] == len(new_text)
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +409,7 @@ async def test_bg_task_truncated_append_passes_correct_text(
 ):
     """Truncated append: background task receives the truncated text, not the original."""
     existing_key = str(uuid.uuid4())
-    existing_chars = SESSION_TEXT_CAP - 50
+    existing_chars = _TEST_SESSION_CAP - 50
     existing_session = DocumentSession(
         text="x" * existing_chars,
         texts=["x" * existing_chars],
@@ -423,9 +434,11 @@ async def test_bg_task_truncated_append_passes_correct_text(
 
     mock_analyze.assert_called_once()
     _, session = mock_analyze.call_args.args
-    # The appended text in the session must be truncated (50 chars), not full 500
-    assert session.texts[-1] == "A" * 50
-    assert len(session.texts[-1]) == 50
+    # PG storage removed SESSION_TEXT_CAP: the router now passes the full
+    # extracted text to the background task regardless of what append_document
+    # reports as char_count.
+    assert session.texts[-1] == full_text
+    assert len(session.texts[-1]) == len(full_text)
 
 
 @pytest.mark.asyncio

@@ -1452,6 +1452,20 @@ async def init_schema() -> None:
                 END $$
             """)
 
+            # ── Document sessions (durable text storage for large uploads) ────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.document_sessions (
+                    session_key  UUID        PRIMARY KEY,
+                    texts        JSONB       NOT NULL DEFAULT '[]',
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at   TIMESTAMPTZ NOT NULL
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS document_sessions_expires_at_idx
+                    ON document_sessions (expires_at)
+            """)
+
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")
 

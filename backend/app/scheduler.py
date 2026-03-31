@@ -155,6 +155,19 @@ async def _loop() -> None:
         for campaign in due_campaigns:
             asyncio.create_task(_trigger_campaign(campaign))
 
+        asyncio.create_task(_cleanup_document_sessions())
+
+
+async def _cleanup_document_sessions() -> None:
+    """Delete expired document_sessions rows from PostgreSQL."""
+    try:
+        from app.db.document_sessions import pg_delete_expired_sessions
+        deleted = await pg_delete_expired_sessions()
+        if deleted:
+            logger.info("Scheduler: cleaned up %d expired document_sessions rows", deleted)
+    except Exception as exc:
+        logger.debug("Scheduler: document_sessions cleanup skipped: %s", exc)
+
 
 def start() -> None:
     global _task

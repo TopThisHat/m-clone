@@ -29,8 +29,6 @@ from app.streams import publish_for_extraction
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 logger = logging.getLogger(__name__)
 
-SESSION_TEXT_CAP = 500_000
-
 
 # ── Enums ────────────────────────────────────────────────────────────────────
 
@@ -231,16 +229,10 @@ async def upload_document(
             char_count=len(extracted_text),
             metadata_fields={k: v for k, v in doc_meta.items()
                              if k not in ("filename", "type", "char_count")},
-            session_cap=SESSION_TEXT_CAP,
         )
-        if truncated:
-            doc_meta["char_count"] = next(
-                (d["char_count"] for d in docs_list if d.get("filename") == filename),
-                doc_meta["char_count"],
-            )
         session_total = sum(d.get("char_count", 0) for d in docs_list)
 
-        appended_text = extracted_text[:doc_meta["char_count"]] if truncated else extracted_text
+        appended_text = extracted_text
         prior_texts = existing.texts if existing and existing.texts else []
         prior_text = existing.text if existing else ""
         session_for_bg = DocumentSession(
