@@ -195,6 +195,7 @@ from .knowledge_graph import (
     db_promote_entity_to_master as db_promote_entity_to_master,
     db_sync_entity_from_master as db_sync_entity_from_master,
     db_merge_kg_entities as db_merge_kg_entities,
+    db_flag_entity_for_review as db_flag_entity_for_review,
 )
 
 # ── Templates ─────────────────────────────────────────────────────────────────
