@@ -2,7 +2,8 @@
 Team → Master KG promotion workflow.
 
 Promotes high-confidence team-scoped entities and relationships to the
-master graph (team_id = NULL). Uses advisory locks to prevent race
+master graph (team_id = settings.kg_master_team_id, a configured master
+team UUID). Uses advisory locks to prevent race
 conditions when multiple teams promote simultaneously.
 
 Promotion criteria:
@@ -41,6 +42,8 @@ async def promote_entity_to_master(
     Returns: {"action": "promoted"|"already_exists"|"skipped", "master_entity_id": str|None}
     """
     from app.db._pool import _acquire
+    from app.config import settings
+    master_team_id = settings.kg_master_team_id
 
     async with _acquire() as conn:
         async with conn.transaction():
@@ -65,9 +68,9 @@ async def promote_entity_to_master(
             existing = await conn.fetchrow(
                 """
                 SELECT id FROM playbook.kg_entities
-                WHERE LOWER(name) = LOWER($1) AND team_id IS NULL
+                WHERE LOWER(name) = LOWER($1) AND team_id = $2::uuid
                 """,
-                entity_name,
+                entity_name, master_team_id,
             )
 
             if existing:
@@ -99,8 +102,8 @@ async def promote_entity_to_master(
             master_row = await conn.fetchrow(
                 """
                 INSERT INTO playbook.kg_entities (name, entity_type, aliases, metadata, team_id)
-                VALUES ($1, $2, $3, $4, NULL)
-                ON CONFLICT ((LOWER(name))) DO UPDATE SET
+                VALUES ($1, $2, $3, $4::jsonb, $5::uuid)
+                ON CONFLICT (LOWER(name), team_id) DO UPDATE SET
                     aliases = (
                         SELECT array_agg(DISTINCT a)
                         FROM unnest(playbook.kg_entities.aliases || EXCLUDED.aliases) AS a
@@ -111,6 +114,7 @@ async def promote_entity_to_master(
                 entity["name"], entity["entity_type"],
                 list(entity["aliases"] or []),
                 entity["metadata"] or "{}",
+                master_team_id,
             )
             master_id = str(master_row["id"])
 
@@ -138,6 +142,8 @@ async def promote_relationships_to_master(
     Returns count of promoted relationships.
     """
     from app.db._pool import _acquire
+    from app.config import settings
+    master_team_id = settings.kg_master_team_id
 
     promoted_count = 0
     async with _acquire() as conn:
@@ -168,10 +174,11 @@ async def promote_relationships_to_master(
                     SELECT id, predicate FROM playbook.kg_relationships
                     WHERE subject_id = $1::uuid AND object_id = $2::uuid
                       AND predicate_family = $3 AND is_active = TRUE
-                      AND team_id IS NULL
+                      AND team_id = $4::uuid
                     FOR UPDATE
                     """,
                     subject_master, object_master, rel["predicate_family"],
+                    master_team_id,
                 )
 
                 if existing:
@@ -196,11 +203,11 @@ async def promote_relationships_to_master(
                     INSERT INTO playbook.kg_relationships
                         (subject_id, predicate, predicate_family, object_id,
                          confidence, evidence, source_session_id, team_id)
-                    VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::uuid, NULL)
+                    VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7::uuid, $8::uuid)
                     """,
                     subject_master, rel["predicate"], rel["predicate_family"],
                     object_master, rel["confidence"], rel["evidence"],
-                    rel["source_session_id"],
+                    rel["source_session_id"], master_team_id,
                 )
                 promoted_count += 1
 
@@ -221,15 +228,24 @@ async def run_promotion_for_team(team_id: str) -> dict[str, Any]:
         # Entities that have been validated with high confidence across multiple sessions
         eligible_rows = await conn.fetch(
             """
-            SELECT DISTINCT ke.id, ke.name, ke.entity_type
+            SELECT ke.id, ke.name, ke.entity_type
             FROM playbook.kg_entities ke
+            JOIN playbook.kg_relationships kr
+              ON (kr.subject_id = ke.id OR kr.object_id = ke.id)
+              AND kr.is_active = TRUE
+              AND kr.team_id = $1::uuid
             WHERE ke.team_id = $1::uuid
               AND NOT EXISTS (
                   SELECT 1 FROM playbook.kg_promotions kp
                   WHERE kp.entity_id = ke.id AND kp.source_team_id = $1::uuid
               )
+            GROUP BY ke.id, ke.name, ke.entity_type
+            HAVING AVG(kr.confidence) >= $2
+               AND COUNT(DISTINCT kr.source_session_id) >= $3
             """,
             team_id,
+            PROMOTION_CONFIDENCE_THRESHOLD,
+            PROMOTION_SESSION_MINIMUM,
         )
 
     entity_id_map: dict[str, str] = {}
