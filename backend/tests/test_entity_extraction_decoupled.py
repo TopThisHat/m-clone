@@ -69,7 +69,7 @@ class TestEntityExtractionAlwaysRuns:
             AsyncMock(return_value=extraction_result),
         ) as mock_extract, patch(
             "app.db.db_find_or_create_entity",
-            AsyncMock(return_value="entity-uuid-1"),
+            AsyncMock(return_value=("entity-uuid-1", "team_hit")),
         ), patch(
             "app.db.db_upsert_relationship",
             AsyncMock(return_value={"status": "inserted", "new_id": "rel-1"}),
@@ -100,7 +100,7 @@ class TestEntityExtractionAlwaysRuns:
             AsyncMock(return_value=extraction_result),
         ) as mock_extract, patch(
             "app.db.db_find_or_create_entity",
-            AsyncMock(return_value="entity-uuid-2"),
+            AsyncMock(return_value=("entity-uuid-2", "team_hit")),
         ), patch(
             "app.db.db_upsert_relationship",
             AsyncMock(return_value={"status": "inserted", "new_id": "rel-2"}),
@@ -130,7 +130,7 @@ class TestEntityExtractionAlwaysRuns:
             AsyncMock(return_value=extraction_result),
         ) as mock_extract, patch(
             "app.db.db_find_or_create_entity",
-            AsyncMock(return_value="entity-uuid-3"),
+            AsyncMock(return_value=("entity-uuid-3", "team_hit")),
         ), patch(
             "app.db.db_upsert_relationship",
             AsyncMock(return_value={"status": "inserted", "new_id": "rel-3"}),
@@ -162,7 +162,7 @@ class TestClientLookupSkippedWhenDisabled:
             AsyncMock(return_value=extraction_result),
         ), patch(
             "app.db.db_find_or_create_entity",
-            AsyncMock(return_value="entity-uuid-4"),
+            AsyncMock(return_value=("entity-uuid-4", "team_hit")),
         ), patch(
             "app.db.db_upsert_relationship",
             AsyncMock(return_value={"status": "inserted", "new_id": "rel-4"}),
@@ -192,7 +192,7 @@ class TestClientLookupSkippedWhenDisabled:
             AsyncMock(return_value=extraction_result),
         ), patch(
             "app.db.db_find_or_create_entity",
-            AsyncMock(return_value="entity-uuid-5"),
+            AsyncMock(return_value=("entity-uuid-5", "team_hit")),
         ), patch(
             "app.db.db_upsert_relationship",
             AsyncMock(return_value={"status": "inserted", "new_id": "rel-5"}),
@@ -249,7 +249,7 @@ class TestClientLookupRunsWhenEnabled:
             AsyncMock(return_value=extraction_result),
         ), patch(
             "app.db.db_find_or_create_entity",
-            AsyncMock(return_value="entity-uuid"),
+            AsyncMock(return_value=("entity-uuid", "team_hit")),
         ), patch(
             "app.db.db_upsert_relationship",
             AsyncMock(return_value={"status": "inserted", "new_id": "rel"}),
@@ -288,7 +288,7 @@ class TestClientLookupRunsWhenEnabled:
             AsyncMock(return_value=extraction_result),
         ), patch(
             "app.db.db_find_or_create_entity",
-            AsyncMock(return_value="entity-uuid-g"),
+            AsyncMock(return_value=("entity-uuid-g", "team_hit")),
         ), patch(
             "app.db.db_upsert_relationship",
             AsyncMock(return_value={"status": "inserted", "new_id": "rel-g"}),
@@ -318,7 +318,7 @@ class TestClientLookupRunsWhenEnabled:
             AsyncMock(return_value=extraction_result),
         ), patch(
             "app.db.db_find_or_create_entity",
-            AsyncMock(return_value="entity-uuid-corp"),
+            AsyncMock(return_value=("entity-uuid-corp", "team_hit")),
         ), patch(
             "app.db.db_upsert_relationship",
             AsyncMock(return_value={"status": "inserted", "new_id": "rel-corp"}),
@@ -349,7 +349,7 @@ class TestClientLookupRunsWhenEnabled:
             AsyncMock(return_value=extraction_result),
         ), patch(
             "app.db.db_find_or_create_entity",
-            AsyncMock(return_value="entity-uuid-h"),
+            AsyncMock(return_value=("entity-uuid-h", "team_hit")),
         ), patch(
             "app.db.db_upsert_relationship",
             AsyncMock(return_value={"status": "inserted", "new_id": "rel-h"}),

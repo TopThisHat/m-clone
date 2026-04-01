@@ -9,13 +9,11 @@ Covers:
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 import pytest_asyncio
 
 from app.db._pool import _acquire
 from app.db.knowledge_graph import (
-    db_delete_kg_entity,
     db_find_or_create_entity,
     db_get_deal_partners,
     db_get_entity_relationships,
@@ -52,9 +50,9 @@ async def team_graph(test_user_sid):
         team_id = await _make_team(conn, test_user_sid)
 
     # Create entities in team scope
-    eid_a = await db_find_or_create_entity("Person Alpha", "person", [], team_id=team_id)
-    eid_b = await db_find_or_create_entity("Company Beta", "organization", [], team_id=team_id)
-    rel = await db_upsert_relationship(
+    eid_a, _ = await db_find_or_create_entity("Person Alpha", "person", [], team_id=team_id)
+    eid_b, _ = await db_find_or_create_entity("Company Beta", "organization", [], team_id=team_id)
+    await db_upsert_relationship(
         subject_id=eid_a,
         predicate="works_at",
         predicate_family="employment",

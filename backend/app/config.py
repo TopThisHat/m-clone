@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     cloud_proxy_port: int = 11111
     cloud_proxy_cert: str = "cert/uat.cert"
 
+    # Knowledge Graph
+    kg_master_team_id: str = "00000000-0000-0000-0000-000000000001"
+
     # Auth / SSO
     oidc_issuer: str = ""
     oidc_client_id: str = "m-clone"

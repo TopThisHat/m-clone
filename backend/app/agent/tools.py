@@ -920,9 +920,8 @@ async def query_knowledge_graph(deps: AgentDeps, query: str) -> str:
         from app.db import db_query_kg
 
         team_ids = getattr(deps, "team_ids", [])
-        include_master = getattr(deps, "include_master", False)
 
-        if not team_ids and not include_master:
+        if not team_ids:
             return "No knowledge graph available — join a team or select one in Scout to search team graphs."
 
         # Query each team graph and merge results with deduplication
@@ -930,22 +929,13 @@ async def query_knowledge_graph(deps: AgentDeps, query: str) -> str:
         all_rels: dict[str, dict] = {}
         sources_used: set[str] = set()
 
-        if not team_ids and include_master:
-            # Super admin with no teams — search master only
-            r = await db_query_kg(query, team_id=None, include_master=True)
+        for tid in team_ids:
+            r = await db_query_kg(query, team_id=tid)
             for e in r["entities"]:
                 all_entities[e["id"]] = e
             for rel in r["relationships"]:
                 all_rels[rel["id"]] = rel
             sources_used.update(r["sources_used"])
-        else:
-            for i, tid in enumerate(team_ids):
-                r = await db_query_kg(query, team_id=tid, include_master=(include_master and i == 0))
-                for e in r["entities"]:
-                    all_entities[e["id"]] = e
-                for rel in r["relationships"]:
-                    all_rels[rel["id"]] = rel
-                sources_used.update(r["sources_used"])
 
         entities = list(all_entities.values())
         relationships = list(all_rels.values())

@@ -3,9 +3,7 @@
 Covers:
   - Single team_id queries correct team only
   - Multi-team merges and deduplicates by entity/relationship ID
-  - include_master=True on first call includes master entities
-  - Empty team_ids + include_master=False returns graceful message
-  - Super admin with no teams queries master only
+  - Empty team_ids returns graceful message
 """
 from __future__ import annotations
 
@@ -14,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.agent.tools import query_knowledge_graph
 from app.dependencies import get_agent_deps
 
 
@@ -49,13 +48,8 @@ def _make_kg_result(entities: list[dict], relationships: list[dict], sources: li
     }
 
 
-# We need to import the tool function. It's registered as a pydantic-ai tool,
-# but we can call the underlying async function directly.
-from app.agent.tools import query_knowledge_graph
-
-
 class TestKGToolSingleTeam:
-    """Tool with 1 team_id and include_master=False queries that team only."""
+    """Tool with 1 team_id queries that team only."""
 
     @pytest.mark.asyncio
     async def test_single_team_queries_one_team(self):
@@ -65,7 +59,7 @@ class TestKGToolSingleTeam:
 
         mock_db = AsyncMock(return_value=_make_kg_result([entity], [rel]))
 
-        deps = get_agent_deps(team_ids=[team_id], include_master=False)
+        deps = get_agent_deps(team_ids=[team_id])
 
         with patch("app.db.db_query_kg", mock_db):
             # The tool function has signature (deps, query) from the decorator
@@ -73,7 +67,7 @@ class TestKGToolSingleTeam:
             result = await query_knowledge_graph(deps, "Acme Corp")
 
         # Should call db_query_kg exactly once with the single team
-        mock_db.assert_called_once_with("Acme Corp", team_id=team_id, include_master=False)
+        mock_db.assert_called_once_with("Acme Corp", team_id=team_id)
         assert "Acme Corp" in result
         assert "works_at" in result
 
@@ -81,7 +75,7 @@ class TestKGToolSingleTeam:
     async def test_single_team_no_results(self):
         team_id = str(uuid.uuid4())
         mock_db = AsyncMock(return_value=_make_kg_result([], [], []))
-        deps = get_agent_deps(team_ids=[team_id], include_master=False)
+        deps = get_agent_deps(team_ids=[team_id])
 
         with patch("app.db.db_query_kg", mock_db):
             result = await query_knowledge_graph(deps, "nonexistent")
@@ -103,14 +97,14 @@ class TestKGToolMultiTeam:
 
         call_count = 0
 
-        async def mock_query(query, team_id=None, include_master=False):
+        async def mock_query(query, team_id=None):
             nonlocal call_count
             call_count += 1
             if team_id == team_a:
                 return _make_kg_result([entity_a], [rel_a], ["source_a"])
             return _make_kg_result([entity_b], [rel_b], ["source_b"])
 
-        deps = get_agent_deps(team_ids=[team_a, team_b], include_master=False)
+        deps = get_agent_deps(team_ids=[team_a, team_b])
 
         with patch("app.db.db_query_kg", side_effect=mock_query):
             result = await query_knowledge_graph(deps, "companies")
@@ -129,12 +123,12 @@ class TestKGToolMultiTeam:
         shared_entity = _make_entity("Shared Corp", "organization", graph_source="master")
         unique_entity = _make_entity("Unique LLC", "organization", team_id=team_b)
 
-        async def mock_query(query, team_id=None, include_master=False):
+        async def mock_query(query, team_id=None):
             if team_id == team_a:
                 return _make_kg_result([shared_entity], [])
             return _make_kg_result([shared_entity, unique_entity], [])
 
-        deps = get_agent_deps(team_ids=[team_a, team_b], include_master=False)
+        deps = get_agent_deps(team_ids=[team_a, team_b])
 
         with patch("app.db.db_query_kg", side_effect=mock_query):
             result = await query_knowledge_graph(deps, "corp")
@@ -145,71 +139,12 @@ class TestKGToolMultiTeam:
         assert "Unique LLC" in result
 
 
-class TestKGToolIncludeMaster:
-    """Tool with include_master=True on first call includes master entities tagged correctly."""
-
-    @pytest.mark.asyncio
-    async def test_include_master_on_first_call_only(self):
-        team_a = str(uuid.uuid4())
-        team_b = str(uuid.uuid4())
-        calls = []
-
-        async def mock_query(query, team_id=None, include_master=False):
-            calls.append({"team_id": team_id, "include_master": include_master})
-            return _make_kg_result(
-                [_make_entity(f"Entity-{team_id}", team_id=team_id)],
-                [],
-            )
-
-        deps = get_agent_deps(team_ids=[team_a, team_b], include_master=True)
-
-        with patch("app.db.db_query_kg", side_effect=mock_query):
-            await query_knowledge_graph(deps, "test")
-
-        # First call should have include_master=True, second should be False
-        assert len(calls) == 2
-        assert calls[0]["include_master"] is True
-        assert calls[0]["team_id"] == team_a
-        assert calls[1]["include_master"] is False
-        assert calls[1]["team_id"] == team_b
-
-    @pytest.mark.asyncio
-    async def test_master_entities_tagged_correctly(self):
-        team_id = str(uuid.uuid4())
-        master_entity = _make_entity("Master Entity", graph_source="master")
-        team_entity = _make_entity("Team Entity", team_id=team_id, graph_source="team")
-
-        mock_db = AsyncMock(return_value=_make_kg_result([master_entity, team_entity], []))
-        deps = get_agent_deps(team_ids=[team_id], include_master=True)
-
-        with patch("app.db.db_query_kg", mock_db):
-            result = await query_knowledge_graph(deps, "test")
-
-        assert "[master]" in result
-        assert f"[team:{team_id[:8]}]" in result
-
-    @pytest.mark.asyncio
-    async def test_super_admin_no_teams_master_only(self):
-        """Super admin with no teams queries master graph only."""
-        master_entity = _make_entity("Global Entity", graph_source="master")
-        mock_db = AsyncMock(return_value=_make_kg_result([master_entity], []))
-
-        deps = get_agent_deps(team_ids=[], include_master=True)
-
-        with patch("app.db.db_query_kg", mock_db):
-            result = await query_knowledge_graph(deps, "test")
-
-        mock_db.assert_called_once_with("test", team_id=None, include_master=True)
-        assert "Global Entity" in result
-        assert "[master]" in result
-
-
 class TestKGToolNoAccess:
-    """Tool with empty team_ids and include_master=False returns graceful message."""
+    """Tool with empty team_ids returns graceful message."""
 
     @pytest.mark.asyncio
-    async def test_no_teams_no_master_returns_message(self):
-        deps = get_agent_deps(team_ids=[], include_master=False)
+    async def test_no_teams_returns_message(self):
+        deps = get_agent_deps(team_ids=[])
 
         # Should NOT call db_query_kg at all
         with patch("app.db.db_query_kg", new_callable=AsyncMock) as mock_db:
@@ -221,19 +156,12 @@ class TestKGToolNoAccess:
 
 
 class TestAgentDepsTeamFields:
-    """Verify AgentDeps correctly carries team_ids and include_master."""
+    """Verify AgentDeps correctly carries team_ids."""
 
     def test_deps_with_multi_team_context(self):
-        deps = get_agent_deps(team_ids=["t1", "t2"], include_master=False)
+        deps = get_agent_deps(team_ids=["t1", "t2"])
         assert deps.team_ids == ["t1", "t2"]
-        assert deps.include_master is False
-
-    def test_deps_for_super_admin(self):
-        deps = get_agent_deps(team_ids=["t1"], include_master=True)
-        assert deps.include_master is True
-        assert deps.team_ids == ["t1"]
 
     def test_deps_defaults(self):
         deps = get_agent_deps()
         assert deps.team_ids == []
-        assert deps.include_master is False

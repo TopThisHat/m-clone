@@ -92,7 +92,6 @@ class AgentDeps:
     # Team context for KG queries
     team_id: str | None = None  # Deprecated: use team_ids instead
     team_ids: list[str] = field(default_factory=list)
-    include_master: bool = False
 
 
 _DEPTH_MAP = {"fast": "simple", "balanced": "standard", "deep": "deep"}
@@ -107,7 +106,6 @@ def get_agent_deps(
     depth: str = "balanced",
     user_rules: list[str] | None = None,
     team_ids: list[str] | None = None,
-    include_master: bool = False,
     # Deprecated alias — will be removed
     pdf_context: str = "",
 ) -> AgentDeps:
@@ -126,5 +124,4 @@ def get_agent_deps(
         query_complexity=_DEPTH_MAP.get(depth, "standard"),
         user_rules=user_rules or [],
         team_ids=team_ids or [],
-        include_master=include_master,
     )

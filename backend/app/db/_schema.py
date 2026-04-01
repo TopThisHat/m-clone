@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from ._pool import _acquire
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -637,6 +638,142 @@ async def init_schema() -> None:
             await conn.execute("""
                 CREATE INDEX IF NOT EXISTS eak_team_idx
                     ON entity_attribute_knowledge(team_id) WHERE team_id IS NOT NULL
+            """)
+
+            # ── Task 1.2: Bootstrap master team row (ON CONFLICT DO NOTHING) ──
+            _master_id = settings.kg_master_team_id
+            await conn.execute(f"""
+                INSERT INTO playbook.teams (id, slug, display_name, description)
+                VALUES ('{_master_id}'::uuid, 'master-kg', 'Master Knowledge Graph', 'Global shared KG entities')
+                ON CONFLICT (id) DO NOTHING
+            """)
+
+            # ── Task 1.3: master_entity_id on kg_entities (provenance FK) ────
+            await conn.execute("""
+                ALTER TABLE playbook.kg_entities
+                    ADD COLUMN IF NOT EXISTS master_entity_id UUID
+                        REFERENCES kg_entities(id) ON DELETE SET NULL
+            """)
+
+            # ── Task 1.4: team_id on kg_relationship_conflicts ───────────────
+            await conn.execute("""
+                ALTER TABLE playbook.kg_relationship_conflicts
+                    ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id)
+            """)
+
+            # ── Task 1.5: kg_entity_flags table ──────────────────────────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.kg_entity_flags (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    entity_id   UUID NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+                    team_id     UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                    reason      TEXT NOT NULL,
+                    resolved    BOOLEAN NOT NULL DEFAULT FALSE,
+                    resolved_by TEXT REFERENCES playbook.users(sid),
+                    resolved_at TIMESTAMPTZ,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (entity_id, team_id, reason)
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_entity_flags_pending_idx
+                    ON kg_entity_flags(team_id, resolved) WHERE resolved = FALSE
+            """)
+
+            # ── Task 2.1: Pre-migration dedup for NULL-team entities ─────────
+            # Before assigning all NULL-team entities to master, merge duplicates
+            # (same LOWER(name)) by keeping the entity with the most relationships
+            # and appending the loser's name to the winner's aliases array.
+            await conn.execute("""
+                DO $$
+                DECLARE
+                    dup RECORD;
+                    winner_id UUID;
+                    loser_id  UUID;
+                BEGIN
+                    -- Find duplicate names among NULL-team entities
+                    FOR dup IN
+                        SELECT LOWER(name) AS lname
+                        FROM playbook.kg_entities
+                        WHERE team_id IS NULL
+                        GROUP BY LOWER(name)
+                        HAVING COUNT(*) > 1
+                    LOOP
+                        -- Pick winner: entity with the most relationships (ties broken by earliest created_at)
+                        SELECT e.id INTO winner_id
+                        FROM playbook.kg_entities e
+                        LEFT JOIN (
+                            SELECT subject_id AS eid, COUNT(*) AS cnt FROM playbook.kg_relationships GROUP BY subject_id
+                            UNION ALL
+                            SELECT object_id AS eid, COUNT(*) AS cnt FROM playbook.kg_relationships GROUP BY object_id
+                        ) r ON r.eid = e.id
+                        WHERE LOWER(e.name) = dup.lname AND e.team_id IS NULL
+                        GROUP BY e.id, e.created_at
+                        ORDER BY COALESCE(SUM(r.cnt), 0) DESC, e.created_at ASC
+                        LIMIT 1;
+
+                        -- Merge every other duplicate into the winner
+                        FOR loser_id IN
+                            SELECT id FROM playbook.kg_entities
+                            WHERE LOWER(name) = dup.lname AND team_id IS NULL AND id != winner_id
+                        LOOP
+                            -- Append loser's name to winner's aliases (if not already there)
+                            UPDATE playbook.kg_entities
+                            SET aliases = CASE
+                                WHEN (SELECT name FROM playbook.kg_entities WHERE id = loser_id)
+                                     = ANY(aliases) THEN aliases
+                                ELSE aliases || ARRAY[(SELECT name FROM playbook.kg_entities WHERE id = loser_id)]
+                            END
+                            WHERE id = winner_id;
+
+                            -- Re-point loser's relationships to winner
+                            UPDATE playbook.kg_relationships SET subject_id = winner_id WHERE subject_id = loser_id;
+                            UPDATE playbook.kg_relationships SET object_id  = winner_id WHERE object_id  = loser_id;
+
+                            -- Re-point loser's conflict references to winner
+                            UPDATE playbook.kg_relationship_conflicts
+                            SET old_relationship_id = winner_id
+                            WHERE old_relationship_id = loser_id;
+                            UPDATE playbook.kg_relationship_conflicts
+                            SET new_relationship_id = winner_id
+                            WHERE new_relationship_id = loser_id;
+
+                            -- Delete the loser entity
+                            DELETE FROM playbook.kg_entities WHERE id = loser_id;
+                        END LOOP;
+                    END LOOP;
+                END $$
+            """)
+
+            # ── Task 2.2: Migrate NULL kg_entities to master team ────────────
+            await conn.execute(f"""
+                UPDATE playbook.kg_entities
+                SET team_id = '{_master_id}'::uuid
+                WHERE team_id IS NULL
+            """)
+
+            # ── Task 2.3: Migrate NULL kg_relationships to master team ───────
+            await conn.execute(f"""
+                UPDATE playbook.kg_relationships
+                SET team_id = '{_master_id}'::uuid
+                WHERE team_id IS NULL
+            """)
+
+            # ── Task 2.4: Backfill kg_relationship_conflicts.team_id from relationships
+            await conn.execute("""
+                UPDATE playbook.kg_relationship_conflicts rc
+                SET team_id = COALESCE(
+                    (SELECT r.team_id FROM playbook.kg_relationships r WHERE r.id = rc.new_relationship_id),
+                    (SELECT r.team_id FROM playbook.kg_relationships r WHERE r.id = rc.old_relationship_id)
+                )
+                WHERE rc.team_id IS NULL
+            """)
+
+            # ── Task 2.5: Default remaining NULL conflict team_ids to master ─
+            await conn.execute(f"""
+                UPDATE playbook.kg_relationship_conflicts
+                SET team_id = '{_master_id}'::uuid
+                WHERE team_id IS NULL
             """)
 
             # ── Campaign lifecycle status ──────────────────────────────────
@@ -1465,6 +1602,192 @@ async def init_schema() -> None:
                 CREATE INDEX IF NOT EXISTS document_sessions_expires_at_idx
                     ON document_sessions (expires_at)
             """)
+
+            # ══════════════════════════════════════════════════════════════════
+            # Phase 2: Team-Scoped Indexes & Constraints (Tasks 3.1 – 3.9)
+            # Must run AFTER Phase 1 NULL→master migration (Tasks 2.1–2.5)
+            # so that all team_id values are populated before constraints fire.
+            # ══════════════════════════════════════════════════════════════════
+
+            # ── Task 3.1: Drop old COALESCE-based entity unique index ────────
+            # The Phase 1 index used COALESCE(team_id, sentinel) which is no
+            # longer needed now that team_id is never NULL.
+            await conn.execute(
+                "DROP INDEX IF EXISTS playbook.kg_entities_name_team_unique"
+            )
+            await conn.execute(
+                "DROP INDEX IF EXISTS playbook.kg_entities_name_idx"
+            )
+
+            # ── Task 3.2: Clean team-scoped entity unique index ─────────────
+            # Two teams MAY have entities with the same name; same team → upsert.
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS kg_entities_name_team_unique
+                    ON playbook.kg_entities (LOWER(name), team_id)
+            """)
+
+            # ── Task 3.3: Drop old non-team-scoped relationship unique index ─
+            await conn.execute(
+                "DROP INDEX IF EXISTS playbook.kg_rel_active_family_idx"
+            )
+
+            # ── Task 3.4: Team-scoped relationship unique index ─────────────
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS kg_rel_active_family_team_idx
+                    ON playbook.kg_relationships (
+                        subject_id, object_id, predicate_family, team_id
+                    )
+                    WHERE is_active = TRUE
+            """)
+
+            # ── Task 3.5: Intra-team relationship validation function ───────
+            await conn.execute("""
+                CREATE OR REPLACE FUNCTION playbook.kg_rel_team_check(
+                    p_subject_id UUID, p_object_id UUID, p_team_id UUID
+                ) RETURNS BOOLEAN AS $$
+                BEGIN
+                    RETURN (
+                        SELECT COUNT(*) = 2
+                        FROM playbook.kg_entities
+                        WHERE id IN (p_subject_id, p_object_id)
+                          AND team_id = p_team_id
+                    );
+                END;
+                $$ LANGUAGE plpgsql STABLE
+            """)
+
+            # ── Task 3.6: CHECK constraint for intra-team relationships ──────
+            await conn.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'kg_rel_intra_team_check'
+                          AND conrelid = 'playbook.kg_relationships'::regclass
+                    ) THEN
+                        ALTER TABLE playbook.kg_relationships
+                            ADD CONSTRAINT kg_rel_intra_team_check
+                            CHECK (playbook.kg_rel_team_check(subject_id, object_id, team_id));
+                    END IF;
+                END $$
+            """)
+
+            # ── Task 3.7: ON DELETE RESTRICT for team FK ────────────────────
+            # Replace ON DELETE SET NULL with ON DELETE RESTRICT so teams with
+            # KG data cannot be accidentally deleted.
+            await conn.execute("""
+                DO $$
+                DECLARE
+                    fk_name TEXT;
+                BEGIN
+                    -- kg_entities.team_id FK
+                    SELECT tc.constraint_name INTO fk_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                      AND tc.table_schema = kcu.table_schema
+                    JOIN information_schema.referential_constraints rc
+                      ON tc.constraint_name = rc.constraint_name
+                      AND tc.table_schema = rc.constraint_schema
+                    WHERE tc.table_schema = 'playbook'
+                      AND tc.table_name = 'kg_entities'
+                      AND tc.constraint_type = 'FOREIGN KEY'
+                      AND kcu.column_name = 'team_id'
+                      AND rc.delete_rule != 'RESTRICT';
+
+                    IF fk_name IS NOT NULL THEN
+                        EXECUTE format(
+                            'ALTER TABLE playbook.kg_entities DROP CONSTRAINT %I', fk_name
+                        );
+                        ALTER TABLE playbook.kg_entities
+                            ADD CONSTRAINT kg_entities_team_id_fkey
+                            FOREIGN KEY (team_id) REFERENCES playbook.teams(id)
+                            ON DELETE RESTRICT;
+                    END IF;
+                END $$
+            """)
+            await conn.execute("""
+                DO $$
+                DECLARE
+                    fk_name TEXT;
+                BEGIN
+                    -- kg_relationships.team_id FK
+                    SELECT tc.constraint_name INTO fk_name
+                    FROM information_schema.table_constraints tc
+                    JOIN information_schema.key_column_usage kcu
+                      ON tc.constraint_name = kcu.constraint_name
+                      AND tc.table_schema = kcu.table_schema
+                    JOIN information_schema.referential_constraints rc
+                      ON tc.constraint_name = rc.constraint_name
+                      AND tc.table_schema = rc.constraint_schema
+                    WHERE tc.table_schema = 'playbook'
+                      AND tc.table_name = 'kg_relationships'
+                      AND tc.constraint_type = 'FOREIGN KEY'
+                      AND kcu.column_name = 'team_id'
+                      AND rc.delete_rule != 'RESTRICT';
+
+                    IF fk_name IS NOT NULL THEN
+                        EXECUTE format(
+                            'ALTER TABLE playbook.kg_relationships DROP CONSTRAINT %I', fk_name
+                        );
+                        ALTER TABLE playbook.kg_relationships
+                            ADD CONSTRAINT kg_relationships_team_id_fkey
+                            FOREIGN KEY (team_id) REFERENCES playbook.teams(id)
+                            ON DELETE RESTRICT;
+                    END IF;
+                END $$
+            """)
+
+            # ── Task 3.8: NOT NULL on team_id columns ───────────────────────
+            # Safe to enforce now — Phase 1 migrated all NULLs to master team.
+            await conn.execute("""
+                ALTER TABLE playbook.kg_entities
+                    ALTER COLUMN team_id SET NOT NULL
+            """)
+            await conn.execute("""
+                ALTER TABLE playbook.kg_relationships
+                    ALTER COLUMN team_id SET NOT NULL
+            """)
+
+            # ── Task 3.9: Performance indexes ───────────────────────────────
+            # Entity lookup by team + lowercase name (covers team-filtered search)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_entities_team_name_idx
+                    ON playbook.kg_entities (team_id, LOWER(name))
+            """)
+            # Entity type filtering within a team
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_entities_team_type_idx
+                    ON playbook.kg_entities (team_id, entity_type)
+            """)
+            # Recent entities per team (dashboard / activity feeds)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_entities_team_updated_idx
+                    ON playbook.kg_entities (team_id, updated_at DESC)
+            """)
+            # Provenance lookup: find team copies of a master entity
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_entities_master_entity_idx
+                    ON playbook.kg_entities (master_entity_id)
+                    WHERE master_entity_id IS NOT NULL
+            """)
+            # Relationship lookups scoped by team
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_rel_team_subject_idx
+                    ON playbook.kg_relationships (team_id, subject_id)
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_rel_team_object_idx
+                    ON playbook.kg_relationships (team_id, object_id)
+            """)
+            # Conflict browsing per team (most recent first)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_conflicts_team_detected_idx
+                    ON playbook.kg_relationship_conflicts (team_id, detected_at DESC)
+                    WHERE team_id IS NOT NULL
+            """)
+            # NOTE: kg_entity_flags_pending_idx (team_id, resolved) WHERE resolved = FALSE
+            # was already created in Phase 1 (Task 1.5) — intentionally skipped here.
 
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")
