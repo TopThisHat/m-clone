@@ -190,6 +190,11 @@ from .knowledge_graph import (
     db_delete_kg_relationship as db_delete_kg_relationship,
     db_query_kg as db_query_kg,
     db_get_neighbors as db_get_neighbors,
+    db_list_entity_flags as db_list_entity_flags,
+    db_resolve_entity_flag as db_resolve_entity_flag,
+    db_promote_entity_to_master as db_promote_entity_to_master,
+    db_sync_entity_from_master as db_sync_entity_from_master,
+    db_merge_kg_entities as db_merge_kg_entities,
 )
 
 # ── Templates ─────────────────────────────────────────────────────────────────
