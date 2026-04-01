@@ -20,7 +20,9 @@ from app.db import (
     db_get_session,
     db_get_session_mentionable_users,
     db_get_subscriber_sids,
+    db_get_team_by_id,
     db_get_user,
+    db_is_team_member,
     db_list_comments,
     db_resolve_suggestion,
     db_toggle_reaction,
@@ -48,6 +50,7 @@ class CommentCreate(BaseModel):
     highlight_anchor: HighlightAnchor | None = None
     comment_type: str = "comment"
     proposed_text: str | None = None
+    team_id: str | None = None
 
 
 class CommentUpdate(BaseModel):
@@ -91,6 +94,19 @@ async def create_comment(session_id: str, body: CommentCreate, user: dict[str, A
 
         anchor_dict = body.highlight_anchor.model_dump() if body.highlight_anchor else None
 
+        # Resolve team attribution
+        resolved_team_id: str | None = None
+        resolved_team_name: str | None = None
+        if body.team_id:
+            team = await db_get_team_by_id(body.team_id)
+            if team is None:
+                raise HTTPException(status_code=400, detail="Team not found")
+            is_member = await db_is_team_member(body.team_id, user["sub"])
+            if not is_member:
+                raise HTTPException(status_code=403, detail="You are not a member of this team")
+            resolved_team_id = body.team_id
+            resolved_team_name = team.get("display_name")
+
         comment = await db_create_comment(
             session_id=session_id,
             author_sid=user["sub"],
@@ -100,6 +116,8 @@ async def create_comment(session_id: str, body: CommentCreate, user: dict[str, A
             highlight_anchor=anchor_dict,
             comment_type=body.comment_type,
             proposed_text=body.proposed_text,
+            team_id=resolved_team_id,
+            team_name=resolved_team_name,
         )
 
         author_name = user.get("display_name", user["sub"])

@@ -22,6 +22,8 @@ export interface Comment {
 	proposed_text: string | null;
 	suggestion_status: string | null;
 	reactions: Record<string, string[]>;
+	team_id: string | null;
+	team_name: string | null;
 }
 
 export async function listComments(sessionId: string): Promise<Comment[]> {
@@ -37,6 +39,7 @@ export async function createComment(
 	anchor?: Anchor,
 	commentType?: string,
 	proposedText?: string,
+	teamId?: string | null,
 ): Promise<Comment> {
 	const res = await fetch(`/api/sessions/${sessionId}/comments`, {
 		method: 'POST',
@@ -48,6 +51,7 @@ export async function createComment(
 			highlight_anchor: anchor ?? null,
 			comment_type: commentType ?? 'comment',
 			proposed_text: proposedText ?? null,
+			team_id: teamId ?? null,
 		}),
 	});
 	await assertOk(res, 'Failed to post comment.');

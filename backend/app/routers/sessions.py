@@ -17,6 +17,7 @@ from app.db import (
     db_get_public_session,
     db_get_session,
     db_get_session_diff,
+    db_get_session_team_names,
     db_get_session_teams,
     db_get_team_by_id,
     db_heartbeat_presence,
@@ -73,6 +74,7 @@ async def get_session(session_id: str, user: dict[str, Any] | None = Depends(get
         user_team_ids = {t["id"] for t in await db_list_user_teams(user["sub"])}
         if not session_team_ids & user_team_ids:
             raise HTTPException(status_code=403, detail="Access denied")
+    row["shared_team_names"] = await db_get_session_team_names(session_id)
     return row
 
 
@@ -98,6 +100,7 @@ async def update_session(session_id: str, body: SessionUpdate, user: dict[str, A
     if session.get("owner_sid") != user["sub"]:
         raise HTTPException(status_code=403, detail="Only the session owner can update")
     row = await db_update_session(session_id, body.model_dump(exclude_none=True))
+    row["shared_team_names"] = await db_get_session_team_names(session_id)
     return row
 
 
@@ -186,14 +189,16 @@ async def share_to_team(session_id: str, body: TeamShareBody, user: dict[str, An
             for member_sid in member_sids:
                 if member_sid == user["sub"]:
                     continue
+                team_display_name = team.get("display_name", "")
                 await db_create_notification(
                     recipient_sid=member_sid,
                     type_="shared_session",
                     payload={
                         "session_id": session_id,
                         "session_title": session.get("title", ""),
-                        "team_name": team.get("display_name", ""),
+                        "team_name": team_display_name,
                         "shared_by_name": sharer_name,
+                        "message": f"A session was shared with {team_display_name}",
                     },
                 )
         except Exception:
@@ -423,6 +428,7 @@ async def get_public_session(session_id: str, user: dict[str, Any] | None = Depe
         # Case 1: publicly shared — no auth required
         row = await db_get_public_session(session_id)
         if row:
+            row["shared_team_names"] = await db_get_session_team_names(session_id)
             return row
 
         # Case 2: team-shared — requires auth + team membership
@@ -433,6 +439,7 @@ async def get_public_session(session_id: str, user: dict[str, Any] | None = Depe
             session_team_ids = set(await db_get_session_teams(session_id))
             user_team_ids = {t["id"] for t in await db_list_user_teams(user["sub"])}
             if session_team_ids & user_team_ids:
+                row["shared_team_names"] = await db_get_session_team_names(session_id)
                 return row
             raise HTTPException(status_code=403, detail="You do not have access to this team-shared report")
     except DatabaseNotConfigured:

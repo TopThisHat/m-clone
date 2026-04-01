@@ -46,6 +46,7 @@ from .teams import (
     db_unshare_session as db_unshare_session,
     db_get_team_sessions as db_get_team_sessions,
     db_get_session_teams as db_get_session_teams,
+    db_get_session_team_names as db_get_session_team_names,
     db_get_session_mentionable_users as db_get_session_mentionable_users,
     db_pin_session as db_pin_session,
     db_unpin_session as db_unpin_session,
@@ -189,12 +190,6 @@ from .knowledge_graph import (
     db_delete_kg_relationship as db_delete_kg_relationship,
     db_query_kg as db_query_kg,
     db_get_neighbors as db_get_neighbors,
-    db_flag_entity_for_review as db_flag_entity_for_review,
-    db_list_entity_flags as db_list_entity_flags,
-    db_resolve_entity_flag as db_resolve_entity_flag,
-    db_promote_entity_to_master as db_promote_entity_to_master,
-    db_sync_entity_from_master as db_sync_entity_from_master,
-    db_merge_kg_entities as db_merge_kg_entities,
 )
 
 # ── Templates ─────────────────────────────────────────────────────────────────

@@ -15,6 +15,8 @@
 	import { activeCommentId, pendingAnchor } from '$lib/stores/highlightStore';
 	import { sessionComments } from '$lib/stores/reportStore';
 	import { sanitizeHtml } from '$lib/utils/sanitize';
+	import { scoutTeam } from '$lib/stores/scoutTeamStore';
+	import TeamPill from './TeamPill.svelte';
 
 	const REACTION_EMOJIS = ['👍', '❤️', '🔥', '💡', '✅', '❓'];
 
@@ -212,6 +214,7 @@
 				currentAnchor ?? undefined,
 				commentType,
 				proposed,
+				$scoutTeam,
 			);
 			comments = [...comments, c];
 			sessionComments.set(comments);
@@ -306,6 +309,16 @@
 		pendingAnchor.set(null);
 	}
 
+	// ── Team color mapping ────────────────────────────────────────────────────────
+	const teamColorMap = new Map<string, number>();
+	let nextTeamIndex = 0;
+	function getTeamIndex(teamName: string): number {
+		if (!teamColorMap.has(teamName)) {
+			teamColorMap.set(teamName, nextTeamIndex++);
+		}
+		return teamColorMap.get(teamName)!;
+	}
+
 	function highlightMentions(text: string): string {
 		return sanitizeHtml(text.replace(/@([A-Za-z0-9_.\-]+)/g, '<span class="text-gold font-medium">@$1</span>'));
 	}
@@ -382,6 +395,9 @@
 							<div class="flex-1 min-w-0">
 								<div class="flex items-baseline gap-2 flex-wrap">
 									<span class="text-xs font-medium text-slate-200">{comment.author_name}</span>
+									{#if comment.team_name}
+										<TeamPill teamName={comment.team_name} teamIndex={getTeamIndex(comment.team_name)} />
+									{/if}
 									<span class="text-xs text-slate-700">{new Date(comment.created_at).toLocaleString()}</span>
 									{#if isEdited(comment)}
 										<span class="text-xs text-slate-600 italic">(edited)</span>
@@ -555,6 +571,9 @@
 										<div class="flex-1 min-w-0">
 											<div class="flex items-baseline gap-2 flex-wrap">
 												<span class="text-xs font-medium text-slate-200">{reply.author_name}</span>
+												{#if reply.team_name}
+													<TeamPill teamName={reply.team_name} teamIndex={getTeamIndex(reply.team_name)} />
+												{/if}
 												<span class="text-xs text-slate-700">{new Date(reply.created_at).toLocaleString()}</span>
 												{#if isEdited(reply)}
 													<span class="text-xs text-slate-600 italic">(edited)</span>

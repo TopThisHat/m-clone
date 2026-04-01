@@ -5,6 +5,7 @@
 	import { currentUser } from '$lib/stores/authStore';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 	import NotificationBell from '$lib/components/NotificationBell.svelte';
+	import GlobalTeamSelector from '$lib/components/GlobalTeamSelector.svelte';
 	import { sidebarOpen } from '$lib/stores/uiStore';
 	import type { LayoutData } from './$types';
 
@@ -97,6 +98,8 @@
 					>
 						KG
 					</a>
+					<span class="w-px h-3 bg-navy-600" aria-hidden="true"></span>
+					<GlobalTeamSelector teams={data.teams} />
 					<NotificationBell />
 				{/if}
 				<ThemeToggle />

@@ -44,3 +44,4 @@ class SessionFull(SessionSummary):
     message_history: list[Any]
     trace_steps: list[Any]
     doc_session_key: str | None = None
+    shared_team_names: list[str] = []

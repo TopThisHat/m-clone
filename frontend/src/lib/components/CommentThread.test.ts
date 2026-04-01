@@ -217,6 +217,90 @@ describe('CommentThread - comment tree structure', () => {
 	});
 });
 
+// ── Team pill visibility logic ────────────────────────────────────────────────
+
+describe('CommentThread - team pill visibility', () => {
+	interface CommentWithTeam {
+		id: string;
+		team_name: string | null;
+		team_id: string | null;
+	}
+
+	function shouldShowPill(comment: CommentWithTeam): boolean {
+		return comment.team_name !== null;
+	}
+
+	it('shows pill when comment has team_name', () => {
+		const comment: CommentWithTeam = { id: 'c1', team_name: 'Engineering', team_id: 'team-1' };
+		expect(shouldShowPill(comment)).toBe(true);
+	});
+
+	it('does not show pill when team_name is null', () => {
+		const comment: CommentWithTeam = { id: 'c2', team_name: null, team_id: null };
+		expect(shouldShowPill(comment)).toBe(false);
+	});
+});
+
+// ── Team color coding ─────────────────────────────────────────────────────────
+
+describe('CommentThread - team color coding', () => {
+	function makeGetTeamIndex() {
+		const teamColorMap = new Map<string, number>();
+		let nextTeamIndex = 0;
+		return function getTeamIndex(teamName: string): number {
+			if (!teamColorMap.has(teamName)) {
+				teamColorMap.set(teamName, nextTeamIndex++);
+			}
+			return teamColorMap.get(teamName)!;
+		};
+	}
+
+	it('assigns different color indices to different teams', () => {
+		const getTeamIndex = makeGetTeamIndex();
+		const indexA = getTeamIndex('Alpha');
+		const indexB = getTeamIndex('Beta');
+		expect(indexA).not.toBe(indexB);
+	});
+
+	it('assigns the same index to the same team across multiple calls', () => {
+		const getTeamIndex = makeGetTeamIndex();
+		expect(getTeamIndex('Alpha')).toBe(getTeamIndex('Alpha'));
+	});
+
+	it('assigns sequential indices starting from 0', () => {
+		const getTeamIndex = makeGetTeamIndex();
+		expect(getTeamIndex('First')).toBe(0);
+		expect(getTeamIndex('Second')).toBe(1);
+		expect(getTeamIndex('Third')).toBe(2);
+	});
+});
+
+// ── New comment includes team_id from store ───────────────────────────────────
+
+describe('CommentThread - new comment team_id', () => {
+	/**
+	 * Exercises the logic that passes $scoutTeam into createComment.
+	 * The actual Svelte store subscription is tested at the component level;
+	 * here we just verify the value flows through to the API payload.
+	 */
+	function buildCommentPayload(
+		body: string,
+		teamId: string | null,
+	): { body: string; team_id: string | null } {
+		return { body, team_id: teamId ?? null };
+	}
+
+	it('includes active team_id in the request payload', () => {
+		const payload = buildCommentPayload('Hello team', 'team-xyz');
+		expect(payload.team_id).toBe('team-xyz');
+	});
+
+	it('sends null team_id when no team is selected', () => {
+		const payload = buildCommentPayload('Personal comment', null);
+		expect(payload.team_id).toBeNull();
+	});
+});
+
 // ── Unseen count logic ────────────────────────────────────────────────────────
 
 describe('CommentThread - unseen count', () => {

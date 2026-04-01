@@ -40,12 +40,14 @@ async def db_create_comment(
     highlight_anchor: dict | None = None,
     comment_type: str = "comment",
     proposed_text: str | None = None,
+    team_id: str | None = None,
+    team_name: str | None = None,
 ) -> dict[str, Any]:
     async with _acquire() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO playbook.comments (session_id, author_sid, body, mentions, parent_id, highlight_anchor, comment_type, proposed_text)
-            VALUES ($1::uuid, $2, $3, $4::jsonb, $5::uuid, $6::jsonb, $7, $8)
+            INSERT INTO playbook.comments (session_id, author_sid, body, mentions, parent_id, highlight_anchor, comment_type, proposed_text, team_id, team_name)
+            VALUES ($1::uuid, $2, $3, $4::jsonb, $5::uuid, $6::jsonb, $7, $8, $9::uuid, $10)
             RETURNING *
             """,
             session_id, author_sid, body, json.dumps(mentions),
@@ -53,6 +55,8 @@ async def db_create_comment(
             json.dumps(highlight_anchor) if highlight_anchor else None,
             comment_type,
             proposed_text,
+            team_id if team_id else None,
+            team_name,
         )
     return _row_to_dict(row)
 
@@ -76,7 +80,7 @@ async def db_list_comments(session_id: str) -> list[dict[str, Any]]:
         for field in ("mentions", "highlight_anchor"):
             if field in d and isinstance(d[field], str):
                 d[field] = json.loads(d[field])
-        for field in ("id", "session_id", "parent_id"):
+        for field in ("id", "session_id", "parent_id", "team_id"):
             if field in d and d[field] is not None:
                 d[field] = str(d[field])
         if "created_at" in d and d["created_at"] is not None:
