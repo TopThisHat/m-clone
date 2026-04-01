@@ -114,6 +114,9 @@ async def init_schema() -> None:
             );
             CREATE INDEX IF NOT EXISTS comments_session_idx ON comments (session_id);
             ALTER TABLE playbook.comments ADD COLUMN IF NOT EXISTS highlight_anchor JSONB;
+            ALTER TABLE playbook.comments ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL;
+            ALTER TABLE playbook.comments ADD COLUMN IF NOT EXISTS team_name VARCHAR;
+            CREATE INDEX IF NOT EXISTS comments_team_idx ON comments (team_id) WHERE team_id IS NOT NULL;
 
             -- Pinned sessions per user
             CREATE TABLE IF NOT EXISTS playbook.pinned_sessions (
