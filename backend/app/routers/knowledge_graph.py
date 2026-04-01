@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.auth import get_current_user
+from app.config import settings
 from app.db import (
     DatabaseNotConfigured,
     db_delete_kg_entity,
@@ -21,11 +22,16 @@ from app.db import (
     db_get_neighbors,
     db_is_super_admin,
     db_is_team_member,
+    db_list_entity_flags,
     db_list_kg_conflicts,
     db_list_kg_entities,
     db_list_user_teams,
+    db_merge_kg_entities,
+    db_promote_entity_to_master,
     db_query_kg,
+    db_resolve_entity_flag,
     db_search_kg,
+    db_sync_entity_from_master,
     db_update_kg_entity,
     db_update_kg_relationship,
 )
@@ -46,49 +52,57 @@ def _can(role: str | None, min_role: str) -> bool:
     return ROLE_ORDER.get(role or "", -1) >= ROLE_ORDER[min_role]
 
 
-async def _resolve_team_access(user: dict[str, Any], team_id: str | None) -> tuple[str | None, bool]:
-    """Resolve team_id and whether the user may see the master graph.
+async def _resolve_team_access(user: dict[str, Any], team_id: str | None) -> str:
+    """Resolve team_id for the current user.  Always returns a concrete team id.
 
-    Returns (resolved_team_id, include_master).
-    - Super admins: can see master graph and any team graph.
-    - Regular users: can only see their own team's graph (never master).
-      If they have no team and aren't super admin, raises 403.
+    Logic:
+    - If *team_id* equals the master team id → require super admin → return it.
+    - If *team_id* is provided → verify team membership → return it.
+    - If no *team_id* → auto-resolve to the user's first team.
+    - If the user has no teams → 403 Forbidden.
     """
     sid = user["sub"]
-    is_sa = await db_is_super_admin(sid)
 
     if team_id:
+        # Master team gate
+        if team_id == settings.kg_master_team_id:
+            if not await db_is_super_admin(sid):
+                raise HTTPException(status_code=403, detail="Super admin access required for master graph")
+            return team_id
+
+        # Regular team — verify membership (super admins are allowed everywhere)
+        is_sa = await db_is_super_admin(sid)
         if not is_sa:
             is_member = await db_is_team_member(team_id, sid)
             if not is_member:
                 raise HTTPException(status_code=403, detail="Not a member of this team")
-        return team_id, is_sa
+        return team_id
 
-    if is_sa:
-        # Super admin with no team_id specified → master graph
-        return None, True
-
-    # Regular user: auto-resolve to their first team
+    # No team_id supplied — auto-resolve to first team
     teams = await db_list_user_teams(sid)
     if teams:
-        return teams[0]["id"], False
+        return str(teams[0]["id"])
     raise HTTPException(status_code=403, detail="You must be part of a team to view the knowledge graph")
 
 
-async def _require_kg_edit(user: dict[str, Any], team_id: str | None) -> None:
+async def _require_kg_edit(user: dict[str, Any], team_id: str) -> None:
     """Ensure user has admin+ role on the team (or is super admin)."""
     sid = user["sub"]
-    is_sa = await db_is_super_admin(sid)
-    if is_sa:
+    if await db_is_super_admin(sid):
         return
-    if not team_id:
-        raise HTTPException(status_code=403, detail="Cannot edit master graph directly")
     role = await db_get_member_role(team_id, sid)
     if not _can(role, "admin"):
         raise HTTPException(status_code=403, detail="Admin or owner role required to edit the knowledge graph")
 
 
 # ── Read endpoints ───────────────────────────────────────────────────────────
+
+
+@router.get("/master-team-id")
+async def get_master_team_id() -> dict[str, str]:
+    """Return the master team id.  No auth required."""
+    return {"team_id": settings.kg_master_team_id}
+
 
 @router.get("/entities")
 async def list_entities(
@@ -100,33 +114,46 @@ async def list_entities(
     user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
-        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        team_id = await _resolve_team_access(user, team_id)
         return await db_list_kg_entities(
             search=search, entity_type=entity_type,
-            team_id=resolved_team, include_master=include_master,
+            team_id=team_id,
             limit=limit, offset=offset,
         )
     except DatabaseNotConfigured:
         raise _no_db()
 
 
-@router.get("/entities/{entity_id}")
-async def get_entity(entity_id: str, user: dict[str, Any] = Depends(get_current_user)):
+@router.get("/entities/flags")
+async def list_entity_flags(
+    team_id: str | None = Query(default=None),
+    user: dict[str, Any] = Depends(get_current_user),
+):
+    """List unresolved entity flags for the resolved team."""
     try:
+        team_id = await _resolve_team_access(user, team_id)
+        return await db_list_entity_flags(team_id)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.get("/entities/{entity_id}")
+async def get_entity(
+    entity_id: str,
+    team_id: str | None = Query(default=None),
+    user: dict[str, Any] = Depends(get_current_user),
+):
+    try:
+        team_id = await _resolve_team_access(user, team_id)
         entity = await db_get_kg_entity(entity_id)
     except DatabaseNotConfigured:
         raise _no_db()
     if not entity:
         raise HTTPException(status_code=404, detail="Entity not found")
-    # Verify team access
+    # Verify entity belongs to the resolved team
     entity_team = entity.get("team_id")
-    if entity_team:
-        await _resolve_team_access(user, entity_team)
-    else:
-        # Master graph entity — only super admins
-        sid = user["sub"]
-        if not await db_is_super_admin(sid):
-            raise HTTPException(status_code=403, detail="Only super admins can view master graph entities")
+    if entity_team and entity_team != team_id:
+        raise HTTPException(status_code=403, detail="Entity does not belong to the resolved team")
     return entity
 
 
@@ -138,10 +165,10 @@ async def get_entity_relationships(
     user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
-        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        team_id = await _resolve_team_access(user, team_id)
         return await db_get_entity_relationships(
             entity_id, direction,
-            team_id=resolved_team, include_master=include_master,
+            team_id=team_id,
         )
     except DatabaseNotConfigured:
         raise _no_db()
@@ -157,15 +184,14 @@ async def get_entity_neighbors(
     user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
-        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        team_id = await _resolve_team_access(user, team_id)
         exclude = [eid.strip() for eid in exclude_ids.split(",")] if exclude_ids else []
         return await db_get_neighbors(
             entity_id,
             depth=depth,
             limit=limit,
             exclude_ids=exclude,
-            team_id=resolved_team,
-            include_master=include_master,
+            team_id=team_id,
         )
     except DatabaseNotConfigured:
         raise _no_db()
@@ -178,8 +204,8 @@ async def search_entities(
     user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
-        resolved_team, include_master = await _resolve_team_access(user, team_id)
-        return await db_search_kg(q, team_id=resolved_team, include_master=include_master)
+        team_id = await _resolve_team_access(user, team_id)
+        return await db_search_kg(q, team_id=team_id)
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -190,8 +216,8 @@ async def get_stats(
     user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
-        resolved_team, include_master = await _resolve_team_access(user, team_id)
-        return await db_get_kg_stats(team_id=resolved_team, include_master=include_master)
+        team_id = await _resolve_team_access(user, team_id)
+        return await db_get_kg_stats(team_id=team_id)
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -208,12 +234,12 @@ async def get_graph(
     user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
-        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        team_id = await _resolve_team_access(user, team_id)
         et = [t.strip() for t in entity_types.split(",")] if entity_types else None
         pf = [f.strip() for f in predicate_families.split(",")] if predicate_families else None
         return await db_get_kg_graph(
             entity_types=et, predicate_families=pf,
-            team_id=resolved_team, include_master=include_master,
+            team_id=team_id,
             search=search,
             metadata_key=metadata_key, metadata_value=metadata_value,
             limit=limit,
@@ -228,9 +254,9 @@ async def get_deal_partners(
     user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
-        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        team_id = await _resolve_team_access(user, team_id)
         return await db_get_deal_partners(
-            team_id=resolved_team, include_master=include_master,
+            team_id=team_id,
         )
     except DatabaseNotConfigured:
         raise _no_db()
@@ -244,10 +270,10 @@ async def list_conflicts(
     user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
-        resolved_team, include_master = await _resolve_team_access(user, team_id)
+        team_id = await _resolve_team_access(user, team_id)
         return await db_list_kg_conflicts(
             limit=limit, offset=offset,
-            team_id=resolved_team, include_master=include_master,
+            team_id=team_id,
         )
     except DatabaseNotConfigured:
         raise _no_db()
@@ -274,7 +300,10 @@ async def update_entity(
         entity = await db_get_kg_entity(entity_id)
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")
-        await _require_kg_edit(user, entity.get("team_id"))
+        entity_team = entity.get("team_id")
+        if not entity_team:
+            raise HTTPException(status_code=400, detail="Cannot determine entity team")
+        await _require_kg_edit(user, entity_team)
         patch = body.model_dump(exclude_none=True)
         if body.metadata is not None:
             patch["metadata"] = json.dumps(body.metadata)
@@ -290,11 +319,99 @@ async def delete_entity(entity_id: str, user: dict[str, Any] = Depends(get_curre
         entity = await db_get_kg_entity(entity_id)
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")
-        await _require_kg_edit(user, entity.get("team_id"))
+        entity_team = entity.get("team_id")
+        if not entity_team:
+            raise HTTPException(status_code=400, detail="Cannot determine entity team")
+        await _require_kg_edit(user, entity_team)
         deleted = await db_delete_kg_entity(entity_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Entity not found")
         return {"deleted": True}
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+# ── Entity promote / sync / merge ─────────────────────────────────────────────
+
+@router.post("/entities/{entity_id}/promote")
+async def promote_entity(
+    entity_id: str,
+    team_id: str | None = Query(default=None),
+    user: dict[str, Any] = Depends(get_current_user),
+):
+    """Promote a team entity to the master knowledge graph.  Requires admin+ role."""
+    try:
+        team_id = await _resolve_team_access(user, team_id)
+        await _require_kg_edit(user, team_id)
+        master_id = await db_promote_entity_to_master(entity_id, team_id)
+        if master_id is None:
+            raise HTTPException(status_code=404, detail="Entity not found in this team")
+        return {"master_entity_id": master_id}
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+@router.post("/entities/{entity_id}/sync-from-master")
+async def sync_entity_from_master(
+    entity_id: str,
+    team_id: str | None = Query(default=None),
+    user: dict[str, Any] = Depends(get_current_user),
+):
+    """Sync a team entity from its master entity.  Requires admin+ role."""
+    try:
+        team_id = await _resolve_team_access(user, team_id)
+        await _require_kg_edit(user, team_id)
+        updated = await db_sync_entity_from_master(entity_id, team_id)
+        if updated is None:
+            raise HTTPException(status_code=400, detail="Entity has no master link or was not found")
+        return updated
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+class MergeEntitiesRequest(BaseModel):
+    winner_id: str
+    loser_id: str
+    team_id: str
+
+
+@router.post("/entities/merge")
+async def merge_entities(
+    body: MergeEntitiesRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+):
+    """Merge two entities within the same team.  Requires admin+ role."""
+    try:
+        team_id = await _resolve_team_access(user, body.team_id)
+        await _require_kg_edit(user, team_id)
+        result = await db_merge_kg_entities(body.winner_id, body.loser_id, team_id)
+        if result is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Merge failed — both entities must belong to the same team",
+            )
+        return result
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
+# ── Entity flags ──────────────────────────────────────────────────────────────
+
+@router.patch("/entities/flags/{flag_id}")
+async def resolve_flag(
+    flag_id: str,
+    team_id: str | None = Query(default=None),
+    user: dict[str, Any] = Depends(get_current_user),
+):
+    """Resolve an entity flag.  Requires admin+ role."""
+    try:
+        team_id = await _resolve_team_access(user, team_id)
+        await _require_kg_edit(user, team_id)
+        sid = user["sub"]
+        ok = await db_resolve_entity_flag(flag_id, sid)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Flag not found")
+        return {"resolved": True}
     except DatabaseNotConfigured:
         raise _no_db()
 
@@ -316,7 +433,10 @@ async def update_relationship(
         rel = await db_get_kg_relationship(rel_id)
         if not rel:
             raise HTTPException(status_code=404, detail="Relationship not found")
-        await _require_kg_edit(user, rel.get("team_id"))
+        rel_team = rel.get("team_id")
+        if not rel_team:
+            raise HTTPException(status_code=400, detail="Cannot determine relationship team")
+        await _require_kg_edit(user, rel_team)
         patch = body.model_dump(exclude_none=True)
         updated = await db_update_kg_relationship(rel_id, patch)
         if not updated:
@@ -332,7 +452,10 @@ async def delete_relationship(rel_id: str, user: dict[str, Any] = Depends(get_cu
         rel = await db_get_kg_relationship(rel_id)
         if not rel:
             raise HTTPException(status_code=404, detail="Relationship not found")
-        await _require_kg_edit(user, rel.get("team_id"))
+        rel_team = rel.get("team_id")
+        if not rel_team:
+            raise HTTPException(status_code=400, detail="Cannot determine relationship team")
+        await _require_kg_edit(user, rel_team)
         deleted = await db_delete_kg_relationship(rel_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Relationship not found")
@@ -350,8 +473,8 @@ async def query_graph(
     user: dict[str, Any] = Depends(get_current_user),
 ):
     try:
-        resolved_team, include_master = await _resolve_team_access(user, team_id)
-        return await db_query_kg(q, team_id=resolved_team, include_master=include_master)
+        team_id = await _resolve_team_access(user, team_id)
+        return await db_query_kg(q, team_id=team_id)
     except DatabaseNotConfigured:
         raise _no_db()
 

@@ -138,12 +138,16 @@ async def _relationship_already_exists(
     object_id: str,
     predicate: str,
     predicate_family: str,
+    team_id: str,
 ) -> bool:
     """Check if an equivalent relationship already exists (active, same canonical predicate).
 
     Uses the ontology's per-predicate symmetry flag to decide whether to check
     the reverse direction (e.g. ``co_owns`` is symmetric but ``owns`` is not,
     even though both belong to the ``ownership`` family).
+
+    The check is scoped to the given ``team_id`` so that identical
+    relationships in different teams are not treated as duplicates.
     """
     from app.kg_ontology import RELATIONSHIP_FAMILIES
 
@@ -152,9 +156,10 @@ async def _relationship_already_exists(
         SELECT id FROM playbook.kg_relationships
         WHERE subject_id = $1::uuid AND object_id = $2::uuid
           AND predicate = $3 AND predicate_family = $4
+          AND team_id = $5::uuid
           AND is_active = TRUE
         """,
-        subject_id, object_id, predicate, predicate_family,
+        subject_id, object_id, predicate, predicate_family, team_id,
     )
     if row:
         return True
@@ -173,9 +178,10 @@ async def _relationship_already_exists(
             SELECT id FROM playbook.kg_relationships
             WHERE subject_id = $2::uuid AND object_id = $1::uuid
               AND predicate = $3 AND predicate_family = $4
+              AND team_id = $5::uuid
               AND is_active = TRUE
             """,
-            subject_id, object_id, predicate, predicate_family,
+            subject_id, object_id, predicate, predicate_family, team_id,
         )
         if row:
             return True
@@ -306,13 +312,17 @@ async def _store_extraction_result(
         "filtered_by_unknown_predicate": N, "filtered_by_relevance": N,
         "client_lookups": N}
     """
-    from app.db import db_find_or_create_entity, db_upsert_relationship
+    from app.config import settings
+    from app.db import db_find_or_create_entity, db_flag_entity_for_review, db_upsert_relationship
     from app.db._pool import _acquire
     from app.kg_ontology import (
         ALLOWED_ENTITY_TYPE_NAMES,
         normalize_predicate,
         should_keep_relationship,
     )
+
+    # DB layer requires a non-None team_id; fall back to master team
+    effective_team_id: str = team_id or settings.kg_master_team_id
 
     if not result.entities and not result.relationships:
         logger.debug("Extraction for session_id=%s yielded no results", session_id)
@@ -336,12 +346,18 @@ async def _store_extraction_result(
             )
             continue
         try:
-            eid = await db_find_or_create_entity(
+            entity_id, resolution_mode = await db_find_or_create_entity(
                 ent.name, ent.type, ent.aliases,
-                team_id=team_id,
+                team_id=effective_team_id,
                 disambiguation_context=ent.disambiguation_context,
             )
-            entity_id_map[ent.name.lower().strip()] = eid
+            logger.info(
+                "entity_resolved session=%s team=%s entity=%s mode=%s id=%s",
+                session_id, effective_team_id, ent.name, resolution_mode, entity_id,
+            )
+            if resolution_mode == "master_copy":
+                await db_flag_entity_for_review(entity_id, effective_team_id, "sourced_from_master")
+            entity_id_map[ent.name.lower().strip()] = entity_id
             entities_created += 1
         except Exception as exc:
             logger.warning("db_find_or_create_entity failed for '%s': %s", ent.name, exc)
@@ -377,21 +393,34 @@ async def _store_extraction_result(
                 object_key = rel.object.lower().strip()
 
                 if subject_key not in entity_id_map:
-                    eid = await db_find_or_create_entity(
-                        rel.subject, "person", [], team_id=team_id,
+                    entity_id, resolution_mode = await db_find_or_create_entity(
+                        rel.subject, "person", [], team_id=effective_team_id,
                     )
-                    entity_id_map[subject_key] = eid
+                    logger.info(
+                        "entity_resolved session=%s team=%s entity=%s mode=%s id=%s",
+                        session_id, effective_team_id, rel.subject, resolution_mode, entity_id,
+                    )
+                    if resolution_mode == "master_copy":
+                        await db_flag_entity_for_review(entity_id, effective_team_id, "sourced_from_master")
+                    entity_id_map[subject_key] = entity_id
                 if object_key not in entity_id_map:
-                    eid = await db_find_or_create_entity(
-                        rel.object, "person", [], team_id=team_id,
+                    entity_id, resolution_mode = await db_find_or_create_entity(
+                        rel.object, "person", [], team_id=effective_team_id,
                     )
-                    entity_id_map[object_key] = eid
+                    logger.info(
+                        "entity_resolved session=%s team=%s entity=%s mode=%s id=%s",
+                        session_id, effective_team_id, rel.object, resolution_mode, entity_id,
+                    )
+                    if resolution_mode == "master_copy":
+                        await db_flag_entity_for_review(entity_id, effective_team_id, "sourced_from_master")
+                    entity_id_map[object_key] = entity_id
 
                 subject_id = entity_id_map[subject_key]
                 object_id = entity_id_map[object_key]
 
                 exists = await _relationship_already_exists(
                     conn, subject_id, object_id, canonical_pred, canonical_family,
+                    team_id=effective_team_id,
                 )
                 if exists:
                     logger.debug(
@@ -409,7 +438,7 @@ async def _store_extraction_result(
                     confidence=rel.confidence,
                     evidence=rel.evidence or None,
                     source_session_id=session_id,
-                    team_id=team_id,
+                    team_id=effective_team_id,
                 )
                 if outcome["status"] == "conflict":
                     logger.info(

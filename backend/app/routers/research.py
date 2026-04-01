@@ -12,7 +12,7 @@ from app.agent.clarification import clarification_store
 from app.agent.streaming import stream_research
 from app.auth import get_current_user, get_optional_user
 from app.config import settings
-from app.db import db_get_session_doc_key, db_is_super_admin, db_is_team_member, db_list_user_teams
+from app.db import db_get_session_doc_key, db_is_team_member, db_list_user_teams
 from app.dependencies import get_agent_deps
 from app.models.job import AsyncResearchRequest, JobStatus
 from app.models.request import ResearchRequest
@@ -89,10 +89,8 @@ async def research_endpoint(body: ResearchRequest, request: Request, user: dict[
 
     # Resolve team context from authenticated user
     team_ids: list[str] = []
-    include_master = False
     if user:
         sid = user["sub"]
-        include_master = await db_is_super_admin(sid)
         if body.team_id and await db_is_team_member(body.team_id, sid):
             team_ids = [body.team_id]
         else:
@@ -108,7 +106,6 @@ async def research_endpoint(body: ResearchRequest, request: Request, user: dict[
         depth=body.depth,
         user_rules=body.rules,
         team_ids=team_ids,
-        include_master=include_master,
     )
 
     return StreamingResponse(
@@ -133,7 +130,6 @@ async def _run_async_job(
     webhook_url: str,
     doc_session_key: str | None,
     team_ids: list[str] | None = None,
-    include_master: bool = False,
 ) -> None:
     """Background task: run research and POST results to webhook."""
     from app.db import db_update_job
@@ -159,7 +155,6 @@ async def _run_async_job(
             uploaded_doc_metadata=doc_session.metadata,
             memory_context=memory_ctx,
             team_ids=team_ids or [],
-            include_master=include_master,
         )
 
         # Collect all SSE output into a string
@@ -224,9 +219,7 @@ async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: 
 
     # Resolve team context before spawning background task (no request context there)
     team_ids: list[str] = []
-    include_master = False
     sid = user["sub"]
-    include_master = await db_is_super_admin(sid)
     if body.team_id and await db_is_team_member(body.team_id, sid):
         team_ids = [body.team_id]
     else:
@@ -240,7 +233,6 @@ async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: 
         body.webhook_url,
         body.doc_session_key,
         team_ids,
-        include_master,
     )
     return {"job_id": job_id, "status": "queued"}
 
