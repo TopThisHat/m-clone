@@ -642,11 +642,11 @@ async def init_schema() -> None:
 
             # ── Task 1.2: Bootstrap master team row (ON CONFLICT DO NOTHING) ──
             _master_id = settings.kg_master_team_id
-            await conn.execute(f"""
+            await conn.execute("""
                 INSERT INTO playbook.teams (id, slug, display_name, description)
-                VALUES ('{_master_id}'::uuid, 'master-kg', 'Master Knowledge Graph', 'Global shared KG entities')
+                VALUES ($1::uuid, 'master-kg', 'Master Knowledge Graph', 'Global shared KG entities')
                 ON CONFLICT (id) DO NOTHING
-            """)
+            """, _master_id)
 
             # ── Task 1.3: master_entity_id on kg_entities (provenance FK) ────
             await conn.execute("""
@@ -717,26 +717,51 @@ async def init_schema() -> None:
                             SELECT id FROM playbook.kg_entities
                             WHERE LOWER(name) = dup.lname AND team_id IS NULL AND id != winner_id
                         LOOP
-                            -- Append loser's name to winner's aliases (if not already there)
+                            -- Merge loser's name + aliases into winner's aliases
                             UPDATE playbook.kg_entities
-                            SET aliases = CASE
-                                WHEN (SELECT name FROM playbook.kg_entities WHERE id = loser_id)
-                                     = ANY(aliases) THEN aliases
-                                ELSE aliases || ARRAY[(SELECT name FROM playbook.kg_entities WHERE id = loser_id)]
-                            END
+                            SET aliases = (
+                                SELECT ARRAY(
+                                    SELECT DISTINCT unnest
+                                    FROM unnest(
+                                        w.aliases
+                                        || ARRAY[l.name]
+                                        || COALESCE(l.aliases, ARRAY[]::TEXT[])
+                                    ) AS unnest
+                                    WHERE unnest IS NOT NULL
+                                      AND unnest != w.name
+                                )
+                                FROM playbook.kg_entities w, playbook.kg_entities l
+                                WHERE w.id = winner_id AND l.id = loser_id
+                            )
                             WHERE id = winner_id;
+
+                            -- Delete loser's subject relationships that conflict with winner's
+                            DELETE FROM playbook.kg_relationships r1
+                            WHERE r1.subject_id = loser_id AND r1.is_active = TRUE
+                            AND EXISTS (
+                                SELECT 1 FROM playbook.kg_relationships r2
+                                WHERE r2.subject_id = winner_id
+                                  AND r2.object_id = r1.object_id
+                                  AND r2.predicate_family = r1.predicate_family
+                                  AND r2.is_active = TRUE
+                            );
+                            -- Delete loser's object relationships that conflict with winner's
+                            DELETE FROM playbook.kg_relationships r1
+                            WHERE r1.object_id = loser_id AND r1.is_active = TRUE
+                            AND EXISTS (
+                                SELECT 1 FROM playbook.kg_relationships r2
+                                WHERE r2.object_id = winner_id
+                                  AND r2.subject_id = r1.subject_id
+                                  AND r2.predicate_family = r1.predicate_family
+                                  AND r2.is_active = TRUE
+                            );
 
                             -- Re-point loser's relationships to winner
                             UPDATE playbook.kg_relationships SET subject_id = winner_id WHERE subject_id = loser_id;
                             UPDATE playbook.kg_relationships SET object_id  = winner_id WHERE object_id  = loser_id;
 
-                            -- Re-point loser's conflict references to winner
-                            UPDATE playbook.kg_relationship_conflicts
-                            SET old_relationship_id = winner_id
-                            WHERE old_relationship_id = loser_id;
-                            UPDATE playbook.kg_relationship_conflicts
-                            SET new_relationship_id = winner_id
-                            WHERE new_relationship_id = loser_id;
+                            -- Remove self-loops created by re-pointing
+                            DELETE FROM playbook.kg_relationships WHERE subject_id = winner_id AND object_id = winner_id;
 
                             -- Delete the loser entity
                             DELETE FROM playbook.kg_entities WHERE id = loser_id;
@@ -746,18 +771,18 @@ async def init_schema() -> None:
             """)
 
             # ── Task 2.2: Migrate NULL kg_entities to master team ────────────
-            await conn.execute(f"""
+            await conn.execute("""
                 UPDATE playbook.kg_entities
-                SET team_id = '{_master_id}'::uuid
+                SET team_id = $1::uuid
                 WHERE team_id IS NULL
-            """)
+            """, _master_id)
 
             # ── Task 2.3: Migrate NULL kg_relationships to master team ───────
-            await conn.execute(f"""
+            await conn.execute("""
                 UPDATE playbook.kg_relationships
-                SET team_id = '{_master_id}'::uuid
+                SET team_id = $1::uuid
                 WHERE team_id IS NULL
-            """)
+            """, _master_id)
 
             # ── Task 2.4: Backfill kg_relationship_conflicts.team_id from relationships
             await conn.execute("""
@@ -770,11 +795,11 @@ async def init_schema() -> None:
             """)
 
             # ── Task 2.5: Default remaining NULL conflict team_ids to master ─
-            await conn.execute(f"""
+            await conn.execute("""
                 UPDATE playbook.kg_relationship_conflicts
-                SET team_id = '{_master_id}'::uuid
+                SET team_id = $1::uuid
                 WHERE team_id IS NULL
-            """)
+            """, _master_id)
 
             # ── Campaign lifecycle status ──────────────────────────────────
             await conn.execute("""

@@ -901,8 +901,7 @@ async def extract_and_lookup_entities(deps: AgentDeps, filename: str) -> str:
     "query_knowledge_graph",
     "Search the internal knowledge graph for entities and relationships. "
     "Use this to answer questions about known people, companies, deals, and relationships. "
-    "Searches both the master graph and the user's team graph, and reports which source "
-    "provided each result.",
+    "Searches the user's team graphs for entities and relationships.",
     {
         "type": "object",
         "properties": {
