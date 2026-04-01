@@ -16,6 +16,7 @@
 	import { startResearch, retryResearch } from '$lib/api/research';
 	import ChartCard from './ChartCard.svelte';
 	import ClarificationCard from './ClarificationCard.svelte';
+	import QueryResults from './QueryResults.svelte';
 	import { sourcePreview } from './SourcePreview.svelte';
 	import { traceStore } from '$lib/stores/traceStore';
 	import { pendingClarification } from '$lib/stores/reportStore';
@@ -397,6 +398,13 @@
 								</div>
 							{/if}
 						</div>
+
+						<!-- Document query result (adaptive display) -->
+						{#if msg.queryResult}
+							<div class="mt-3">
+								<QueryResults results={msg.queryResult} />
+							</div>
+						{/if}
 
 						<!-- Suggested follow-ups (last completed message only) -->
 						{#if isLast && !msg.isStreaming && !$isStreaming && msg.suggestions?.length}
