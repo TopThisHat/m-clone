@@ -291,6 +291,13 @@ from .client_lookup import (
     search_queue_client as search_queue_client,
 )
 
+# ── Document Sessions (PostgreSQL text storage) ───────────────────────────────
+from .document_sessions import (
+    pg_upsert_document_session as pg_upsert_document_session,
+    pg_get_document_session as pg_get_document_session,
+    pg_delete_expired_sessions as pg_delete_expired_sessions,
+)
+
 # ── Research Jobs / Job Queue ─────────────────────────────────────────────────
 from .jobs import (
     db_create_job as db_create_job,

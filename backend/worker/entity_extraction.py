@@ -188,12 +188,22 @@ _BATCH_MAX_RETRIES = 2
 
 
 def _merge_results(results: list[ExtractionResult]) -> ExtractionResult:
-    """Merge multiple extraction results into a single result."""
+    """Merge multiple ExtractionResults, deduplicating by entity name and relationship triple."""
+    seen_entities: set[str] = set()
+    seen_rels: set[tuple[str, str, str]] = set()
     merged_entities: list[ExtractedEntity] = []
     merged_rels: list[ExtractedRelationship] = []
     for r in results:
-        merged_entities.extend(r.entities)
-        merged_rels.extend(r.relationships)
+        for ent in r.entities:
+            key = ent.name.lower().strip()
+            if key not in seen_entities:
+                seen_entities.add(key)
+                merged_entities.append(ent)
+        for rel in r.relationships:
+            key = (rel.subject.lower().strip(), rel.predicate, rel.object.lower().strip())
+            if key not in seen_rels:
+                seen_rels.add(key)
+                merged_rels.append(rel)
     return ExtractionResult(entities=merged_entities, relationships=merged_rels)
 
 
@@ -278,25 +288,23 @@ async def _extract_document_batched(report_md: str) -> ExtractionResult:
     return _merge_results(list(results))
 
 
-# ── Consumer loop ──────────────────────────────────────────────────────────────
+# ── KG storage (shared by single-message and chunk-merge paths) ────────────────
 
-async def _process_message(
+async def _store_extraction_result(
     session_id: str,
-    report_md: str,
+    result: ExtractionResult,
     team_id: str | None = None,
-    is_document: bool = False,
+    enable_client_lookup: bool = False,
 ) -> dict[str, int]:
-    """Process one extraction message: extract, normalize, deduplicate, and store.
+    """Persist an ExtractionResult into the knowledge graph.
 
-    For document mode (is_document=True):
-    - If text has page markers: split by pages, batch via batch_page_texts,
-      then extract per batch with concurrency (semaphore=5).
-    - If no page markers: RecursiveChunker(chunk_size=3500) for paragraph
-      groups, then batch and extract.
-    For non-document mode: single extract call with report_md[:12000].
+    Normalises predicates, deduplicates relationships, and optionally runs
+    GWM client ID lookup for person entities.  Called by both the single-message
+    path and the chunk-merge path so the KG write logic is never duplicated.
 
     Returns counts: {"entities": N, "relationships": N, "skipped_duplicates": N,
-        "filtered_by_unknown_predicate": N, "filtered_by_relevance": N}
+        "filtered_by_unknown_predicate": N, "filtered_by_relevance": N,
+        "client_lookups": N}
     """
     from app.db import db_find_or_create_entity, db_upsert_relationship
     from app.db._pool import _acquire
@@ -306,11 +314,6 @@ async def _process_message(
         should_keep_relationship,
     )
 
-    if is_document:
-        result = await _extract_document_batched(report_md)
-    else:
-        result = await extract_entities_and_relationships(report_md, is_document=False)
-
     if not result.entities and not result.relationships:
         logger.debug("Extraction for session_id=%s yielded no results", session_id)
         return {
@@ -319,6 +322,7 @@ async def _process_message(
             "skipped_duplicates": 0,
             "filtered_by_unknown_predicate": 0,
             "filtered_by_relevance": 0,
+            "client_lookups": 0,
         }
 
     # Pre-create all entities and build name→id map (skip invalid types)
@@ -350,12 +354,7 @@ async def _process_message(
     async with _acquire() as conn:
         for rel in result.relationships:
             try:
-                # Step 1: Normalize predicate to canonical form
-                norm_result = normalize_predicate(
-                    rel.predicate, rel.predicate_family
-                )
-
-                # Step 2: Skip if predicate is unknown (normalize returned None)
+                norm_result = normalize_predicate(rel.predicate, rel.predicate_family)
                 if norm_result is None:
                     logger.debug(
                         "Skipping relationship with unknown predicate: %s %s %s",
@@ -366,14 +365,10 @@ async def _process_message(
 
                 canonical_pred, canonical_family = norm_result
 
-                # Step 3: Check relevance via ontology rules
-                if not should_keep_relationship(
-                    canonical_family, canonical_pred, rel.confidence
-                ):
+                if not should_keep_relationship(canonical_family, canonical_pred, rel.confidence):
                     logger.debug(
                         "Filtered by relevance: %s %s %s (family=%s, confidence=%.2f)",
-                        rel.subject, canonical_pred, rel.object,
-                        canonical_family, rel.confidence,
+                        rel.subject, canonical_pred, rel.object, canonical_family, rel.confidence,
                     )
                     filtered_by_relevance += 1
                     continue
@@ -381,8 +376,6 @@ async def _process_message(
                 subject_key = rel.subject.lower().strip()
                 object_key = rel.object.lower().strip()
 
-                # Ensure subject/object entities exist (use "person" as default
-                # since "other" is no longer a valid entity type)
                 if subject_key not in entity_id_map:
                     eid = await db_find_or_create_entity(
                         rel.subject, "person", [], team_id=team_id,
@@ -397,9 +390,8 @@ async def _process_message(
                 subject_id = entity_id_map[subject_key]
                 object_id = entity_id_map[object_key]
 
-                # Step 4: Check if relationship already exists before upserting
                 exists = await _relationship_already_exists(
-                    conn, subject_id, object_id, canonical_pred, canonical_family
+                    conn, subject_id, object_id, canonical_pred, canonical_family,
                 )
                 if exists:
                     logger.debug(
@@ -441,16 +433,242 @@ async def _process_message(
         session_id, len(result.entities), entities_created, inserted, skipped,
         filtered_by_unknown_predicate, filtered_by_relevance,
     )
+
+    client_lookups = 0
+    if enable_client_lookup:
+        person_names = [ent.name for ent in result.entities if ent.type == "person"]
+        if person_names:
+            try:
+                from app.agent.batch_resolver import batch_resolve_clients
+                people = [{"name": n} for n in person_names]
+                lookup_results = await batch_resolve_clients(people)
+                matched = sum(1 for r in lookup_results if r.get("status") == "matched")
+                client_lookups = len(lookup_results)
+                logger.info(
+                    "Client lookup complete for session=%s: %d/%d persons matched",
+                    session_id, matched, client_lookups,
+                )
+            except Exception as exc:
+                logger.warning("Client lookup failed for session=%s: %s", session_id, exc)
+
     return {
         "entities": entities_created,
         "relationships": inserted,
         "skipped_duplicates": skipped,
         "filtered_by_unknown_predicate": filtered_by_unknown_predicate,
         "filtered_by_relevance": filtered_by_relevance,
+        "client_lookups": client_lookups,
     }
 
 
+# ── Consumer loop ──────────────────────────────────────────────────────────────
+
+async def _process_message(
+    session_id: str,
+    report_md: str,
+    team_id: str | None = None,
+    is_document: bool = False,
+    enable_client_lookup: bool = False,
+) -> dict[str, int]:
+    """Process one extraction message: extract, normalise, deduplicate, and store.
+
+    For document mode (is_document=True):
+    - If text has page markers: split by pages → batch → extract per batch.
+    - Otherwise: RecursiveChunker(chunk_size=3500) → batch → extract.
+    For non-document mode: single extract call with report_md[:12000].
+
+    Returns counts: {"entities": N, "relationships": N, "skipped_duplicates": N,
+        "filtered_by_unknown_predicate": N, "filtered_by_relevance": N,
+        "client_lookups": N}
+    """
+    if is_document:
+        result = await _extract_document_batched(report_md)
+    else:
+        result = await extract_entities_and_relationships(report_md, is_document=False)
+
+    return await _store_extraction_result(session_id, result, team_id, enable_client_lookup)
+
+
 _MAX_EXTRACTION_RETRIES = 3
+_CHUNK_MAX_RETRIES = 2
+_CHUNK_PROGRESS_TTL = 3600  # 1 hour
+
+
+async def _process_chunk(
+    session_id: str,
+    chunk_index: int,
+    total_chunks: int,
+    report_md: str,
+    team_id: str | None = None,
+    is_document: bool = False,
+    enable_client_lookup: bool = False,
+) -> dict[str, int]:
+    """Process a single chunk from a fan-out extraction job.
+
+    Retries LLM extraction up to ``_CHUNK_MAX_RETRIES`` times on failure, then
+    marks the chunk as failed rather than raising.  Progress is tracked in a
+    Redis hash (``extraction_progress:{session_id}``).  The worker that
+    increments ``done_count`` to equal ``total_chunks`` is responsible for
+    merging all partial results and writing to the knowledge graph.
+
+    Returns non-zero counts only for the final (merge-triggering) worker; all
+    other workers return zero counts since KG writes haven't happened yet.
+    """
+    from app.redis_client import get_redis as _get_redis
+
+    progress_key = f"extraction_progress:{session_id}"
+    chunk_field = f"chunk:{chunk_index}"
+
+    result = ExtractionResult()
+    failed = False
+
+    for attempt in range(_CHUNK_MAX_RETRIES + 1):
+        try:
+            if is_document:
+                result = await _extract_document_batched(report_md)
+            else:
+                result = await extract_entities_and_relationships(report_md, is_document=False)
+            failed = False
+            break
+        except Exception as exc:
+            if attempt < _CHUNK_MAX_RETRIES:
+                delay = 2 ** attempt
+                logger.warning(
+                    "Chunk %d/%d for session=%s failed, retrying in %ds (attempt %d/%d): %s",
+                    chunk_index, total_chunks - 1, session_id, delay,
+                    attempt + 1, _CHUNK_MAX_RETRIES, exc,
+                )
+                await asyncio.sleep(delay)
+            else:
+                logger.error(
+                    "Chunk %d/%d for session=%s permanently failed after %d retries: %s",
+                    chunk_index, total_chunks - 1, session_id, _CHUNK_MAX_RETRIES + 1, exc,
+                )
+                failed = True
+
+    _empty_counts: dict[str, int] = {
+        "entities": 0,
+        "relationships": 0,
+        "skipped_duplicates": 0,
+        "filtered_by_unknown_predicate": 0,
+        "filtered_by_relevance": 0,
+        "client_lookups": 0,
+    }
+
+    try:
+        r = await _get_redis()
+
+        # Persist chunk result so the merger can read it
+        chunk_payload = (
+            json.dumps({"failed": True, "entities": [], "relationships": []})
+            if failed
+            else result.model_dump_json()
+        )
+        await r.hset(
+            progress_key,
+            mapping={
+                chunk_field: chunk_payload,
+                f"status:{chunk_index}": "failed" if failed else "done",
+            },
+        )
+        await r.expire(progress_key, _CHUNK_PROGRESS_TTL)
+
+        # Atomic counter — exactly one worker sees done_count == total_chunks
+        done_count = int(await r.hincrby(progress_key, "done_count", 1))
+
+        logger.debug(
+            "Chunk %d/%d stored for session=%s (done=%d/%d, failed=%s)",
+            chunk_index, total_chunks - 1, session_id, done_count, total_chunks, failed,
+        )
+
+        if done_count == total_chunks:
+            logger.info(
+                "All %d chunks complete for session=%s — merging results",
+                total_chunks, session_id,
+            )
+            return await _merge_and_store_chunks(
+                session_id, total_chunks, team_id, enable_client_lookup,
+            )
+
+    except Exception as exc:
+        logger.error(
+            "Chunk progress tracking failed for session=%s chunk=%d: %s",
+            session_id, chunk_index, exc,
+        )
+        # Redis unavailable: fall back to storing this chunk's result directly
+        if not failed:
+            return await _store_extraction_result(session_id, result, team_id, enable_client_lookup)
+
+    return _empty_counts
+
+
+async def _merge_and_store_chunks(
+    session_id: str,
+    total_chunks: int,
+    team_id: str | None = None,
+    enable_client_lookup: bool = False,
+) -> dict[str, int]:
+    """Collect all chunk results from Redis, merge, and write to the knowledge graph.
+
+    Called by the final worker for a given ``session_id``.  Failed chunks
+    contribute empty results so partial results are still preserved.
+    """
+    from app.redis_client import get_redis as _get_redis
+
+    progress_key = f"extraction_progress:{session_id}"
+    _empty_counts: dict[str, int] = {
+        "entities": 0,
+        "relationships": 0,
+        "skipped_duplicates": 0,
+        "filtered_by_unknown_predicate": 0,
+        "filtered_by_relevance": 0,
+        "client_lookups": 0,
+    }
+
+    try:
+        r = await _get_redis()
+        results: list[ExtractionResult] = []
+        failed_chunks = 0
+
+        for i in range(total_chunks):
+            raw = await r.hget(progress_key, f"chunk:{i}")
+            if not raw:
+                logger.warning("Missing chunk %d data for session=%s", i, session_id)
+                failed_chunks += 1
+                continue
+            try:
+                parsed = json.loads(raw)
+                if parsed.get("failed"):
+                    failed_chunks += 1
+                else:
+                    results.append(ExtractionResult.model_validate(parsed))
+            except Exception as exc:
+                logger.warning(
+                    "Failed to deserialise chunk %d for session=%s: %s", i, session_id, exc,
+                )
+                failed_chunks += 1
+
+        if failed_chunks:
+            logger.warning(
+                "Merging with %d/%d failed chunks for session=%s",
+                failed_chunks, total_chunks, session_id,
+            )
+
+        if not results:
+            logger.warning("No successful chunk results to merge for session=%s", session_id)
+            return _empty_counts
+
+        merged = _merge_results(results)
+        logger.info(
+            "Merged %d/%d chunks for session=%s: %d entities, %d relationships",
+            len(results), total_chunks, session_id,
+            len(merged.entities), len(merged.relationships),
+        )
+        return await _store_extraction_result(session_id, merged, team_id, enable_client_lookup)
+
+    except Exception as exc:
+        logger.error("Chunk merge failed for session=%s: %s", session_id, exc)
+        return _empty_counts
 
 
 async def _get_extraction_retry_count(session_id: str, msg_id: str) -> int:
@@ -528,11 +746,27 @@ async def run_extraction_worker() -> None:
             report_md = data.get("report_md", "")
             team_id = data.get("team_id") or None
             is_document = data.get("is_document", "false").lower() == "true"
+            enable_client_lookup = data.get("enable_client_lookup", "false").lower() == "true"
+            chunk_index_raw = data.get("chunk_index")
+            total_chunks_raw = data.get("total_chunks")
+            is_chunked = chunk_index_raw is not None and total_chunks_raw is not None
             try:
-                await _process_message(
-                    session_id, report_md,
-                    team_id=team_id, is_document=is_document,
-                )
+                if is_chunked:
+                    await _process_chunk(
+                        session_id,
+                        int(chunk_index_raw),
+                        int(total_chunks_raw),
+                        report_md,
+                        team_id=team_id,
+                        is_document=is_document,
+                        enable_client_lookup=enable_client_lookup,
+                    )
+                else:
+                    await _process_message(
+                        session_id, report_md,
+                        team_id=team_id, is_document=is_document,
+                        enable_client_lookup=enable_client_lookup,
+                    )
                 # ACK only on success
                 await ack_message(msg_id)
             except Exception as exc:

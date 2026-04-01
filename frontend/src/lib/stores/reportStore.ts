@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import type { Comment } from '$lib/api/comments';
+import type { QueryResult } from '$lib/api/documents';
 
 export interface ChatSource {
 	url: string;
@@ -26,6 +27,7 @@ export interface ChatMessage {
 	sources?: ChatSource[];
 	clarification?: ClarificationData;
 	attachments?: { filename: string; type: string }[];
+	queryResult?: QueryResult;
 }
 
 export interface ChartPayload {

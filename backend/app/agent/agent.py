@@ -234,6 +234,14 @@ Fortune 500 CEO", "list all EU member states and their capitals"), follow these 
 
 ## Client Lookup Queries
 
+**Entity extraction vs. client lookup — these are separate, independent operations:**
+- **Entity extraction** (storing entities and relationships to the knowledge graph) happens
+  automatically whenever a document is uploaded to the KG or a research report is generated.
+  You do NOT need to trigger it — it runs in the background without user involvement.
+- **Client lookup** (resolving GWM client IDs) is opt-in and only runs when the user
+  explicitly asks to check whether people have a GWM client ID.  Do NOT call client lookup
+  tools unless the user specifically requests it.
+
 When the user asks you to check whether one or more people have a GWM client ID:
 
 ### Individual lookups (1-4 names):

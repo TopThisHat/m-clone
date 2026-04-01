@@ -95,6 +95,32 @@ export interface KGUploadResult {
 	message: string;
 }
 
+// ── Schema types ───────────────────────────────────────────────────────────────
+
+export interface SchemaColumn {
+	name: string;
+	inferred_type: string;
+	semantic_type: string;
+}
+
+export interface DocumentSchemaResult {
+	ready: boolean;
+	document_type?: string;
+	total_sheets?: number;
+	summary?: string;
+	columns?: SchemaColumn[];
+	suggestions?: string[];
+}
+
+export async function getDocumentSchema(sessionKey: string): Promise<DocumentSchemaResult> {
+	const res = await fetch(
+		`/api/documents/schema?session_key=${encodeURIComponent(sessionKey)}`,
+		{ credentials: 'include' }
+	);
+	if (!res.ok) return { ready: false };
+	return res.json();
+}
+
 export const SUPPORTED_EXTENSIONS = [
 	'.pdf',
 	'.docx',
@@ -193,10 +219,9 @@ export async function uploadToKG(file: File, teamId?: string): Promise<KGUploadR
 	const form = new FormData();
 	form.append('file', file);
 
-	let url = '/api/documents/upload-to-kg';
-	if (teamId) {
-		url += `?team_id=${encodeURIComponent(teamId)}`;
-	}
+	const params = new URLSearchParams({ mode: 'kg' });
+	if (teamId) params.set('team_id', teamId);
+	const url = `/api/documents/upload?${params.toString()}`;
 
 	const res = await fetch(url, {
 		method: 'POST',

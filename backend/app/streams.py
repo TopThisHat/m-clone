@@ -126,8 +126,22 @@ async def publish_for_extraction(
     *,
     team_id: str | None = None,
     is_document: bool = False,
+    enable_client_lookup: bool = False,
 ) -> None:
-    """Publish a report to the entity_extraction Redis stream."""
+    """Publish a report to the entity_extraction Redis stream.
+
+    Args:
+        session_id: Unique identifier for this extraction task.
+        report_md: Text content to extract entities from.
+        team_id: Optional team scope for extracted entities.
+        is_document: True when text came from an uploaded file (enables
+            document-aware extraction prompt and batched page processing).
+        enable_client_lookup: When True, the worker will also run a GWM
+            client ID lookup for every extracted person entity.  Defaults
+            to False so automatic KG enrichment (e.g. from research reports
+            or document uploads) does not trigger expensive client lookups
+            unless the user explicitly requests matching.
+    """
     if not report_md or not report_md.strip():
         return
     try:
@@ -140,6 +154,8 @@ async def publish_for_extraction(
             fields["team_id"] = team_id
         if is_document:
             fields["is_document"] = "true"
+        if enable_client_lookup:
+            fields["enable_client_lookup"] = "true"
         await r.xadd(STREAM_ENTITY_EXTRACTION, fields, maxlen=1000, approximate=True)
         logger.debug("Published extraction task for session_id=%s", session_id)
     except RedisError as exc:
@@ -168,3 +184,85 @@ async def consume_extraction_next() -> tuple[str, dict] | None:
 async def ack_extraction(msg_id: str) -> None:
     """Acknowledge an entity_extraction message."""
     await ack_job(STREAM_ENTITY_EXTRACTION, GROUP_EXTRACTORS, msg_id)
+
+
+# ---------------------------------------------------------------------------
+# Chunked extraction fan-out
+# ---------------------------------------------------------------------------
+
+CHUNK_PROGRESS_TTL = 3600  # 1 hour — TTL for Redis progress hash
+
+
+def _split_text_into_chunks(text: str, chunk_size: int) -> list[str]:
+    """Split *text* into non-overlapping chunks of at most *chunk_size* chars."""
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        chunks.append(text[start : start + chunk_size])
+        start += chunk_size
+    return chunks
+
+
+async def publish_for_extraction_chunked(
+    session_id: str,
+    text: str,
+    chunk_size: int = 4000,
+    *,
+    team_id: str | None = None,
+    is_document: bool = False,
+    enable_client_lookup: bool = False,
+) -> int:
+    """Split *text* into chunks and publish each as a separate extraction message.
+
+    Initialises a Redis hash at ``extraction_progress:{session_id}`` so workers
+    can track per-chunk completion and merge partial results once all chunks
+    finish.
+
+    Args:
+        session_id: Unique identifier for this extraction task.
+        text: Full text to chunk and extract from.
+        chunk_size: Maximum characters per chunk (default 4000).
+        team_id: Optional team scope for extracted entities.
+        is_document: Enable document-aware extraction prompt in the worker.
+        enable_client_lookup: Trigger GWM client ID lookup for person entities.
+
+    Returns:
+        Number of chunks published (0 if *text* is empty).
+    """
+    if not text or not text.strip():
+        return 0
+    chunks = _split_text_into_chunks(text.strip(), chunk_size)
+    if not chunks:
+        return 0
+    total_chunks = len(chunks)
+    try:
+        r = await get_redis()
+        progress_key = f"extraction_progress:{session_id}"
+        # Initialise progress hash — workers HINCRBY done_count as they finish.
+        await r.hset(progress_key, mapping={"total_chunks": str(total_chunks), "done_count": "0"})
+        await r.expire(progress_key, CHUNK_PROGRESS_TTL)
+        for idx, chunk in enumerate(chunks):
+            fields: dict[str, str] = {
+                "session_id": session_id,
+                "report_md": chunk,
+                "chunk_index": str(idx),
+                "total_chunks": str(total_chunks),
+                "parent_session_id": session_id,
+            }
+            if team_id:
+                fields["team_id"] = team_id
+            if is_document:
+                fields["is_document"] = "true"
+            if enable_client_lookup:
+                fields["enable_client_lookup"] = "true"
+            await r.xadd(STREAM_ENTITY_EXTRACTION, fields, maxlen=1000, approximate=True)
+        logger.info(
+            "Published %d chunks for session_id=%s (chunk_size=%d)",
+            total_chunks, session_id, chunk_size,
+        )
+    except RedisError as exc:
+        logger.warning(
+            "Failed to publish chunked extraction for session_id=%s: %s", session_id, exc,
+        )
+        return 0
+    return total_chunks

@@ -14,6 +14,7 @@ import {
 	docSessionKey
 } from '$lib/stores/reportStore';
 import type { ChartPayload, ChatSource, ClarificationData } from '$lib/stores/reportStore';
+import type { QueryResult } from '$lib/api/documents';
 import { activeSessionId, sessionList } from '$lib/stores/sessionStore';
 import { createSession, updateSession, listSessions } from '$lib/api/sessions';
 import type { ToolIconType } from '$lib/stores/traceStore';
@@ -378,6 +379,16 @@ function handleSSEEvent(
 					}
 					return msgs;
 				});
+			}
+			break;
+		}
+
+		case 'query_result': {
+			const qr = data as unknown as QueryResult;
+			if (qr && qr.matches != null) {
+				chatMessages.update((msgs) =>
+					msgs.map((m) => (m.id === asstMsgId ? { ...m, queryResult: qr } : m))
+				);
 			}
 			break;
 		}
