@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import ForceGraph from '$lib/components/ForceGraph.svelte';
+	import TeamBadge from '$lib/components/TeamBadge.svelte';
 	import { theme } from '$lib/stores/themeStore';
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
 	import { currentUser } from '$lib/stores/authStore';
+	import { listTeams, type Team } from '$lib/api/teams';
 	import {
 		kgApi,
 		type KGGraph,
@@ -33,8 +34,17 @@
 	let dealPartners = $state<DealPartnerGroup[]>([]);
 	let loading = $state(true);
 	let error = $state('');
-	let teamId = $state<string | null>(null);
+	let graphOpacity = $state(1);
+	let teams = $state<Team[]>([]);
 	let user = $state<{ sid: string; display_name: string; email: string; is_super_admin?: boolean } | null>(null);
+
+	// Derive team ID and display name from the store
+	let teamId = $derived($scoutTeam);
+	let currentTeamName = $derived(
+		teamId
+			? (teams.find((t) => t.id === teamId)?.display_name ?? null)
+			: null
+	);
 
 	// --------------- Filters ---------------
 	let searchQuery = $state('');
@@ -527,39 +537,55 @@
 	}
 
 	// --------------- Lifecycle ---------------
-	onMount(() => {
-		const unsubTeam = scoutTeam.subscribe((v) => {
-			teamId = v;
-		});
-		const unsubUser = currentUser.subscribe((v) => {
+
+	// Sync user store
+	$effect(() => {
+		const unsub = currentUser.subscribe((v) => {
 			user = v;
 		});
-
-		// Kick off data fetch (fire-and-forget from onMount's perspective)
-		loadInitialData();
-
-		return () => {
-			unsubTeam();
-			unsubUser();
-		};
+		return unsub;
 	});
 
-	async function loadInitialData() {
-		const params: { team_id?: string; limit?: number } = { limit: NODE_BUDGET };
-		if (teamId) params.team_id = teamId;
+	// Load teams list once so we can resolve display names
+	$effect(() => {
+		listTeams().then((t) => {
+			teams = t;
+		});
+	});
 
-		const [graphResult, dealResult] = await Promise.allSettled([
+	// Reactive graph fetch — re-runs whenever teamId (scoutTeam) changes
+	let graphFetchController: AbortController | null = null;
+
+	$effect(() => {
+		// Read the reactive dependency so this effect re-runs on team change
+		const currentTeamId = teamId;
+
+		graphFetchController?.abort();
+		graphFetchController = new AbortController();
+
+		// Fade the graph out while loading
+		graphOpacity = 0.3;
+		loading = true;
+		error = '';
+
+		const params: { team_id?: string; limit?: number } = { limit: NODE_BUDGET };
+		if (currentTeamId) params.team_id = currentTeamId;
+
+		Promise.allSettled([
 			kgApi.getGraph(params),
 			kgApi.getDealPartners(),
-		]);
-		if (graphResult.status === 'fulfilled') {
-			graphData = graphResult.value;
-			loadedNodeIds = new Set(graphData.nodes.map(n => n.id));
-		}
-		else error = 'Failed to load graph';
-		if (dealResult.status === 'fulfilled') dealPartners = dealResult.value;
-		loading = false;
-	}
+		]).then(([graphResult, dealResult]) => {
+			if (graphResult.status === 'fulfilled') {
+				graphData = graphResult.value;
+				loadedNodeIds = new Set(graphData.nodes.map(n => n.id));
+			} else {
+				error = 'Failed to load graph';
+			}
+			if (dealResult.status === 'fulfilled') dealPartners = dealResult.value;
+			loading = false;
+			graphOpacity = 1;
+		});
+	});
 </script>
 
 <svelte:head>
@@ -586,13 +612,12 @@
 			&larr; Back
 		</a>
 
-		<!-- Team scope indicator -->
-		<span
-			class="text-[10px] px-2 py-0.5 rounded border {teamId
-				? 'border-gold/40 text-gold bg-gold/10'
-				: 'border-slate-600 text-slate-400 bg-navy-800'}"
-		>
-			{teamId ? 'Team Graph' : 'All Graphs'}
+		<!-- Team badge -->
+		<span data-testid="explorer-team-badge-wrapper">
+			<TeamBadge
+				teamName={currentTeamName ? `${currentTeamName} Graph` : null}
+				size="sm"
+			/>
 		</span>
 
 		<!-- Search -->
@@ -750,10 +775,19 @@
 	<!-- Main content -->
 	<div class="flex flex-1 min-h-0">
 		<!-- Graph area -->
-		<div class="flex-1 relative bg-navy-950">
+		<div
+			class="flex-1 relative bg-navy-950 transition-opacity duration-200"
+			style="opacity: {graphOpacity};"
+			data-testid="graph-area"
+		>
 			{#if loading}
 				<div class="absolute inset-0 flex items-center justify-center">
-					<p class="text-slate-500">Loading graph...</p>
+					<div class="flex items-center gap-2 text-slate-500">
+						<svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+						</svg>
+						<span>Loading graph...</span>
+					</div>
 				</div>
 			{:else if error}
 				<div class="absolute inset-0 flex items-center justify-center">

@@ -513,7 +513,7 @@ class TestEntityFlags:
         flag = await db_flag_entity_for_review(eid, team_id, "sourced_from_master")
         assert flag is not None
 
-        resolved = await db_resolve_entity_flag(flag["id"], resolved_by=user_sid)
+        resolved = await db_resolve_entity_flag(flag["id"], resolved_by=user_sid, team_id=team_id)
         assert resolved is True
 
         # Flag should no longer appear in unresolved list

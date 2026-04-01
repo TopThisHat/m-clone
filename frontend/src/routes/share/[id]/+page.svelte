@@ -7,6 +7,7 @@
 	import CommentThread from '$lib/components/CommentThread.svelte';
 	import PresenceAvatars from '$lib/components/PresenceAvatars.svelte';
 	import ReportDiff from '$lib/components/ReportDiff.svelte';
+	import TeamShareTags from '$lib/components/TeamShareTags.svelte';
 	import type { TraceStep } from '$lib/stores/traceStore';
 	import type { ChartPayload } from '$lib/stores/reportStore';
 	import type { Comment } from '$lib/api/comments';
@@ -484,12 +485,7 @@
 							Public
 						</span>
 					{:else}
-						<span class="ml-auto flex items-center gap-1 text-[10px] text-slate-500 border border-navy-700 rounded-full px-2 py-0.5">
-							<svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-							</svg>
-							Team only
-						</span>
+						<TeamShareTags teamNames={session.shared_team_names ?? []} />
 					{/if}
 				</div>
 				<h1 class="font-serif text-xl sm:text-2xl text-gold leading-snug">{session.title}</h1>

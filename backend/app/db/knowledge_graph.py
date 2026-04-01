@@ -73,7 +73,7 @@ async def db_find_or_create_entity(
         # Phase 2: alias match within team
         row = await conn.fetchrow(
             "SELECT id, disambiguation_context FROM playbook.kg_entities "
-            "WHERE $1 = ANY(aliases) AND team_id = $2::uuid",
+            "WHERE $1 = ANY(SELECT LOWER(a) FROM unnest(aliases) a) AND team_id = $2::uuid",
             normalized, team_id,
         )
         if row:
@@ -235,16 +235,22 @@ async def db_list_entity_flags(team_id: str) -> list[dict[str, Any]]:
     return result
 
 
-async def db_resolve_entity_flag(flag_id: str, resolved_by: str) -> bool:
-    """Mark a flag as resolved.  Returns True if the flag was found and updated."""
+async def db_resolve_entity_flag(
+    flag_id: str, resolved_by: str, team_id: str,
+) -> bool:
+    """Mark a flag as resolved.  Returns True if the flag was found and updated.
+
+    The *team_id* guard ensures a user can only resolve flags belonging to
+    their own team, preventing cross-team flag resolution.
+    """
     async with _acquire() as conn:
         result = await conn.execute(
             """
             UPDATE playbook.kg_entity_flags
             SET resolved = TRUE, resolved_by = $2, resolved_at = NOW()
-            WHERE id = $1::uuid
+            WHERE id = $1::uuid AND team_id = $3::uuid
             """,
-            flag_id, resolved_by,
+            flag_id, resolved_by, team_id,
         )
     return result.endswith("1")
 
@@ -380,7 +386,7 @@ async def db_upsert_relationship(
     confidence: float,
     evidence: str | None,
     source_session_id: str | None,
-    team_id: str | None = None,
+    team_id: str,
 ) -> dict[str, Any]:
     """Insert a new relationship or detect a conflict with an existing active one.
 
@@ -479,7 +485,8 @@ async def db_upsert_relationship(
 async def db_list_kg_entities(
     search: str | None = None,
     entity_type: str | None = None,
-    team_id: str = "",
+    *,
+    team_id: str,
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -546,7 +553,8 @@ async def db_get_kg_entity(entity_id: str) -> dict[str, Any] | None:
 async def db_get_entity_relationships(
     entity_id: str,
     direction: str = "both",
-    team_id: str = "",
+    *,
+    team_id: str,
 ) -> list[dict[str, Any]]:
     """Get relationships for an entity, scoped to a single team."""
     conditions = []
@@ -641,7 +649,8 @@ async def db_get_kg_stats(team_id: str) -> dict[str, Any]:
 async def db_list_kg_conflicts(
     limit: int = 50,
     offset: int = 0,
-    team_id: str = "",
+    *,
+    team_id: str,
 ) -> list[dict[str, Any]]:
     """List relationship conflicts for a team.
 
@@ -676,7 +685,8 @@ async def db_list_kg_conflicts(
 async def db_get_kg_graph(
     entity_types: list[str] | None = None,
     predicate_families: list[str] | None = None,
-    team_id: str = "",
+    *,
+    team_id: str,
     search: str | None = None,
     metadata_key: str | None = None,
     metadata_value: str | None = None,
@@ -712,16 +722,21 @@ async def db_get_kg_graph(
         args.append(search_like)
     if metadata_key and metadata_value:
         idx += 1
-        meta_k = metadata_key
+        key_param = f"${idx}"
         idx += 1
+        val_param = f"${idx}"
         conditions.append(
-            f"(s.metadata->>'{meta_k}' ILIKE ${idx} OR o.metadata->>'{meta_k}' ILIKE ${idx})"
+            f"(s.metadata->>{key_param} ILIKE {val_param} OR o.metadata->>{key_param} ILIKE {val_param})"
         )
+        args.append(metadata_key)
         args.append(f"%{metadata_value}%")
     elif metadata_key:
+        idx += 1
+        key_param = f"${idx}"
         conditions.append(
-            f"(s.metadata ? '{metadata_key}' OR o.metadata ? '{metadata_key}')"
+            f"(s.metadata ?? {key_param} OR o.metadata ?? {key_param})"
         )
+        args.append(metadata_key)
     where = " AND ".join(conditions)
     idx += 1
     args.append(limit)
@@ -919,7 +934,7 @@ async def db_get_neighbors(
     depth: int = 1,
     limit: int = 50,
     exclude_ids: list[str] | None = None,
-    team_id: str = "",
+    team_id: str,
 ) -> dict[str, Any]:
     """Return neighboring nodes and edges for progressive graph expansion.
 
@@ -1025,51 +1040,58 @@ async def db_promote_entity_to_master(entity_id: str, team_id: str) -> str | Non
     """
     master_team_id = settings.kg_master_team_id
     async with _acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT * FROM playbook.kg_entities WHERE id = $1::uuid AND team_id = $2::uuid",
-            entity_id, team_id,
-        )
-        if row is None:
-            return None
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT * FROM playbook.kg_entities WHERE id = $1::uuid AND team_id = $2::uuid",
+                entity_id, team_id,
+            )
+            if row is None:
+                return None
 
-        master_row = await conn.fetchrow(
-            """
-            INSERT INTO playbook.kg_entities
-                (name, entity_type, aliases, team_id, description,
-                 disambiguation_context, metadata)
-            VALUES ($1, $2, $3, $4::uuid, $5, $6, $7::jsonb)
-            ON CONFLICT (LOWER(name), team_id) DO UPDATE SET
-                aliases = (SELECT array_agg(DISTINCT a)
-                           FROM unnest(playbook.kg_entities.aliases || EXCLUDED.aliases) AS a),
-                description = COALESCE(NULLIF(EXCLUDED.description, ''), playbook.kg_entities.description),
-                metadata = playbook.kg_entities.metadata || EXCLUDED.metadata,
-                updated_at = NOW()
-            RETURNING id
-            """,
-            row["name"],
-            row["entity_type"],
-            list(row["aliases"]) if row["aliases"] else [],
-            master_team_id,
-            row["description"] or "",
-            row["disambiguation_context"] or "",
-            row["metadata"] if row["metadata"] else {},
-        )
-        master_id = str(master_row["id"])
+            master_row = await conn.fetchrow(
+                """
+                INSERT INTO playbook.kg_entities
+                    (name, entity_type, aliases, team_id, description,
+                     disambiguation_context, metadata)
+                VALUES ($1, $2, $3, $4::uuid, $5, $6, $7::jsonb)
+                ON CONFLICT (LOWER(name), team_id) DO UPDATE SET
+                    aliases = (SELECT array_agg(DISTINCT a)
+                               FROM unnest(playbook.kg_entities.aliases || EXCLUDED.aliases) AS a),
+                    description = COALESCE(NULLIF(EXCLUDED.description, ''), playbook.kg_entities.description),
+                    metadata = playbook.kg_entities.metadata || EXCLUDED.metadata,
+                    updated_at = NOW()
+                RETURNING id
+                """,
+                row["name"],
+                row["entity_type"],
+                list(row["aliases"]) if row["aliases"] else [],
+                master_team_id,
+                row["description"] or "",
+                row["disambiguation_context"] or "",
+                row["metadata"] if row["metadata"] else {},
+            )
+            master_id = str(master_row["id"])
 
-        await conn.execute(
-            "UPDATE playbook.kg_entities SET master_entity_id = $1::uuid, updated_at = NOW() "
-            "WHERE id = $2::uuid",
-            master_id, entity_id,
-        )
-        return master_id
+            await conn.execute(
+                "UPDATE playbook.kg_entities SET master_entity_id = $1::uuid, updated_at = NOW() "
+                "WHERE id = $2::uuid",
+                master_id, entity_id,
+            )
+            return master_id
 
 
-async def db_sync_entity_from_master(entity_id: str, team_id: str) -> dict[str, Any] | None:
+async def db_sync_entity_from_master(
+    entity_id: str, team_id: str,
+) -> dict[str, Any] | None:
     """Sync a team entity from its master entity.
 
     Copies name, entity_type, aliases, description from the master entity
     to the team entity.  Returns the updated team entity dict, or ``None``
     if the entity has no ``master_entity_id``.
+
+    Raises:
+        KeyError: with message ``"entity_not_found"`` when the entity does
+            not exist in the given team.
     """
     async with _acquire() as conn:
         row = await conn.fetchrow(
@@ -1077,7 +1099,9 @@ async def db_sync_entity_from_master(entity_id: str, team_id: str) -> dict[str, 
             "WHERE id = $1::uuid AND team_id = $2::uuid",
             entity_id, team_id,
         )
-        if row is None or row["master_entity_id"] is None:
+        if row is None:
+            raise KeyError("entity_not_found")
+        if row["master_entity_id"] is None:
             return None
 
         master_row = await conn.fetchrow(
@@ -1149,6 +1173,13 @@ async def db_merge_kg_entities(
                 "UPDATE playbook.kg_relationships SET object_id = $1::uuid "
                 "WHERE object_id = $2::uuid AND team_id = $3::uuid",
                 winner_id, loser_id, team_id,
+            )
+
+            # Remove self-referential relationships created by the merge
+            await conn.execute(
+                "DELETE FROM playbook.kg_relationships "
+                "WHERE subject_id = $1::uuid AND object_id = $1::uuid",
+                winner_id,
             )
 
             # Append loser's name to winner's aliases

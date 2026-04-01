@@ -209,6 +209,22 @@ async def db_get_session_teams(session_id: str) -> list[str]:
     return [r["team_id"] for r in rows]
 
 
+async def db_get_session_team_names(session_id: str) -> list[str]:
+    """Return list of team display_names this session is shared to."""
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT t.display_name
+            FROM playbook.session_teams st
+            JOIN playbook.teams t ON t.id = st.team_id
+            WHERE st.session_id = $1::uuid
+            ORDER BY t.display_name
+            """,
+            session_id,
+        )
+    return [r["display_name"] for r in rows]
+
+
 async def db_get_session_mentionable_users(session_id: str) -> list[dict[str, Any]]:
     """Return all unique members across teams this session is shared with."""
     async with _acquire() as conn:

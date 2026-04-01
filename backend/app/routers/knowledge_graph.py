@@ -361,9 +361,13 @@ async def sync_entity_from_master(
     try:
         team_id = await _resolve_team_access(user, team_id)
         await _require_kg_edit(user, team_id)
+        # Check if entity exists first to distinguish 404 from 400
+        entity = await db_get_kg_entity(entity_id)
+        if entity is None:
+            raise HTTPException(status_code=404, detail="Entity not found")
         updated = await db_sync_entity_from_master(entity_id, team_id)
         if updated is None:
-            raise HTTPException(status_code=400, detail="Entity has no master link or was not found")
+            raise HTTPException(status_code=400, detail="Entity has no master link")
         return updated
     except DatabaseNotConfigured:
         raise _no_db()
@@ -397,18 +401,26 @@ async def merge_entities(
 
 # ── Entity flags ──────────────────────────────────────────────────────────────
 
+
+class FlagPatch(BaseModel):
+    resolved: bool
+
+
 @router.patch("/entities/flags/{flag_id}")
 async def resolve_flag(
     flag_id: str,
+    body: FlagPatch,
     team_id: str | None = Query(default=None),
     user: dict[str, Any] = Depends(get_current_user),
 ):
     """Resolve an entity flag.  Requires admin+ role."""
     try:
+        if not body.resolved:
+            raise HTTPException(status_code=422, detail="resolved must be true")
         team_id = await _resolve_team_access(user, team_id)
         await _require_kg_edit(user, team_id)
         sid = user["sub"]
-        ok = await db_resolve_entity_flag(flag_id, sid)
+        ok = await db_resolve_entity_flag(flag_id, sid, team_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Flag not found")
         return {"resolved": True}

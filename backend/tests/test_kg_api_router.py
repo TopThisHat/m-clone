@@ -207,6 +207,7 @@ class TestSyncFromMasterEndpoint:
         with (
             patch("app.routers.knowledge_graph._resolve_team_access", AsyncMock(return_value=team_id)),
             patch("app.routers.knowledge_graph._require_kg_edit", AsyncMock()),
+            patch("app.routers.knowledge_graph.db_get_kg_entity", AsyncMock(return_value={"id": entity_id})),
             patch("app.routers.knowledge_graph.db_sync_entity_from_master", AsyncMock(return_value=synced)),
         ):
             result = await sync_entity_from_master(entity_id=entity_id, team_id=team_id, user=_user())
@@ -221,6 +222,7 @@ class TestSyncFromMasterEndpoint:
         with (
             patch("app.routers.knowledge_graph._resolve_team_access", AsyncMock(return_value="t1")),
             patch("app.routers.knowledge_graph._require_kg_edit", AsyncMock()),
+            patch("app.routers.knowledge_graph.db_get_kg_entity", AsyncMock(return_value={"id": "x"})),
             patch("app.routers.knowledge_graph.db_sync_entity_from_master", AsyncMock(return_value=None)),
         ):
             with pytest.raises(HTTPException) as exc_info:
@@ -287,29 +289,31 @@ class TestResolveFlagEndpoint:
 
     @pytest.mark.asyncio
     async def test_resolve_flag_success(self):
-        from app.routers.knowledge_graph import resolve_flag
+        from app.routers.knowledge_graph import resolve_flag, FlagPatch
 
+        body = FlagPatch(resolved=True)
         with (
             patch("app.routers.knowledge_graph._resolve_team_access", AsyncMock(return_value="t1")),
             patch("app.routers.knowledge_graph._require_kg_edit", AsyncMock()),
             patch("app.routers.knowledge_graph.db_resolve_entity_flag", AsyncMock(return_value=True)),
         ):
-            result = await resolve_flag(flag_id="f1", team_id="t1", user=_user())
+            result = await resolve_flag(flag_id="f1", body=body, team_id="t1", user=_user())
 
         assert result == {"resolved": True}
 
     @pytest.mark.asyncio
     async def test_resolve_flag_not_found(self):
         from fastapi import HTTPException
-        from app.routers.knowledge_graph import resolve_flag
+        from app.routers.knowledge_graph import resolve_flag, FlagPatch
 
+        body = FlagPatch(resolved=True)
         with (
             patch("app.routers.knowledge_graph._resolve_team_access", AsyncMock(return_value="t1")),
             patch("app.routers.knowledge_graph._require_kg_edit", AsyncMock()),
             patch("app.routers.knowledge_graph.db_resolve_entity_flag", AsyncMock(return_value=False)),
         ):
             with pytest.raises(HTTPException) as exc_info:
-                await resolve_flag(flag_id="f-none", team_id="t1", user=_user())
+                await resolve_flag(flag_id="f-none", body=body, team_id="t1", user=_user())
             assert exc_info.value.status_code == 404
 
 
