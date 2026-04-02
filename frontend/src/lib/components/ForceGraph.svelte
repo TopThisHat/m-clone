@@ -137,9 +137,16 @@
 
 	// ── Graph initialisation ───────────────────────────────────────────────
 	function buildGraph(): void {
-		teardown();
+		// Stop FA2 and convergence watch, but keep renderer + graph alive
+		stopConvergenceWatch();
+		if (fa2) { fa2.kill(); fa2 = null; }
 
-		graph = new Graph<NodeAttrs, EdgeAttrs>({ multi: false, type: 'directed' });
+		// Reuse existing graph or create new one (avoids WebGL context churn)
+		if (!graph) {
+			graph = new Graph<NodeAttrs, EdgeAttrs>({ multi: false, type: 'directed' });
+		} else {
+			graph.clear();
+		}
 
 		const total = nodes.length;
 		nodes.forEach((n, i) => {
@@ -179,26 +186,45 @@
 			graph!.setNodeAttribute(nodeId, 'size', size);
 		});
 
-		mountRenderer();
+		// Reuse existing Sigma renderer if possible (preserves WebGL context)
+		if (renderer) {
+			renderer.refresh();
+			startLayout();
+			updateMinimap();
+			onGraphReady({ mergeNodes, fitToView, resetLayout, zoomIn, zoomOut, focusNode: focusOnNode });
+		} else {
+			mountRenderer();
+		}
 	}
 
 	function mountRenderer(): void {
 		if (!graph || !containerEl) return;
 
-		renderer = new Sigma<NodeAttrs, EdgeAttrs>(graph, containerEl, {
-			renderLabels: true,
-			renderEdgeLabels: false,
-			enableEdgeEvents: true,
-			labelColor: { color: themeColors.labelColor },
-			defaultEdgeColor: themeColors.edge,
-			labelRenderedSizeThreshold: 8,
-			defaultNodeColor: '#64748B',
-			defaultEdgeType: 'arrow',
-			zIndex: true,
-			// Reducers drive highlighting / dimming (Issue 5, 6)
-			nodeReducer: nodeReducerFn,
-			edgeReducer: edgeReducerFn,
-		});
+		// Kill any stale renderer first to free its WebGL context
+		if (renderer) { renderer.kill(); renderer = null; }
+
+		try {
+			renderer = new Sigma<NodeAttrs, EdgeAttrs>(graph, containerEl, {
+				renderLabels: true,
+				renderEdgeLabels: false,
+				enableEdgeEvents: true,
+				labelColor: { color: themeColors.labelColor },
+				defaultEdgeColor: themeColors.edge,
+				labelRenderedSizeThreshold: 8,
+				defaultNodeColor: '#64748B',
+				defaultEdgeType: 'arrow',
+				zIndex: true,
+				// Reducers drive highlighting / dimming (Issue 5, 6)
+				nodeReducer: nodeReducerFn,
+				edgeReducer: edgeReducerFn,
+			});
+		} catch (err) {
+			// WebGL context creation failed — wait for browser to reclaim contexts and retry once
+			console.warn('Sigma WebGL context creation failed, retrying...', err);
+			renderer = null;
+			setTimeout(() => mountRenderer(), 500);
+			return;
+		}
 
 		// ── Camera controls (Issue 4) ──────────────────────────────────────
 		setupCameraLOD();
@@ -603,26 +629,33 @@
 			return;
 		}
 
-		minimapRenderer = new Sigma<NodeAttrs, EdgeAttrs>(graph, minimapEl, {
-			renderLabels: false,
-			renderEdgeLabels: false,
-			enableEdgeEvents: false,
-			defaultNodeColor: '#64748B',
-			defaultEdgeColor: '#334155',
-			labelRenderedSizeThreshold: Infinity,
-			// Small fixed node sizes for overview
-			nodeReducer: (_id: string, data: NodeAttrs) => ({
-				...data,
-				size: 3,
-				color: getNodeColor(data.entityType),
-				label: '',
-			}),
-			edgeReducer: (_id: string, data: EdgeAttrs) => ({
-				...data,
-				size: 1,
-				color: '#334155',
-			}),
-		});
+		try {
+			minimapRenderer = new Sigma<NodeAttrs, EdgeAttrs>(graph, minimapEl, {
+				renderLabels: false,
+				renderEdgeLabels: false,
+				enableEdgeEvents: false,
+				defaultNodeColor: '#64748B',
+				defaultEdgeColor: '#334155',
+				labelRenderedSizeThreshold: Infinity,
+				// Small fixed node sizes for overview
+				nodeReducer: (_id: string, data: NodeAttrs) => ({
+					...data,
+					size: 3,
+					color: getNodeColor(data.entityType),
+					label: '',
+				}),
+				edgeReducer: (_id: string, data: EdgeAttrs) => ({
+					...data,
+					size: 1,
+					color: '#334155',
+				}),
+			});
+		} catch {
+			// WebGL context exhausted — skip minimap silently
+			minimapRenderer = null;
+			minimapVisible = false;
+			return;
+		}
 
 		// Disable all interaction on minimap
 		minimapRenderer.getCamera().disable();
@@ -654,13 +687,13 @@
 		ctx.strokeRect(4, 4, minimapCanvas.width - 8, minimapCanvas.height - 8);
 	}
 
-	// ── Teardown ───────────────────────────────────────────────────────────
+	// ── Teardown (only called on component destroy, not during rebuilds) ──
 	function teardown(): void {
 		stopConvergenceWatch();
 		if (fa2) { fa2.kill(); fa2 = null; }
 		if (minimapRenderer) { minimapRenderer.kill(); minimapRenderer = null; }
 		if (renderer) { renderer.kill(); renderer = null; }
-		if (graph) { graph = null; }
+		if (graph) { graph.clear(); graph = null; }
 		draggedNode = null;
 		isDragging = false;
 	}
