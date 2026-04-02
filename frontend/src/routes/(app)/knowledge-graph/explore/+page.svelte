@@ -2,6 +2,9 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import ForceGraph from '$lib/components/ForceGraph.svelte';
 	import TeamBadge from '$lib/components/TeamBadge.svelte';
+	import ZoomRail from '$lib/components/ZoomRail.svelte';
+	import FilterStrip from '$lib/components/FilterStrip.svelte';
+	import KGEntityPanel from '$lib/components/KGEntityPanel.svelte';
 	import { theme } from '$lib/stores/themeStore';
 	import { scoutTeam } from '$lib/stores/scoutTeamStore';
 	import { currentUser } from '$lib/stores/authStore';
@@ -18,9 +21,6 @@
 	import UploadWizard from '$lib/components/UploadWizard.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import KGChat from '$lib/components/KGChat.svelte';
-
-	const ENTITY_TYPES = ['person', 'company', 'sports_team', 'location', 'product', 'other'];
-	const PREDICATE_FAMILIES = ['ownership', 'employment', 'transaction', 'location', 'partnership'];
 
 	const NODE_COLORS: Record<string, string> = {
 		person: '#1B365D',
@@ -40,22 +40,15 @@
 	let teams = $state<Team[]>([]);
 	let user = $state<{ sid: string; display_name: string; email: string; is_super_admin?: boolean } | null>(null);
 
-	// Derive team ID and display name from the store
 	let teamId = $derived($scoutTeam);
 	let currentTeamName = $derived(
-		teamId
-			? (teams.find((t) => t.id === teamId)?.display_name ?? null)
-			: null
+		teamId ? (teams.find((t) => t.id === teamId)?.display_name ?? null) : null
 	);
 
 	// --------------- Filters ---------------
-	let searchQuery = $state('');
 	let selectedTypes = new SvelteSet<string>();
 	let selectedFamilies = new SvelteSet<string>();
 	let dealModeActive = $state(false);
-
-	// Advanced filters
-	let advancedOpen = $state(false);
 	let metadataKey = $state('');
 	let metadataValue = $state('');
 
@@ -93,23 +86,25 @@
 	const NODE_BUDGET = 150;
 	const WARN_THRESHOLD = 300;
 	const BLOCK_THRESHOLD = 500;
-	let totalServerNodes = $state(0);
 	let loadedNodeIds = $state<Set<string>>(new Set());
 	let toastMessage = $state('');
 	let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// --------------- Graph API ref (from ForceGraph) ---------------
-	let graphApi = $state<{ mergeNodes: (n: KGGraphNode[], e: KGGraphEdge[]) => void; fitToView: () => void; resetLayout: () => void } | null>(null);
+	let graphApi = $state<{
+		mergeNodes: (n: KGGraphNode[], e: KGGraphEdge[]) => void;
+		fitToView: () => void;
+		resetLayout: () => void;
+		zoomIn: () => void;
+		zoomOut: () => void;
+		focusNode: (nodeId: string) => void;
+	} | null>(null);
 
 	// --------------- Context menu state ---------------
 	let contextMenu = $state<{ nodeId: string; x: number; y: number } | null>(null);
-	let pinnedNodes = $state<Set<string>>(new Set());
 
 	// --------------- Edge tooltip state ---------------
 	let edgeTooltip = $state<{ edgeId: string; x: number; y: number } | null>(null);
-
-	// --------------- Minimap state ---------------
-	let minimapVisible = $state(true);
 
 	// --------------- Command palette state ---------------
 	let commandPaletteOpen = $state(false);
@@ -119,6 +114,9 @@
 	let chatHighlightedNodeIds = $state<Set<string> | null>(null);
 	let chatHighlightedEdgeIds = $state<Set<string> | null>(null);
 
+	// --------------- Keyboard shortcut cheat sheet ---------------
+	let shortcutSheetOpen = $state(false);
+
 	// --------------- Derived ---------------
 	let isAdmin = $derived(user?.is_super_admin === true);
 	let nodeCount = $derived(graphData.nodes.length);
@@ -126,7 +124,6 @@
 	let expansionBlocked = $derived(nodeCount >= BLOCK_THRESHOLD);
 
 	let highlightedNodeIds = $derived.by(() => {
-		// Chat highlights take priority when active
 		if (chatHighlightedNodeIds && chatHighlightedNodeIds.size > 0) return chatHighlightedNodeIds;
 		if (!dealModeActive || dealPartners.length === 0) return null;
 		const ids = new Set<string>();
@@ -141,7 +138,6 @@
 	});
 
 	let highlightedEdgeIds = $derived.by(() => {
-		// Chat path highlights take priority
 		if (chatHighlightedEdgeIds && chatHighlightedEdgeIds.size > 0) return chatHighlightedEdgeIds;
 		if (!dealModeActive || dealPartners.length === 0) return null;
 		const dealEntityIds = new Set<string>();
@@ -171,6 +167,18 @@
 		selectedNodeId ? graphData.nodes.find((n) => n.id === selectedNodeId) ?? null : null
 	);
 
+	let selectedEdge = $derived(
+		edgeTooltip ? graphData.edges.find((e) => e.id === edgeTooltip!.edgeId) ?? null : null
+	);
+
+	let selectedEdgeSourceName = $derived(
+		selectedEdge ? (graphData.nodes.find((n) => n.id === selectedEdge!.source)?.name ?? 'Unknown') : ''
+	);
+
+	let selectedEdgeTargetName = $derived(
+		selectedEdge ? (graphData.nodes.find((n) => n.id === selectedEdge!.target)?.name ?? 'Unknown') : ''
+	);
+
 	// --------------- Data fetching ---------------
 	async function fetchGraph() {
 		loading = true;
@@ -180,7 +188,6 @@
 				entity_types?: string[];
 				predicate_families?: string[];
 				team_id?: string;
-				search?: string;
 				metadata_key?: string;
 				metadata_value?: string;
 				limit?: number;
@@ -188,12 +195,10 @@
 			if (selectedTypes.size > 0) params.entity_types = [...selectedTypes];
 			if (selectedFamilies.size > 0) params.predicate_families = [...selectedFamilies];
 			if (teamId) params.team_id = teamId;
-			if (searchQuery.trim()) params.search = searchQuery.trim();
 			if (metadataKey.trim()) params.metadata_key = metadataKey.trim();
 			if (metadataValue.trim()) params.metadata_value = metadataValue.trim();
 			graphData = await kgApi.getGraph(params);
-			// Track loaded node IDs for expansion dedup
-			loadedNodeIds = new Set(graphData.nodes.map(n => n.id));
+			loadedNodeIds = new Set(graphData.nodes.map((n) => n.id));
 		} catch (err: unknown) {
 			error = err instanceof Error ? err.message : 'Failed to load graph';
 		} finally {
@@ -213,17 +218,18 @@
 		fetchGraph();
 	}
 
-	function handleSearch() {
-		fetchGraph();
-	}
-
-	function applyAdvancedFilters() {
-		fetchGraph();
-	}
-
-	function clearAdvancedFilters() {
+	function clearAllFilters() {
+		selectedTypes.clear();
+		selectedFamilies.clear();
+		dealModeActive = false;
 		metadataKey = '';
 		metadataValue = '';
+		fetchGraph();
+	}
+
+	function handleMetadataChange(key: string, value: string) {
+		metadataKey = key;
+		metadataValue = value;
 		fetchGraph();
 	}
 
@@ -244,7 +250,7 @@
 		toastTimeout = setTimeout(() => { toastMessage = ''; }, 3000);
 	}
 
-	// Double-click expansion with exclude_ids
+	// Double-click expansion
 	async function handleNodeDblClick(nodeId: string) {
 		if (expansionBlocked) {
 			showToast(`Cannot expand: ${nodeCount} nodes loaded (limit: ${BLOCK_THRESHOLD})`);
@@ -258,15 +264,14 @@
 				exclude_ids: exclude,
 				team_id: teamId ?? undefined,
 			});
-			const newNodes = neighbors.nodes.filter(n => !loadedNodeIds.has(n.id));
-			const newEdges = neighbors.edges.filter(e =>
-				!graphData.edges.some(ex => ex.id === e.id)
+			const newNodes = neighbors.nodes.filter((n) => !loadedNodeIds.has(n.id));
+			const newEdges = neighbors.edges.filter(
+				(e) => !graphData.edges.some((ex) => ex.id === e.id)
 			);
 			if (newNodes.length === 0) {
 				showToast('No new neighbors found');
 				return;
 			}
-			// Merge into graph data
 			graphData = {
 				nodes: [...graphData.nodes, ...newNodes],
 				edges: [...graphData.edges, ...newEdges],
@@ -298,8 +303,8 @@
 		if (!contextMenu) return;
 		const nodeId = contextMenu.nodeId;
 		graphData = {
-			nodes: graphData.nodes.filter(n => n.id !== nodeId),
-			edges: graphData.edges.filter(e => e.source !== nodeId && e.target !== nodeId),
+			nodes: graphData.nodes.filter((n) => n.id !== nodeId),
+			edges: graphData.edges.filter((e) => e.source !== nodeId && e.target !== nodeId),
 		};
 		loadedNodeIds.delete(nodeId);
 		loadedNodeIds = new Set(loadedNodeIds);
@@ -307,22 +312,6 @@
 			selectedNodeId = null;
 			selectedNodeRels = [];
 		}
-		closeContextMenu();
-	}
-
-	function contextTogglePin() {
-		if (!contextMenu) return;
-		const nodeId = contextMenu.nodeId;
-		const next = new Set(pinnedNodes);
-		if (next.has(nodeId)) next.delete(nodeId);
-		else next.add(nodeId);
-		pinnedNodes = next;
-		closeContextMenu();
-	}
-
-	function contextViewEntityPage() {
-		if (!contextMenu) return;
-		handleNodeClick(contextMenu.nodeId);
 		closeContextMenu();
 	}
 
@@ -336,20 +325,15 @@
 		edgeTooltip = null;
 	}
 
-	let selectedEdge = $derived(
-		edgeTooltip ? graphData.edges.find(e => e.id === edgeTooltip!.edgeId) ?? null : null
-	);
-
-	let selectedEdgeSourceName = $derived(
-		selectedEdge ? (graphData.nodes.find(n => n.id === selectedEdge!.source)?.name ?? 'Unknown') : ''
-	);
-
-	let selectedEdgeTargetName = $derived(
-		selectedEdge ? (graphData.nodes.find(n => n.id === selectedEdge!.target)?.name ?? 'Unknown') : ''
-	);
-
 	// Graph API callback
-	function handleGraphReady(api: { mergeNodes: (n: KGGraphNode[], e: KGGraphEdge[]) => void; fitToView: () => void; resetLayout: () => void }) {
+	function handleGraphReady(api: {
+		mergeNodes: (n: KGGraphNode[], e: KGGraphEdge[]) => void;
+		fitToView: () => void;
+		resetLayout: () => void;
+		zoomIn: () => void;
+		zoomOut: () => void;
+		focusNode: (nodeId: string) => void;
+	}) {
 		graphApi = api;
 	}
 
@@ -364,6 +348,12 @@
 			editingRelId = null;
 			loadNodeRels(nodeId);
 		}
+	}
+
+	function closeEntityPanel() {
+		selectedNodeId = null;
+		selectedNodeRels = [];
+		editingEntity = false;
 	}
 
 	// --------------- Entity editing ---------------
@@ -476,30 +466,6 @@
 	}
 
 	// --------------- Helpers ---------------
-	function typeColor(type: string): string {
-		const colors: Record<string, string> = {
-			person: 'bg-[#1B365D]',
-			company: 'bg-[#1A5276]',
-			sports_team: 'bg-[#8B6914]',
-			location: 'bg-[#1E6E3E]',
-			product: 'bg-[#5D6D7E]',
-			other: 'bg-[#7B8794]',
-		};
-		return colors[type.toLowerCase()] ?? 'bg-[#7B8794]';
-	}
-
-	function typeLabel(type: string): string {
-		const labels: Record<string, string> = {
-			person: 'Person',
-			company: 'Company',
-			sports_team: 'Sports Team',
-			location: 'Location',
-			product: 'Product',
-			other: 'Other',
-		};
-		return labels[type.toLowerCase()] ?? type;
-	}
-
 	function sourceBadgeClass(source: string): string {
 		return source === 'team'
 			? 'bg-gold/20 text-gold border-gold/30'
@@ -507,19 +473,39 @@
 	}
 
 	// --------------- Command palette handlers ---------------
-
 	function openCommandPalette() {
 		commandPaletteOpen = true;
 	}
 
-	function handlePaletteSelectEntity(entityId: string) {
-		// Focus the node in the graph
-		focusNodeId = entityId;
-		// Open entity detail panel
-		selectedNodeId = entityId;
-		editingEntity = false;
-		editingRelId = null;
-		loadNodeRels(entityId);
+	/** When the user picks an entity from the palette, fetch its neighborhood,
+	 *  replace the graph with only that entity + neighbors, and center on it. */
+	async function handlePaletteSelectEntity(entityId: string) {
+		try {
+			const neighbors = await kgApi.getNeighbors(entityId, {
+				depth: 1,
+				limit: NODE_BUDGET,
+				team_id: teamId ?? undefined,
+			});
+			// Replace graph with just this entity's neighborhood
+			graphData = { nodes: neighbors.nodes, edges: neighbors.edges };
+			loadedNodeIds = new Set(neighbors.nodes.map((n) => n.id));
+			// Select and focus
+			selectedNodeId = entityId;
+			editingEntity = false;
+			editingRelId = null;
+			loadNodeRels(entityId);
+			// Center camera on the entity after graph rebuilds
+			requestAnimationFrame(() => {
+				graphApi?.focusNode(entityId);
+			});
+		} catch {
+			// Fallback: just focus if entity is already in graph
+			focusNodeId = entityId;
+			selectedNodeId = entityId;
+			editingEntity = false;
+			editingRelId = null;
+			loadNodeRels(entityId);
+		}
 	}
 
 	function handlePaletteSelectFilter(kind: 'entity_type' | 'predicate_family', value: string) {
@@ -531,14 +517,12 @@
 	}
 
 	// --------------- KG Chat handlers ---------------
-
 	function handleChatFocusNode(entityId: string) {
 		focusNodeId = entityId;
 	}
 
 	function handleChatHighlight(entityIds: string[]) {
 		chatHighlightedNodeIds = new Set(entityIds);
-		// Focus on first entity if it's in the graph
 		const firstInGraph = entityIds.find((id) => graphData.nodes.some((n) => n.id === id));
 		if (firstInGraph) focusNodeId = firstInGraph;
 	}
@@ -548,7 +532,6 @@
 		_sourceId: string,
 		_targetId: string
 	) {
-		// Highlight all nodes and edges along the paths
 		const nodeIds = new Set<string>();
 		const edgeIds = new Set<string>();
 		for (const path of paths as Array<{ entities?: Array<{ id: string }>; relationships?: Array<{ id: string }> }>) {
@@ -559,9 +542,40 @@
 		chatHighlightedEdgeIds = edgeIds.size > 0 ? edgeIds : null;
 	}
 
-	// --------------- Lifecycle ---------------
+	// --------------- Keyboard shortcuts ---------------
+	function handleKeydown(e: KeyboardEvent) {
+		const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+		const isInputFocused = tag === 'input' || tag === 'textarea' || tag === 'select';
 
-	// Sync user store
+		if (e.key === 'Escape') {
+			if (shortcutSheetOpen) {
+				shortcutSheetOpen = false;
+			} else if (selectedNodeId) {
+				closeEntityPanel();
+			} else {
+				closeContextMenu();
+				closeEdgeTooltip();
+			}
+			return;
+		}
+
+		if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+			e.preventDefault();
+			openCommandPalette();
+			return;
+		}
+
+		if (e.key === '/' && !isInputFocused) {
+			e.preventDefault();
+			openCommandPalette();
+		}
+
+		if (e.key === '?' && !isInputFocused) {
+			shortcutSheetOpen = !shortcutSheetOpen;
+		}
+	}
+
+	// --------------- Lifecycle ---------------
 	$effect(() => {
 		const unsub = currentUser.subscribe((v) => {
 			user = v;
@@ -569,24 +583,20 @@
 		return unsub;
 	});
 
-	// Load teams list once so we can resolve display names
 	$effect(() => {
 		listTeams().then((t) => {
 			teams = t;
 		});
 	});
 
-	// Reactive graph fetch — re-runs whenever teamId (scoutTeam) changes
 	let graphFetchController: AbortController | null = null;
 
 	$effect(() => {
-		// Read the reactive dependency so this effect re-runs on team change
 		const currentTeamId = teamId;
 
 		graphFetchController?.abort();
 		graphFetchController = new AbortController();
 
-		// Fade the graph out while loading
 		graphOpacity = 0.3;
 		loading = true;
 		error = '';
@@ -600,7 +610,7 @@
 		]).then(([graphResult, dealResult]) => {
 			if (graphResult.status === 'fulfilled') {
 				graphData = graphResult.value;
-				loadedNodeIds = new Set(graphData.nodes.map(n => n.id));
+				loadedNodeIds = new Set(graphData.nodes.map((n) => n.id));
 			} else {
 				error = 'Failed to load graph';
 			}
@@ -615,37 +625,18 @@
 	<title>Graph Explorer — Knowledge Graph — Playbook Research</title>
 </svelte:head>
 
-<svelte:window onkeydown={(e) => {
-	if (e.key === 'Escape') {
-		closeContextMenu();
-		closeEdgeTooltip();
-	}
-	// Cmd+K (Mac) or Ctrl+K (Windows/Linux) opens command palette
-	if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-		e.preventDefault();
-		openCommandPalette();
-	}
-	// "/" opens palette when no input element is focused
-	if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
-		e.preventDefault();
-		openCommandPalette();
-	}
-}} onclick={() => {
-	closeContextMenu();
-	closeEdgeTooltip();
-}} />
+<svelte:window onkeydown={handleKeydown} onclick={() => { closeContextMenu(); closeEdgeTooltip(); }} />
 
 <div class="flex flex-col h-[calc(100vh-4rem)]">
-	<!-- Toolbar -->
-	<div class="flex flex-wrap items-center gap-3 px-4 py-3 bg-navy-900 border-b border-navy-700">
+	<!-- Top bar -->
+	<div class="flex items-center gap-3 px-4 py-3 bg-navy-900 border-b border-navy-700 shrink-0">
 		<a
 			href="/knowledge-graph"
-			class="text-xs text-slate-500 hover:text-gold transition-colors"
+			class="text-xs text-slate-500 hover:text-gold transition-colors shrink-0"
 		>
 			&larr; Back
 		</a>
 
-		<!-- Team badge -->
 		<span data-testid="explorer-team-badge-wrapper">
 			<TeamBadge
 				teamName={currentTeamName ? `${currentTeamName} Graph` : null}
@@ -653,83 +644,32 @@
 			/>
 		</span>
 
-		<!-- Search pill — opens command palette -->
+		<!-- Search pill -->
 		<button
 			onclick={openCommandPalette}
-			class="flex items-center gap-2 bg-navy-800 border border-navy-600 rounded px-3 py-1 text-xs text-slate-400 hover:text-slate-200 hover:border-gold transition-colors"
-			title="Search (Cmd+K)"
+			class="flex items-center gap-2 bg-navy-800 border border-navy-600 rounded-full px-3 py-1.5 text-xs text-slate-500 hover:border-navy-500 hover:text-slate-400 transition-colors"
+			aria-label="Search (Cmd+K)"
+			data-testid="search-pill"
 		>
-			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
 			</svg>
-			Search Knowledge Graph...
-			<kbd class="hidden sm:block bg-navy-700 border border-navy-600 rounded px-1 py-0.5 text-[10px] text-slate-500">⌘K</kbd>
+			<span>Search</span>
+			<kbd class="text-[10px] px-1 py-0.5 rounded bg-navy-700 border border-navy-600 text-slate-600 font-mono">⌘K</kbd>
 		</button>
 
-		<!-- Graph text search -->
-		<div class="flex items-center gap-1">
-			<input
-				bind:value={searchQuery}
-				onkeydown={(e) => e.key === 'Enter' && handleSearch()}
-				placeholder="Filter graph..."
-				class="bg-navy-800 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold w-40"
-			/>
-			<button
-				onclick={handleSearch}
-				class="text-xs bg-navy-700 border border-navy-600 text-slate-300 px-2 py-1 rounded hover:bg-navy-600 transition-colors"
-			>
-				Find
-			</button>
-		</div>
-
-		<!-- Type filters -->
-		<div class="flex items-center gap-1">
-			<span class="text-xs text-slate-500">Types:</span>
-			{#each ENTITY_TYPES as type (type)}
-				<button
-					onclick={() => toggleType(type)}
-					class="text-xs px-2 py-0.5 rounded border transition-colors {selectedTypes.has(type)
-						? 'border-gold text-gold bg-gold/10'
-						: 'border-navy-600 text-slate-400 hover:text-slate-200'}"
-				>
-					{typeLabel(type)}
-				</button>
-			{/each}
-		</div>
-
-		<!-- Family filters -->
-		<div class="flex items-center gap-1">
-			<span class="text-xs text-slate-500">Relations:</span>
-			{#each PREDICATE_FAMILIES as family (family)}
-				<button
-					onclick={() => toggleFamily(family)}
-					class="text-xs px-2 py-0.5 rounded border transition-colors {selectedFamilies.has(family)
-						? 'border-gold text-gold bg-gold/10'
-						: 'border-navy-600 text-slate-400 hover:text-slate-200'}"
-				>
-					{family}
-				</button>
-			{/each}
-		</div>
-
-		<!-- Deal Partners toggle -->
+		<!-- Chat button -->
 		<button
-			onclick={() => (dealModeActive = !dealModeActive)}
-			class="text-xs px-2.5 py-1 rounded border transition-colors {dealModeActive
-				? 'border-[#C0922B] text-[#C0922B] bg-[#C0922B]/10'
-				: 'border-navy-600 text-slate-400 hover:text-slate-200'}"
-		>
-			Deal Partners {dealPartners.length > 0 ? `(${dealPartners.length})` : ''}
-		</button>
-
-		<!-- Advanced filter toggle -->
-		<button
-			onclick={() => (advancedOpen = !advancedOpen)}
-			class="text-xs px-2.5 py-1 rounded border transition-colors {advancedOpen
+			onclick={() => (chatPanelOpen = !chatPanelOpen)}
+			class="w-8 h-8 flex items-center justify-center rounded border transition-colors {chatPanelOpen
 				? 'border-gold text-gold bg-gold/10'
-				: 'border-navy-600 text-slate-400 hover:text-slate-200'}"
+				: 'border-navy-600 text-slate-400 hover:text-gold hover:border-gold/40'}"
+			aria-label="Toggle chat"
+			data-testid="chat-btn"
 		>
-			{advancedOpen ? 'Hide Filters' : 'More Filters'}
+			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+			</svg>
 		</button>
 
 		<!-- Query button -->
@@ -745,88 +685,31 @@
 		<!-- Upload button -->
 		<button
 			onclick={() => (uploadWizardOpen = true)}
-			class="text-xs px-2.5 py-1 rounded border transition-colors border-navy-600 text-slate-400 hover:text-slate-200"
+			class="w-8 h-8 flex items-center justify-center rounded border border-navy-600 text-slate-400 hover:text-gold hover:border-gold/40 transition-colors"
+			aria-label="Upload document"
+			data-testid="upload-btn"
 		>
-			Upload
-		</button>
-
-		<!-- Chat button -->
-		<button
-			onclick={() => (chatPanelOpen = !chatPanelOpen)}
-			class="text-xs px-2.5 py-1 rounded border transition-colors {chatPanelOpen
-				? 'border-gold text-gold bg-gold/10'
-				: 'border-navy-600 text-slate-400 hover:text-slate-200'}"
-			title="KG Chat"
-		>
-			<svg class="w-3.5 h-3.5 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
 			</svg>
-			Chat
 		</button>
-
-		<!-- Layout controls (task 6uw.11) -->
-		<button
-			onclick={() => graphApi?.fitToView()}
-			disabled={!graphApi || graphData.nodes.length === 0}
-			class="text-xs px-2 py-1 rounded border border-navy-600 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-30"
-			title="Fit graph to view"
-		>
-			Fit View
-		</button>
-		<button
-			onclick={() => graphApi?.resetLayout()}
-			disabled={!graphApi || graphData.nodes.length === 0}
-			class="text-xs px-2 py-1 rounded border border-navy-600 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-30"
-			title="Reset layout: unpin all, randomize"
-		>
-			Reset
-		</button>
-
-		<span class="text-xs text-slate-600 ml-auto">
-			Showing {graphData.nodes.length} nodes / {graphData.edges.length} edges
-		</span>
 	</div>
 
-	<!-- Warning banner (task 6uw.6) -->
+	<!-- Warning banner -->
 	{#if showWarningBanner}
-		<div class="flex items-center gap-2 px-4 py-2 text-xs border-b {expansionBlocked ? 'bg-red-950/40 border-red-800/40 text-red-300' : 'bg-amber-950/40 border-amber-800/40 text-amber-300'}">
-			<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+		<div
+			class="flex items-center gap-2 px-4 py-2 text-xs border-b shrink-0 {expansionBlocked
+				? 'bg-red-950/40 border-red-800/40 text-red-300'
+				: 'bg-amber-950/40 border-amber-800/40 text-amber-300'}"
+		>
+			<svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
 			</svg>
 			{#if expansionBlocked}
-				<span>Graph has {nodeCount} nodes (limit: {BLOCK_THRESHOLD}). Expansion is blocked. Filter or reset to reduce node count.</span>
+				<span>Graph has {nodeCount} nodes (limit: {BLOCK_THRESHOLD}). Expansion blocked. Filter or reset to reduce.</span>
 			{:else}
-				<span>Graph has {nodeCount} nodes. Performance may be impacted above {BLOCK_THRESHOLD} nodes.</span>
+				<span>Graph has {nodeCount} nodes. Performance may degrade above {BLOCK_THRESHOLD}.</span>
 			{/if}
-		</div>
-	{/if}
-
-	<!-- Advanced Filters (collapsible) -->
-	{#if advancedOpen}
-		<div class="flex items-center gap-3 px-4 py-2 bg-navy-900/80 border-b border-navy-700">
-			<span class="text-xs text-slate-500">Metadata:</span>
-			<input
-				bind:value={metadataKey}
-				placeholder="Key"
-				class="bg-navy-800 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold w-32"
-			/>
-			<input
-				bind:value={metadataValue}
-				placeholder="Value"
-				class="bg-navy-800 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold w-32"
-			/>
-			<button
-				onclick={applyAdvancedFilters}
-				class="text-xs bg-navy-700 border border-navy-600 text-slate-300 px-2 py-1 rounded hover:bg-navy-600 transition-colors"
-			>
-				Apply
-			</button>
-			<button
-				onclick={clearAdvancedFilters}
-				class="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-			>
-				Clear
-			</button>
 		</div>
 	{/if}
 
@@ -881,13 +764,53 @@
 					{highlightedEdgeIds}
 					{focusNodeId}
 					{selectedNodeId}
-					{pinnedNodes}
 					theme={$theme}
 					onNodeClick={handleNodeClick}
 					onNodeDblClick={handleNodeDblClick}
 					onNodeContextMenu={handleNodeContextMenu}
 					onEdgeClick={handleEdgeClick}
 					onGraphReady={handleGraphReady}
+				/>
+			{/if}
+
+			<!-- Zoom rail (overlays graph, left edge) -->
+			<ZoomRail
+				disabled={graphData.nodes.length === 0}
+				onzoomin={() => graphApi?.zoomIn()}
+				onzoomout={() => graphApi?.zoomOut()}
+				onfitview={() => graphApi?.fitToView()}
+				onresetlayout={() => graphApi?.resetLayout()}
+			/>
+
+			<!-- Entity detail overlay (right edge) -->
+			{#if selectedNode && !queryPanelOpen}
+				<KGEntityPanel
+					node={selectedNode}
+					relationships={selectedNodeRels}
+					{loadingRels}
+					{dealPartners}
+					{isAdmin}
+					{editingEntity}
+					{editForm}
+					{entitySaving}
+					{deleteConfirmEntity}
+					{entityDeleting}
+					{editingRelId}
+					{editRelPredicate}
+					{relSaving}
+					{deleteConfirmRelId}
+					{relDeleting}
+					onclose={closeEntityPanel}
+					onstarteditenity={startEditEntity}
+					oncanceleditentity={cancelEditEntity}
+					onsaveentity={saveEntity}
+					ondeleteentityconfirm={confirmDeleteEntity}
+					onsetdeleteconfirm={(val) => (deleteConfirmEntity = val)}
+					onstarteditrel={startEditRel}
+					oncanceleditrel={cancelEditRel}
+					onsaverel={saveRel}
+					ondeleterelconfirm={confirmDeleteRel}
+					onsetdeleterelconfirm={(id) => (deleteConfirmRelId = id)}
 				/>
 			{/if}
 		</div>
@@ -908,7 +831,7 @@
 			onSelectFilter={handlePaletteSelectFilter}
 		/>
 
-		<!-- Query panel (slide-out) -->
+		<!-- Query panel (slide-out right) -->
 		{#if queryPanelOpen}
 			<div class="w-80 bg-navy-900 border-l border-navy-700 overflow-y-auto flex flex-col">
 				<div class="flex items-center justify-between px-4 py-3 border-b border-navy-700">
@@ -945,14 +868,12 @@
 					{/if}
 
 					{#if queryResult}
-						<!-- Sources used -->
 						{#if queryResult.sources_used?.length > 0}
 							<div class="text-[10px] text-slate-500">
 								Sources: {(queryResult.sources_used ?? []).join(', ')}
 							</div>
 						{/if}
 
-						<!-- Entities -->
 						{#if queryResult.entities?.length > 0}
 							<div>
 								<h4 class="text-xs font-semibold text-slate-400 mb-1.5">Entities</h4>
@@ -971,12 +892,9 @@
 							</div>
 						{/if}
 
-						<!-- Relationships -->
 						{#if queryResult.relationships?.length > 0}
 							<div>
-								<h4 class="text-xs font-semibold text-slate-400 mb-1.5">
-									Relationships
-								</h4>
+								<h4 class="text-xs font-semibold text-slate-400 mb-1.5">Relationships</h4>
 								<div class="space-y-1">
 									{#each queryResult.relationships as rel (rel.id)}
 										<div class="text-xs bg-navy-800 rounded px-2 py-1.5">
@@ -1003,291 +921,44 @@
 				</div>
 			</div>
 		{/if}
-
-		<!-- Detail panel -->
-		{#if selectedNode && !queryPanelOpen}
-			<div class="w-80 bg-navy-900 border-l border-navy-700 overflow-y-auto p-4">
-				<div class="flex items-center justify-between mb-3">
-					<h3 class="text-sm font-semibold text-slate-200 truncate">{selectedNode.name}</h3>
-					<button
-						onclick={() => {
-							selectedNodeId = null;
-							selectedNodeRels = [];
-							editingEntity = false;
-						}}
-						class="text-slate-500 hover:text-slate-300 text-xs"
-					>
-						&times;
-					</button>
-				</div>
-
-				<span
-					class="inline-block text-xs px-2 py-0.5 rounded text-white {typeColor(selectedNode.entity_type)}"
-				>
-					{typeLabel(selectedNode.entity_type)}
-				</span>
-
-				{#if selectedNode.description}
-					<p class="text-xs text-slate-400 mt-2">{selectedNode.description}</p>
-				{/if}
-
-				{#if selectedNode.aliases?.length > 0}
-					<p class="text-xs text-slate-500 mt-2">
-						Also known as: {(selectedNode.aliases ?? []).join(', ')}
-					</p>
-				{/if}
-
-				<!-- Metadata section (task 6uw.7) -->
-				{#if selectedNode.metadata && Object.keys(selectedNode.metadata).length > 0}
-					<div class="mt-3">
-						<h4 class="text-[10px] text-slate-600 uppercase tracking-widest mb-1.5">Metadata</h4>
-						<div class="space-y-1">
-							{#each Object.entries(selectedNode.metadata) as [key, value] (key)}
-								<div class="flex items-start gap-2 text-xs">
-									<span class="text-slate-500 font-mono shrink-0">{key}:</span>
-									<span class="text-slate-300 break-all">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
-								</div>
-							{/each}
-						</div>
-					</div>
-				{/if}
-
-				<!-- Admin actions -->
-				{#if isAdmin && !editingEntity}
-					<div class="flex gap-2 mt-3">
-						<button
-							onclick={startEditEntity}
-							class="text-xs px-2 py-1 rounded border border-gold/30 text-gold hover:bg-gold/10 transition-colors"
-						>
-							Edit
-						</button>
-						<button
-							onclick={() => (deleteConfirmEntity = true)}
-							class="text-xs px-2 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
-						>
-							Delete
-						</button>
-					</div>
-				{/if}
-
-				<!-- Delete confirmation dialog -->
-				{#if deleteConfirmEntity}
-					<div class="mt-2 p-2 bg-red-950/30 border border-red-500/30 rounded">
-						<p class="text-xs text-red-300 mb-2">
-							Delete "{selectedNode.name}"? This cannot be undone.
-						</p>
-						<div class="flex gap-2">
-							<button
-								onclick={confirmDeleteEntity}
-								disabled={entityDeleting}
-								class="text-xs px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
-							>
-								{entityDeleting ? 'Deleting...' : 'Confirm'}
-							</button>
-							<button
-								onclick={() => (deleteConfirmEntity = false)}
-								class="text-xs px-2 py-1 rounded border border-navy-600 text-slate-400 hover:text-slate-200 transition-colors"
-							>
-								Cancel
-							</button>
-						</div>
-					</div>
-				{/if}
-
-				<!-- Entity edit form -->
-				{#if editingEntity}
-					<div class="mt-3 space-y-2">
-						<div>
-							<label for="edit-entity-name" class="text-[10px] text-slate-500 block mb-0.5">Name</label>
-							<input
-								id="edit-entity-name"
-								bind:value={editForm.name}
-								class="w-full bg-navy-800 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-gold"
-							/>
-						</div>
-						<div>
-							<label for="edit-entity-type" class="text-[10px] text-slate-500 block mb-0.5">Type</label>
-							<select
-								id="edit-entity-type"
-								bind:value={editForm.entity_type}
-								class="w-full bg-navy-800 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-gold"
-							>
-								{#each ENTITY_TYPES as t (t)}
-									<option value={t}>{typeLabel(t)}</option>
-								{/each}
-							</select>
-						</div>
-						<div>
-							<label for="edit-entity-desc" class="text-[10px] text-slate-500 block mb-0.5">Description</label>
-							<textarea
-								id="edit-entity-desc"
-								bind:value={editForm.description}
-								rows={2}
-								class="w-full bg-navy-800 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-gold resize-none"
-							></textarea>
-						</div>
-						<div>
-							<label for="edit-entity-aliases" class="text-[10px] text-slate-500 block mb-0.5"
-								>Aliases (comma-separated)</label
-							>
-							<input
-								id="edit-entity-aliases"
-								bind:value={editForm.aliases}
-								class="w-full bg-navy-800 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-gold"
-							/>
-						</div>
-						<div class="flex gap-2 pt-1">
-							<button
-								onclick={saveEntity}
-								disabled={entitySaving}
-								class="text-xs px-3 py-1 rounded bg-gold/20 text-gold border border-gold/30 hover:bg-gold/30 transition-colors disabled:opacity-50"
-							>
-								{entitySaving ? 'Saving...' : 'Save'}
-							</button>
-							<button
-								onclick={cancelEditEntity}
-								class="text-xs px-3 py-1 rounded border border-navy-600 text-slate-400 hover:text-slate-200 transition-colors"
-							>
-								Cancel
-							</button>
-						</div>
-					</div>
-				{/if}
-
-				<hr class="border-navy-700 my-3" />
-
-				<h4 class="text-xs font-semibold text-slate-400 mb-2">Relationships</h4>
-				{#if loadingRels}
-					<p class="text-xs text-slate-500">Loading...</p>
-				{:else if selectedNodeRels.length === 0}
-					<p class="text-xs text-slate-600">No relationships.</p>
-				{:else}
-					<div class="space-y-1.5">
-						{#each selectedNodeRels as rel (rel.id)}
-							<div class="text-xs bg-navy-800 rounded px-2 py-1.5">
-								<div class="flex items-center gap-1">
-									<span class="text-slate-300 truncate">{rel.subject_name}</span>
-									{#if editingRelId === rel.id}
-										<input
-											bind:value={editRelPredicate}
-											onkeydown={(e) => {
-												if (e.key === 'Enter') saveRel(rel.id);
-												if (e.key === 'Escape') cancelEditRel();
-											}}
-											class="bg-navy-700 border border-gold/40 rounded px-1 py-0.5 text-[11px] text-gold w-24 focus:outline-none"
-										/>
-										<button
-											onclick={() => saveRel(rel.id)}
-											disabled={relSaving}
-											class="text-[10px] text-gold hover:text-gold-light shrink-0"
-										>
-											{relSaving ? '...' : 'ok'}
-										</button>
-										<button
-											onclick={cancelEditRel}
-											class="text-[10px] text-slate-500 hover:text-slate-300 shrink-0"
-										>
-											esc
-										</button>
-									{:else}
-										<button
-											onclick={() => isAdmin && startEditRel(rel)}
-											class="text-gold font-medium shrink-0 {isAdmin ? 'hover:underline cursor-pointer' : 'cursor-default'}"
-										>
-											{rel.predicate}
-										</button>
-									{/if}
-									<span class="text-slate-300 truncate">{rel.object_name}</span>
-									<!-- Source badge -->
-									{#if rel.graph_source}
-										<span
-											class="text-[10px] px-1 py-0.5 rounded border shrink-0 ml-auto {sourceBadgeClass(rel.graph_source)}"
-										>
-											{rel.graph_source === 'team' ? 'Team' : 'Master'}
-										</span>
-									{/if}
-									<!-- Admin delete button -->
-									{#if isAdmin && editingRelId !== rel.id}
-										{#if deleteConfirmRelId === rel.id}
-											<button
-												onclick={() => confirmDeleteRel(rel.id)}
-												disabled={relDeleting}
-												class="text-[10px] text-red-400 hover:text-red-300 shrink-0"
-											>
-												{relDeleting ? '...' : 'yes'}
-											</button>
-											<button
-												onclick={() => (deleteConfirmRelId = null)}
-												class="text-[10px] text-slate-500 hover:text-slate-300 shrink-0"
-											>
-												no
-											</button>
-										{:else}
-											<button
-												onclick={() => (deleteConfirmRelId = rel.id)}
-												class="text-[10px] text-red-400/60 hover:text-red-400 shrink-0 ml-auto"
-												title="Delete relationship"
-											>
-												&times;
-											</button>
-										{/if}
-									{/if}
-								</div>
-								{#if rel.confidence < 1}
-									<span class="text-slate-600 text-[10px]">
-										{(rel.confidence * 100).toFixed(0)}% confidence
-									</span>
-								{/if}
-							</div>
-						{/each}
-					</div>
-				{/if}
-
-				<!-- Deal partners for this node -->
-				{#if dealPartners.some((dp) => dp.person1.id === selectedNodeId || dp.person2.id === selectedNodeId)}
-					<hr class="border-navy-700 my-3" />
-					<h4 class="text-xs font-semibold text-[#C0922B] mb-2">Deal Partners</h4>
-					{#each dealPartners.filter((dp) => dp.person1.id === selectedNodeId || dp.person2.id === selectedNodeId) as dp (dp.person1.id + '-' + dp.person2.id)}
-						{@const partner =
-							dp.person1.id === selectedNodeId ? dp.person2 : dp.person1}
-						<div class="text-xs bg-navy-800 rounded px-2 py-1.5 mb-1">
-							<span class="text-slate-200">{partner.name}</span>
-							<span class="text-slate-600 ml-1"
-								>({dp.shared_deals.length} shared deal{dp.shared_deals.length !== 1
-									? 's'
-									: ''})</span
-							>
-							{#each dp.shared_deals as deal (deal.entity_id)}
-								<div class="text-[10px] text-slate-500 mt-0.5 pl-2">
-									{deal.entity_name}
-								</div>
-							{/each}
-						</div>
-					{/each}
-				{/if}
-			</div>
-		{/if}
 	</div>
 
-	<!-- Legend -->
-	<div class="flex items-center gap-5 px-4 py-2 bg-navy-900 border-t border-navy-700">
+	<!-- Bottom filter strip -->
+	<FilterStrip
+		{nodeCount}
+		edgeCount={graphData.edges.length}
+		{selectedTypes}
+		{selectedFamilies}
+		{dealModeActive}
+		dealPartnerCount={dealPartners.length}
+		{metadataKey}
+		{metadataValue}
+		ontoggletype={toggleType}
+		ontogglefamily={toggleFamily}
+		ontoggledeal={() => (dealModeActive = !dealModeActive)}
+		onmetadatachange={handleMetadataChange}
+		onclearall={clearAllFilters}
+	/>
+
+	<!-- Color legend -->
+	<div class="flex items-center gap-5 px-4 py-2 bg-navy-900 border-t border-navy-700 shrink-0">
 		{#each Object.entries(NODE_COLORS) as [type, color] (type)}
 			<div class="flex items-center gap-1.5">
-				<svg width="14" height="14" viewBox="-7 -7 14 14">
+				<svg width="14" height="14" viewBox="-7 -7 14 14" aria-hidden="true">
 					<circle r="6" fill={color} stroke={color} stroke-opacity="0.5" stroke-width="1" />
 				</svg>
-				<span class="text-xs text-slate-400">{typeLabel(type)}</span>
+				<span class="text-xs text-slate-400">{type === 'sports_team' ? 'Sports Team' : type.charAt(0).toUpperCase() + type.slice(1)}</span>
 			</div>
 		{/each}
 		<div class="flex items-center gap-1.5 ml-4 border-l border-navy-700 pl-4">
-			<svg width="30" height="10" viewBox="0 0 30 10">
+			<svg width="30" height="10" viewBox="0 0 30 10" aria-hidden="true">
 				<path d="M2,5 Q15,2 28,5" fill="none" stroke="#475569" stroke-width="1.5" />
 				<polygon points="26,3 30,5 26,7" fill="#475569" />
 			</svg>
 			<span class="text-xs text-slate-500">relationship</span>
 		</div>
 		<div class="flex items-center gap-1.5 ml-2 border-l border-navy-700 pl-4">
-			<svg width="30" height="10" viewBox="0 0 30 10">
+			<svg width="30" height="10" viewBox="0 0 30 10" aria-hidden="true">
 				<path d="M2,5 Q15,2 28,5" fill="none" stroke="#C0922B" stroke-width="1.5" />
 				<polygon points="26,3 30,5 26,7" fill="#C0922B" />
 			</svg>
@@ -1296,7 +967,7 @@
 	</div>
 </div>
 
-<!-- Context menu (task 6uw.8) -->
+<!-- Context menu -->
 {#if contextMenu}
 	<div
 		class="fixed z-50 bg-navy-800 border border-navy-600 rounded-lg shadow-xl py-1 min-w-[160px]"
@@ -1318,13 +989,6 @@
 		>
 			Hide node
 		</button>
-		<button
-			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700 hover:text-gold transition-colors"
-			role="menuitem"
-			onclick={contextTogglePin}
-		>
-			{pinnedNodes.has(contextMenu.nodeId) ? 'Unpin position' : 'Pin position'}
-		</button>
 		<hr class="border-navy-700 my-0.5" />
 		<button
 			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700 hover:text-gold transition-colors"
@@ -1336,7 +1000,7 @@
 	</div>
 {/if}
 
-<!-- Edge detail tooltip (task 6uw.9) -->
+<!-- Edge detail tooltip -->
 {#if edgeTooltip && selectedEdge}
 	<div
 		class="fixed z-50 bg-navy-800 border border-navy-600 rounded-lg shadow-xl p-3 min-w-[200px] max-w-[280px]"
@@ -1366,22 +1030,50 @@
 	</div>
 {/if}
 
-<!-- Minimap (task 6uw.10) -->
-{#if minimapVisible && graphData.nodes.length > 0 && !loading}
-	<div class="fixed bottom-16 right-4 z-30 bg-navy-900/90 border border-navy-700 rounded-lg overflow-hidden shadow-lg">
-		<svg width="150" height="100" viewBox="0 0 150 100" class="block">
-			<rect width="150" height="100" fill="transparent" />
-			{#each graphData.nodes as node (node.id)}
-				{@const nx = ((graphData.nodes.indexOf(node) % 15) / 15) * 140 + 5}
-				{@const ny = (Math.floor(graphData.nodes.indexOf(node) / 15) / Math.max(1, Math.ceil(graphData.nodes.length / 15))) * 90 + 5}
-				<circle
-					cx={nx}
-					cy={ny}
-					r="2"
-					fill={NODE_COLORS[node.entity_type.toLowerCase()] ?? '#7B8794'}
-				/>
-			{/each}
-		</svg>
+<!-- Keyboard shortcut cheat sheet -->
+{#if shortcutSheetOpen}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+		role="presentation"
+		onclick={() => (shortcutSheetOpen = false)}
+	>
+		<div
+			class="bg-navy-800 border border-navy-600 rounded-xl shadow-2xl p-6 min-w-[320px] max-w-[400px]"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Keyboard shortcuts"
+			onclick={(e) => e.stopPropagation()}
+		>
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-sm font-semibold text-slate-200">Keyboard Shortcuts</h2>
+				<button
+					onclick={() => (shortcutSheetOpen = false)}
+					class="text-slate-500 hover:text-slate-300 transition-colors"
+					aria-label="Close shortcuts"
+				>
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+			<div class="space-y-2">
+				{#each [
+					{ keys: 'Esc', desc: 'Close active panel' },
+					{ keys: '?', desc: 'Show this shortcut sheet' },
+					{ keys: '⌘K', desc: 'Open search / command palette' },
+					{ keys: '/', desc: 'Open search / command palette' },
+					{ keys: 'Dbl-click', desc: 'Expand node neighbors' },
+					{ keys: 'Right-click', desc: 'Context menu' },
+				] as shortcut (shortcut.keys)}
+					<div class="flex items-center justify-between gap-4">
+						<kbd class="text-xs px-2 py-1 rounded bg-navy-700 border border-navy-600 font-mono text-slate-300 shrink-0">
+							{shortcut.keys}
+						</kbd>
+						<span class="text-xs text-slate-400 text-right">{shortcut.desc}</span>
+					</div>
+				{/each}
+			</div>
+		</div>
 	</div>
 {/if}
 

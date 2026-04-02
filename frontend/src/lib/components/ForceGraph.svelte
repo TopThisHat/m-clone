@@ -31,6 +31,9 @@
 		mergeNodes: (newNodes: KGGraphNode[], newEdges: KGGraphEdge[]) => void;
 		fitToView: () => void;
 		resetLayout: () => void;
+		zoomIn: () => void;
+		zoomOut: () => void;
+		focusNode: (nodeId: string) => void;
 	}
 
 	// ── Props (identical interface to the replaced D3 component) ──────────
@@ -203,7 +206,7 @@
 		updateMinimap();
 
 		// Expose API to parent
-		onGraphReady({ mergeNodes, fitToView, resetLayout });
+		onGraphReady({ mergeNodes, fitToView, resetLayout, zoomIn, zoomOut, focusNode: focusOnNode });
 	}
 
 	// ── Node / edge reducers (highlighting + theming) ─────────────────────
@@ -277,6 +280,18 @@
 		if (!renderer || !graph) return;
 		const camera = renderer.getCamera();
 		camera.animate({ x: 0.5, y: 0.5, ratio: 1, angle: 0 }, { duration: 500 });
+	}
+
+	function zoomIn(): void {
+		if (!renderer) return;
+		const camera = renderer.getCamera();
+		camera.animate({ ratio: camera.ratio / 1.5 }, { duration: 200 });
+	}
+
+	function zoomOut(): void {
+		if (!renderer) return;
+		const camera = renderer.getCamera();
+		camera.animate({ ratio: camera.ratio * 1.5 }, { duration: 200 });
 	}
 
 	function focusOnNode(entityId: string): void {
