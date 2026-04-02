@@ -1817,6 +1817,93 @@ async def init_schema() -> None:
             # NOTE: kg_entity_flags_pending_idx (team_id, resolved) WHERE resolved = FALSE
             # was already created in Phase 1 (Task 1.5) — intentionally skipped here.
 
+            # ── KG Chat: conversation persistence ────────────────────────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.kg_chat_sessions (
+                    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                    team_id    UUID        NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                    user_sid   TEXT        NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_chat_sessions_team_user_idx
+                    ON kg_chat_sessions (team_id, user_sid)
+            """)
+
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS playbook.kg_chat_messages (
+                    id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+                    session_id       UUID        NOT NULL REFERENCES kg_chat_sessions(id) ON DELETE CASCADE,
+                    role             TEXT        NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
+                    content          TEXT,
+                    tool_calls       JSONB,
+                    tool_call_id     TEXT,
+                    entity_highlights UUID[],
+                    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS kg_chat_messages_session_created_idx
+                    ON kg_chat_messages (session_id, created_at)
+            """)
+
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock(8675309)")
+
+
+async def rollback_kg_chat_schema() -> None:
+    """Rollback the KG Chat schema additions.
+
+    Drops tables and indexes created for the chat feature in reverse
+    dependency order.  Does NOT drop the pg_trgm extension since other
+    features (entity search, client lookup) depend on it.
+    """
+    async with _acquire() as conn:
+        await conn.execute("SELECT pg_advisory_lock(8675309)")
+        try:
+            await conn.execute("SET search_path TO playbook, public")
+
+            # Drop indexes first (on dependent table)
+            await conn.execute(
+                "DROP INDEX IF EXISTS playbook.kg_chat_messages_session_created_idx"
+            )
+
+            # Drop indexes on sessions table
+            await conn.execute(
+                "DROP INDEX IF EXISTS playbook.kg_chat_sessions_team_user_idx"
+            )
+
+            # Drop tables in reverse dependency order
+            # (messages references sessions via FK CASCADE, so drop messages first)
+            await conn.execute(
+                "DROP TABLE IF EXISTS playbook.kg_chat_messages"
+            )
+            await conn.execute(
+                "DROP TABLE IF EXISTS playbook.kg_chat_sessions"
+            )
+
+            logger.info("rollback_kg_chat_schema: dropped kg_chat_messages and kg_chat_sessions")
+
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock(8675309)")
+
+
+async def drop_chat_tables() -> None:
+    """Rollback migration: drop KG chat tables in reverse creation order.
+
+    This is a destructive operation — use only for disaster recovery or
+    in test teardown. Drops indexes first, then tables (CASCADE handles
+    any child rows automatically).
+    """
+    async with _acquire() as conn:
+        await conn.execute("SELECT pg_advisory_lock(8675309)")
+        try:
+            await conn.execute("DROP INDEX IF EXISTS playbook.kg_chat_messages_session_created_idx")
+            await conn.execute("DROP INDEX IF EXISTS playbook.kg_chat_sessions_team_user_idx")
+            await conn.execute("DROP TABLE IF EXISTS playbook.kg_chat_messages CASCADE")
+            await conn.execute("DROP TABLE IF EXISTS playbook.kg_chat_sessions CASCADE")
         finally:
             await conn.execute("SELECT pg_advisory_unlock(8675309)")
 

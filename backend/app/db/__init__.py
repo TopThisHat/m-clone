@@ -1,5 +1,6 @@
 from ._pool import DatabaseNotConfigured as DatabaseNotConfigured, get_pool as get_pool, close_pool as close_pool, _acquire_team as _acquire_team
 from ._schema import init_schema as init_schema
+from ._schema import rollback_kg_chat_schema as rollback_kg_chat_schema
 from ._schema import verify_client_lookup_prerequisites as verify_client_lookup_prerequisites
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
@@ -196,6 +197,7 @@ from .knowledge_graph import (
     db_sync_entity_from_master as db_sync_entity_from_master,
     db_merge_kg_entities as db_merge_kg_entities,
     db_flag_entity_for_review as db_flag_entity_for_review,
+    db_suggest_kg_entities as db_suggest_kg_entities,
 )
 
 # ── Templates ─────────────────────────────────────────────────────────────────
@@ -303,6 +305,17 @@ from .document_sessions import (
     pg_upsert_document_session as pg_upsert_document_session,
     pg_get_document_session as pg_get_document_session,
     pg_delete_expired_sessions as pg_delete_expired_sessions,
+)
+
+# ── KG Chat Sessions ──────────────────────────────────────────────────────────
+from .kg_chat_sessions import (
+    db_create_chat_session as db_create_chat_session,
+    db_get_chat_session as db_get_chat_session,
+    db_list_chat_sessions as db_list_chat_sessions,
+    db_add_chat_message as db_add_chat_message,
+    db_get_chat_messages as db_get_chat_messages,
+    db_delete_chat_session as db_delete_chat_session,
+    db_cleanup_expired_chat_sessions as db_cleanup_expired_chat_sessions,
 )
 
 # ── Research Jobs / Job Queue ─────────────────────────────────────────────────

@@ -23,6 +23,7 @@ from app.routers.jobs import router as jobs_router
 from app.routers.templates import router as templates_router
 from app.routers.library import router as library_router
 from app.routers.knowledge_graph import router as kg_router
+from app.routers.kg_chat import router as kg_chat_router
 from app.routers.programs import router as programs_router
 from app.routers.preferences import router as preferences_router
 from app.routers.matrix import router as matrix_router
@@ -61,6 +62,7 @@ app.include_router(jobs_router)
 app.include_router(templates_router)
 app.include_router(library_router)
 app.include_router(kg_router)
+app.include_router(kg_chat_router)
 app.include_router(programs_router)
 app.include_router(preferences_router)
 app.include_router(matrix_router)
