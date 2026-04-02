@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     # Knowledge Graph
     kg_master_team_id: str = "00000000-0000-0000-0000-000000000001"
 
+    # TalkToMe API
+    talktome_api_url: str = ""
+    talktome_api_key: str = ""
+    talktome_timeout_seconds: float = 30.0
+    talktome_max_concurrency: int = 5
+
     # Auth / SSO
     oidc_issuer: str = ""
     oidc_client_id: str = "m-clone"
