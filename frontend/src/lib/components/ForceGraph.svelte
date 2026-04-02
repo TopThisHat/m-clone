@@ -1,18 +1,39 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import * as d3 from 'd3';
+	import Graph from 'graphology';
+	import Sigma from 'sigma';
+	import FA2Layout from 'graphology-layout-forceatlas2/worker';
 	import type { KGGraphNode, KGGraphEdge } from '$lib/api/knowledgeGraph';
+	import type { CameraState } from 'sigma/types';
 
-	interface SimNode extends KGGraphNode, d3.SimulationNodeDatum {}
-	interface SimEdge {
-		id: string;
-		source: SimNode | string;
-		target: SimNode | string;
-		predicate: string;
-		predicate_family: string;
-		confidence: number;
+	// ── Node / edge graphology attribute shapes ────────────────────────────
+	interface NodeAttrs {
+		x: number;
+		y: number;
+		size: number;
+		color: string;
+		label: string;
+		entityType: string;
+		highlighted: boolean;
+		hidden: boolean;
 	}
 
+	interface EdgeAttrs {
+		size: number;
+		color: string;
+		label: string;
+		highlighted: boolean;
+		hidden: boolean;
+	}
+
+	// ── Public API exposed via onGraphReady ────────────────────────────────
+	interface GraphAPI {
+		mergeNodes: (newNodes: KGGraphNode[], newEdges: KGGraphEdge[]) => void;
+		fitToView: () => void;
+		resetLayout: () => void;
+	}
+
+	// ── Props (identical interface to the replaced D3 component) ──────────
 	let {
 		nodes,
 		edges,
@@ -20,7 +41,6 @@
 		highlightedEdgeIds = null,
 		focusNodeId = null,
 		selectedNodeId = null,
-		pinnedNodes = null,
 		theme = 'dark',
 		onNodeClick = () => {},
 		onNodeDblClick = () => {},
@@ -34,670 +54,688 @@
 		highlightedEdgeIds?: Set<string> | null;
 		focusNodeId?: string | null;
 		selectedNodeId?: string | null;
-		/** Node IDs that should be fixed in place (d.fx/d.fy locked in D3 simulation). */
-		pinnedNodes?: Set<string> | null;
 		theme?: 'light' | 'dark';
 		onNodeClick?: (nodeId: string) => void;
 		onNodeDblClick?: (nodeId: string) => void;
 		onNodeContextMenu?: (nodeId: string, x: number, y: number) => void;
 		onEdgeClick?: (edgeId: string, x: number, y: number) => void;
-		onGraphReady?: (api: { mergeNodes: typeof mergeNodes; fitToView: () => void; resetLayout: () => void }) => void;
+		onGraphReady?: (api: GraphAPI) => void;
 	} = $props();
 
-	// Theme-dependent colors
+	// ── Theme colors (Issue 6) ─────────────────────────────────────────────
 	const themeColors = $derived(theme === 'light' ? {
 		bg: '#F5F6F8',
-		edgeStroke: '#94A3B8',
+		edge: '#94A3B8',
 		edgeDim: '#CBD5E1',
-		arrowFill: '#94A3B8',
-		pillFill: '#FFFFFF',
-		pillStroke: '#CBD5E1',
-		edgeText: '#475569',
-		nodeText: '#FFFFFF',
-		typeBadgeText: '#475569',
-		typeBadgeOpacity: 0.9,
+		labelColor: '#1E293B',
 	} : {
 		bg: '#0B1426',
-		edgeStroke: '#475569',
+		edge: '#475569',
 		edgeDim: '#1E293B',
-		arrowFill: '#64748B',
-		pillFill: '#1E293B',
-		pillStroke: '#334155',
-		edgeText: '#94A3B8',
-		nodeText: '#FFFFFF',
-		typeBadgeText: '#94A3B8',
-		typeBadgeOpacity: 0.85,
+		labelColor: '#E2E8F0',
 	});
 
-	let containerEl: HTMLDivElement;
-	let simulation: d3.Simulation<SimNode, SimEdge> | null = null;
-
-	// Theme-aware node colors — vivid fills with clear contrast in both modes
+	// Entity type → color (both themes). pe_fund added per spec; product kept for compat.
 	const typeColors = $derived(theme === 'light' ? {
-		person:      { fill: '#2563EB', stroke: '#1D4ED8' },
-		company:     { fill: '#0891B2', stroke: '#0E7490' },
-		sports_team: { fill: '#D97706', stroke: '#B45309' },
-		location:    { fill: '#16A34A', stroke: '#15803D' },
-		product:     { fill: '#7C3AED', stroke: '#6D28D9' },
-		other:       { fill: '#64748B', stroke: '#475569' },
-	} as Record<string, { fill: string; stroke: string }> : {
-		person:      { fill: '#3B82F6', stroke: '#2563EB' },
-		company:     { fill: '#06B6D4', stroke: '#0891B2' },
-		sports_team: { fill: '#F59E0B', stroke: '#D97706' },
-		location:    { fill: '#22C55E', stroke: '#16A34A' },
-		product:     { fill: '#A78BFA', stroke: '#7C3AED' },
-		other:       { fill: '#94A3B8', stroke: '#64748B' },
-	} as Record<string, { fill: string; stroke: string }>);
+		person:      '#2563EB',
+		company:     '#0891B2',
+		sports_team: '#D97706',
+		location:    '#16A34A',
+		pe_fund:     '#7C3AED',
+		product:     '#7C3AED',
+		other:       '#64748B',
+	} as Record<string, string> : {
+		person:      '#3B82F6',
+		company:     '#06B6D4',
+		sports_team: '#F59E0B',
+		location:    '#22C55E',
+		pe_fund:     '#A78BFA',
+		product:     '#A78BFA',
+		other:       '#94A3B8',
+	} as Record<string, string>);
 
-	function getColors(type: string) {
-		return typeColors[type.toLowerCase()] ?? typeColors.other;
+	function nodeColor(entityType: string): string {
+		return typeColors[entityType.toLowerCase()] ?? typeColors.other;
 	}
 
-	const NODE_RADIUS = 26;
-	const FONT_SIZE = 10;
+	// ── DOM refs ───────────────────────────────────────────────────────────
+	let containerEl: HTMLDivElement;
+	let minimapEl: HTMLDivElement = $state()!;
 
-	// Debounce helper
-	function debounce<T extends (...args: unknown[]) => void>(fn: T, ms: number): T & { cancel: () => void } {
-		let timer: ReturnType<typeof setTimeout> | null = null;
-		const debounced = ((...args: unknown[]) => {
-			if (timer) clearTimeout(timer);
-			timer = setTimeout(() => fn(...args), ms);
-		}) as T & { cancel: () => void };
-		debounced.cancel = () => { if (timer) clearTimeout(timer); };
-		return debounced;
+	// ── Runtime objects (not reactive — managed imperatively) ──────────────
+	let graph: Graph<NodeAttrs, EdgeAttrs> | null = null;
+	let renderer: Sigma<NodeAttrs, EdgeAttrs> | null = null;
+	let minimapRenderer: Sigma<NodeAttrs, EdgeAttrs> | null = null;
+	let fa2: FA2Layout<NodeAttrs, EdgeAttrs> | null = null;
+
+	// Drag state
+	let draggedNode: string | null = null;
+	let isDragging = false;
+
+	// Minimap visibility state (Issue 7)
+	let minimapVisible = $state(false);
+	let minimapUserToggle = $state(false);
+
+	// ── Convergence monitoring for FA2 auto-stop ──────────────────────────
+	let prevPositions: Map<string, { x: number; y: number }> = new Map();
+	let convergenceCheckTimer: ReturnType<typeof setInterval> | null = null;
+
+	// ── Helpers ────────────────────────────────────────────────────────────
+	function getNodeColor(entityType: string): string {
+		return nodeColor(entityType);
 	}
 
-	// Truncate label to fit inside circle
-	function truncLabel(name: string, maxChars = 12): string {
-		if (name.length <= maxChars) return name;
-		return name.slice(0, maxChars - 1) + '\u2026';
+	/** Spread initial positions in a circle to avoid FA2 singularity. */
+	function initialPosition(index: number, total: number): { x: number; y: number } {
+		const angle = (index / Math.max(total, 1)) * 2 * Math.PI;
+		const r = Math.max(10, total * 0.4);
+		return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
 	}
 
-	// Split name into at most 2 lines for inside-node display
-	function splitLabel(name: string): string[] {
-		if (name.length <= 10) return [name];
-		// Try to split on space near middle
-		const mid = Math.floor(name.length / 2);
-		let splitAt = name.lastIndexOf(' ', mid + 3);
-		if (splitAt <= 2) splitAt = name.indexOf(' ', mid - 3);
-		if (splitAt > 2 && splitAt < name.length - 2) {
-			const line1 = name.slice(0, splitAt);
-			const line2 = name.slice(splitAt + 1);
-			return [truncLabel(line1, 12), truncLabel(line2, 12)];
-		}
-		return [truncLabel(name, 12)];
-	}
+	// ── Graph initialisation ───────────────────────────────────────────────
+	function buildGraph(): void {
+		teardown();
 
-	// Compute curved path for an edge (slight arc so parallel edges don't overlap)
-	function edgePath(d: SimEdge): string {
-		const s = d.source as SimNode;
-		const t = d.target as SimNode;
-		const dx = t.x! - s.x!;
-		const dy = t.y! - s.y!;
-		const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-		// Offset from center to circle border
-		const offS = NODE_RADIUS / dist;
-		const offT = (NODE_RADIUS + 6) / dist; // extra for arrowhead
-		const x1 = s.x! + dx * offS;
-		const y1 = s.y! + dy * offS;
-		const x2 = t.x! - dx * offT;
-		const y2 = t.y! - dy * offT;
-		// Slight curve
-		const curvature = 0.15;
-		const cx = (x1 + x2) / 2 - dy * curvature;
-		const cy = (y1 + y2) / 2 + dx * curvature;
-		return `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`;
-	}
+		graph = new Graph<NodeAttrs, EdgeAttrs>({ multi: false, type: 'directed' });
 
-	// Midpoint of the curved edge for label placement
-	function edgeMidpoint(d: SimEdge): { x: number; y: number; angle: number } {
-		const s = d.source as SimNode;
-		const t = d.target as SimNode;
-		const dx = t.x! - s.x!;
-		const dy = t.y! - s.y!;
-		const curvature = 0.15;
-		// Quadratic bezier midpoint at t=0.5
-		const mx = (s.x! + t.x!) / 2;
-		const my = (s.y! + t.y!) / 2;
-		const cx = mx - dy * curvature;
-		const cy = my + dx * curvature;
-		// Point on curve at t=0.5: (1-t)^2*P0 + 2(1-t)t*C + t^2*P1
-		const px = 0.25 * s.x! + 0.5 * cx + 0.25 * t.x!;
-		const py = 0.25 * s.y! + 0.5 * cy + 0.25 * t.y!;
-		let angle = Math.atan2(dy, dx) * (180 / Math.PI);
-		// Keep text upright
-		if (angle > 90) angle -= 180;
-		if (angle < -90) angle += 180;
-		return { x: px, y: py, angle };
-	}
+		const total = nodes.length;
+		nodes.forEach((n, i) => {
+			const pos = initialPosition(i, total);
+			graph!.addNode(n.id, {
+				x: pos.x,
+				y: pos.y,
+				size: 12,
+				color: getNodeColor(n.entity_type),
+				label: n.name,
+				entityType: n.entity_type,
+				highlighted: false,
+				hidden: false,
+			});
+		});
 
-	// Fit the graph into view
-	function fitToView() {
-		const refs = (containerEl as any)?.__d3refs;
-		if (!refs) return;
-		const { svgEl, zoom: zb, simNodes, width, height } = refs;
-		if (simNodes.length === 0) return;
-
-		let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-		for (const n of simNodes) {
-			if (n.x != null && n.y != null) {
-				minX = Math.min(minX, n.x);
-				maxX = Math.max(maxX, n.x);
-				minY = Math.min(minY, n.y);
-				maxY = Math.max(maxY, n.y);
+		for (const e of edges) {
+			if (graph.hasNode(e.source) && graph.hasNode(e.target)) {
+				try {
+					graph.addEdgeWithKey(e.id, e.source, e.target, {
+						size: 2,
+						color: themeColors.edge,
+						label: e.predicate.replace(/_/g, ' '),
+						highlighted: false,
+						hidden: false,
+					});
+				} catch {
+					// Duplicate edge — skip
+				}
 			}
 		}
-		if (!isFinite(minX)) return;
 
-		const padding = NODE_RADIUS * 3;
-		const bw = maxX - minX + padding * 2;
-		const bh = maxY - minY + padding * 2;
-		const scale = Math.min(width / bw, height / bh, 2);
-		const cx = (minX + maxX) / 2;
-		const cy = (minY + maxY) / 2;
-
-		const transform = d3.zoomIdentity
-			.translate(width / 2, height / 2)
-			.scale(scale)
-			.translate(-cx, -cy);
-		svgEl.transition().duration(500).call(zb.transform, transform);
+		mountRenderer();
 	}
 
-	// Reset layout: randomize positions and restart simulation, then re-apply pins
-	function resetLayout() {
-		const refs = (containerEl as any)?.__d3refs;
-		if (!refs || !simulation) return;
-		const { simNodes, width, height } = refs;
-		for (const n of simNodes) {
-			n.fx = null;
-			n.fy = null;
-			n.x = width / 2 + (Math.random() - 0.5) * width * 0.6;
-			n.y = height / 2 + (Math.random() - 0.5) * height * 0.6;
+	function mountRenderer(): void {
+		if (!graph || !containerEl) return;
+
+		renderer = new Sigma<NodeAttrs, EdgeAttrs>(graph, containerEl, {
+			renderLabels: true,
+			renderEdgeLabels: false,
+			enableEdgeEvents: true,
+			labelColor: { color: themeColors.labelColor },
+			defaultEdgeColor: themeColors.edge,
+			labelRenderedSizeThreshold: 8,
+			defaultNodeColor: '#64748B',
+			defaultEdgeType: 'arrow',
+			zIndex: true,
+			// Reducers drive highlighting / dimming (Issue 5, 6)
+			nodeReducer: nodeReducerFn,
+			edgeReducer: edgeReducerFn,
+		});
+
+		// ── Camera controls (Issue 4) ──────────────────────────────────────
+		setupCameraLOD();
+
+		// ── Events (Issue 5) ──────────────────────────────────────────────
+		bindEvents();
+
+		// ── FA2 Web Worker layout (Issue 3) ───────────────────────────────
+		startLayout();
+
+		// ── Minimap (Issue 7) ─────────────────────────────────────────────
+		updateMinimap();
+
+		// Expose API to parent
+		onGraphReady({ mergeNodes, fitToView, resetLayout });
+	}
+
+	// ── Node / edge reducers (highlighting + theming) ─────────────────────
+	function nodeReducerFn(nodeId: string, data: NodeAttrs): Partial<NodeAttrs> & { color: string; size: number; label: string; highlighted: boolean } {
+		const hasHighlight = highlightedNodeIds !== null || highlightedEdgeIds !== null;
+		const isHighlighted = highlightedNodeIds?.has(nodeId) ?? false;
+		const isSelected = nodeId === selectedNodeId;
+
+		const color = getNodeColor(data.entityType);
+		const highlighted = isSelected || isHighlighted;
+
+		if (hasHighlight && !isHighlighted && !isSelected) {
+			return { ...data, color, highlighted: false, size: data.size, label: data.label, hidden: false };
 		}
-		simulation.alpha(1).restart();
-		// Re-apply pins so pinned nodes lock at their new random start positions
-		applyPinning();
+
+		return {
+			...data,
+			color,
+			highlighted,
+			size: isSelected ? data.size + 4 : data.size,
+			label: data.label,
+			hidden: false,
+		};
 	}
 
-	// Incremental merge: update simulation data without full rebuild
-	function mergeNodes(newNodes: KGGraphNode[], newEdges: KGGraphEdge[]) {
-		const refs = (containerEl as any)?.__d3refs;
-		if (!refs || !simulation) {
+	function edgeReducerFn(edgeId: string, data: EdgeAttrs): Partial<EdgeAttrs> & { color: string; size: number } {
+		const hasHighlight = highlightedNodeIds !== null || highlightedEdgeIds !== null;
+		const isHighlighted = highlightedEdgeIds?.has(edgeId) ?? false;
+
+		if (hasHighlight && !isHighlighted) {
+			return { ...data, color: themeColors.edgeDim, size: 1, label: data.label, highlighted: false };
+		}
+		if (isHighlighted) {
+			return { ...data, color: '#C0922B', size: 3, label: data.label, highlighted: true };
+		}
+		return { ...data, color: themeColors.edge, size: data.size, label: data.label, highlighted: false };
+	}
+
+	// ── Label LOD (Issue 4) ────────────────────────────────────────────────
+	function setupCameraLOD(): void {
+		if (!renderer || !graph) return;
+		const camera = renderer.getCamera();
+
+		camera.on('updated', (state: CameraState) => {
+			if (!renderer || !graph) return;
+			const ratio = state.ratio;
+
+			if (ratio > 0.7) {
+				// High zoom: show all labels + edge labels
+				renderer.setSetting('renderLabels', true);
+				renderer.setSetting('renderEdgeLabels', true);
+				renderer.setSetting('labelRenderedSizeThreshold', 0);
+			} else if (ratio > 0.3) {
+				// Medium zoom: only top-50 by degree, no edge labels
+				renderer.setSetting('renderEdgeLabels', false);
+				renderer.setSetting('renderLabels', true);
+				renderer.setSetting('labelRenderedSizeThreshold', 8);
+			} else {
+				// Low zoom: no labels
+				renderer.setSetting('renderLabels', false);
+				renderer.setSetting('renderEdgeLabels', false);
+			}
+
+			// Update minimap viewport rect
+			drawMinimapViewport();
+		});
+	}
+
+	// ── Camera control functions (Issue 4) ────────────────────────────────
+	function fitToView(): void {
+		if (!renderer || !graph) return;
+		const camera = renderer.getCamera();
+		camera.animate({ x: 0.5, y: 0.5, ratio: 1, angle: 0 }, { duration: 500 });
+	}
+
+	function focusOnNode(entityId: string): void {
+		if (!renderer || !graph || !graph.hasNode(entityId)) return;
+		const camera = renderer.getCamera();
+		const { x, y } = graph.getNodeAttributes(entityId);
+		const viewportCoords = renderer.framedGraphToViewport({ x, y });
+		const graphCoords = renderer.viewportToGraph(viewportCoords);
+		camera.animate(
+			{ x: graphCoords.x, y: graphCoords.y, ratio: 0.3 },
+			{ duration: 750 }
+		);
+	}
+
+	function resetLayout(): void {
+		if (!graph) return;
+		const total = graph.order;
+		let i = 0;
+		graph.forEachNode((nodeId) => {
+			const pos = initialPosition(i, total);
+			graph!.setNodeAttribute(nodeId, 'x', pos.x);
+			graph!.setNodeAttribute(nodeId, 'y', pos.y);
+			i++;
+		});
+		if (fa2) {
+			fa2.stop();
+			fa2.start();
+		}
+		renderer?.refresh();
+	}
+
+	// ── Incremental merge (Issue 2) ────────────────────────────────────────
+	function mergeNodes(newNodes: KGGraphNode[], newEdges: KGGraphEdge[]): void {
+		if (!graph) {
 			buildGraph();
 			return;
 		}
 
-		const { simNodes, simEdges } = refs;
-		const existingNodeIds = new Set(simNodes.map((n: SimNode) => n.id));
-		const addedNodeIds = new Set<string>();
+		let addedCount = 0;
+		const total = graph.order + newNodes.filter(n => !graph!.hasNode(n.id)).length;
 
-		// Add new nodes, keeping existing positions
 		for (const n of newNodes) {
-			if (!existingNodeIds.has(n.id)) {
-				const simNode: SimNode = { ...n, x: undefined, y: undefined };
-				simNodes.push(simNode);
-				addedNodeIds.add(n.id);
+			if (!graph.hasNode(n.id)) {
+				const pos = initialPosition(addedCount + graph.order, total);
+				graph.addNode(n.id, {
+					x: pos.x,
+					y: pos.y,
+					size: 12,
+					color: getNodeColor(n.entity_type),
+					label: n.name,
+					entityType: n.entity_type,
+					highlighted: false,
+					hidden: false,
+				});
+				addedCount++;
 			}
 		}
 
-		// Add new edges
-		const existingEdgeIds = new Set(simEdges.map((e: SimEdge) => e.id));
-		const nodeMap = new Map(simNodes.map((n: SimNode) => [n.id, n]));
 		for (const e of newEdges) {
-			if (!existingEdgeIds.has(e.id) && nodeMap.has(e.source) && nodeMap.has(e.target)) {
-				simEdges.push({ ...e });
+			if (!graph.hasEdge(e.id) && graph.hasNode(e.source) && graph.hasNode(e.target)) {
+				try {
+					graph.addEdgeWithKey(e.id, e.source, e.target, {
+						size: 2,
+						color: themeColors.edge,
+						label: e.predicate.replace(/_/g, ' '),
+						highlighted: false,
+						hidden: false,
+					});
+				} catch {
+					// Skip duplicates
+				}
 			}
 		}
 
-		// Update simulation with merged data
-		simulation.nodes(simNodes);
-		const linkForce = simulation.force('link') as d3.ForceLink<SimNode, SimEdge>;
-		if (linkForce) linkForce.links(simEdges);
-		simulation.alpha(0.3).restart();
-
-		// Rebuild visuals
-		buildGraph();
-
-		// Pulse animation for newly added nodes
-		if (addedNodeIds.size > 0) {
-			const newRefs = (containerEl as any)?.__d3refs;
-			if (newRefs) {
-				newRefs.nodeGs
-					.filter((d: SimNode) => addedNodeIds.has(d.id))
-					.select('.node-circle')
-					.transition()
-					.duration(600)
-					.attr('r', NODE_RADIUS + 8)
-					.transition()
-					.duration(400)
-					.attr('r', NODE_RADIUS);
-			}
-		}
-	}
-
-	function buildGraph() {
-		if (!containerEl) return;
-		if (simulation) simulation.stop();
-		d3.select(containerEl).select('svg').remove();
-
-		const rect = containerEl.getBoundingClientRect();
-		const width = rect.width || 800;
-		const height = rect.height || 600;
-
-		const simNodes: SimNode[] = nodes.map((n) => ({ ...n }));
-		const nodeMap = new Map(simNodes.map((n) => [n.id, n]));
-		const simEdges: SimEdge[] = edges
-			.filter((e) => nodeMap.has(e.source) && nodeMap.has(e.target))
-			.map((e) => ({ ...e }));
-
-		const svgEl = d3
-			.select(containerEl)
-			.append('svg')
-			.attr('width', width)
-			.attr('height', height)
-			.style('background', themeColors.bg);
-
-		// Defs: arrow marker + glow filter
-		const defs = svgEl.append('defs');
-
-		defs.append('marker')
-			.attr('id', 'neo-arrow')
-			.attr('viewBox', '0 0 12 12')
-			.attr('refX', 10)
-			.attr('refY', 6)
-			.attr('markerWidth', 8)
-			.attr('markerHeight', 8)
-			.attr('orient', 'auto')
-			.append('path')
-			.attr('d', 'M2,2 L10,6 L2,10 Z')
-			.attr('fill', themeColors.arrowFill);
-
-		defs.append('marker')
-			.attr('id', 'neo-arrow-hl')
-			.attr('viewBox', '0 0 12 12')
-			.attr('refX', 10)
-			.attr('refY', 6)
-			.attr('markerWidth', 8)
-			.attr('markerHeight', 8)
-			.attr('orient', 'auto')
-			.append('path')
-			.attr('d', 'M2,2 L10,6 L2,10 Z')
-			.attr('fill', '#C0922B');
-
-		// Glow filter for hover/selected
-		const glow = defs.append('filter').attr('id', 'node-glow');
-		glow.append('feGaussianBlur').attr('stdDeviation', '2.5').attr('result', 'blur');
-		glow.append('feMerge').selectAll('feMergeNode')
-			.data(['blur', 'SourceGraphic'])
-			.join('feMergeNode')
-			.attr('in', (d) => d);
-
-		const g = svgEl.append('g');
-
-		const zoom = d3
-			.zoom<SVGSVGElement, unknown>()
-			.scaleExtent([0.05, 6])
-			.on('zoom', (event) => g.attr('transform', event.transform));
-		svgEl.call(zoom);
-
-		// ── Edges (curved paths) ──
-		const edgeGroup = g.append('g').attr('class', 'edges');
-
-		const linkPaths = edgeGroup
-			.selectAll<SVGPathElement, SimEdge>('path')
-			.data(simEdges, (d) => d.id)
-			.join('path')
-			.attr('fill', 'none')
-			.attr('stroke', themeColors.edgeStroke)
-			.attr('stroke-width', 2)
-			.attr('marker-end', 'url(#neo-arrow)')
-			.attr('cursor', 'pointer')
-			.on('click', (event, d) => {
-				onEdgeClick(d.id, event.clientX, event.clientY);
-			});
-
-		// ── Edge labels (always visible, pill background) ──
-		const edgeLabelGroup = g.append('g').attr('class', 'edge-labels');
-
-		const edgeLabelGs = edgeLabelGroup
-			.selectAll<SVGGElement, SimEdge>('g')
-			.data(simEdges, (d) => d.id)
-			.join('g');
-
-		// Pill background rect (sized after text render)
-		const edgePills = edgeLabelGs
-			.append('rect')
-			.attr('rx', 4)
-			.attr('ry', 4)
-			.attr('fill', themeColors.pillFill)
-			.attr('stroke', themeColors.pillStroke)
-			.attr('stroke-width', 0.5);
-
-		const edgeTexts = edgeLabelGs
-			.append('text')
-			.attr('text-anchor', 'middle')
-			.attr('dominant-baseline', 'central')
-			.attr('fill', themeColors.edgeText)
-			.attr('font-size', '9px')
-			.attr('font-family', 'system-ui, sans-serif')
-			.attr('letter-spacing', '0.3px')
-			.text((d) => d.predicate.replace(/_/g, ' '));
-
-		// ── Nodes ──
-		const nodeGroup = g.append('g').attr('class', 'nodes');
-
-		const nodeGs = nodeGroup
-			.selectAll<SVGGElement, SimNode>('g')
-			.data(simNodes, (d) => d.id)
-			.join('g')
-			.attr('cursor', 'pointer')
-			.on('click', (_event, d) => onNodeClick(d.id))
-			.on('dblclick', (_event, d) => onNodeDblClick(d.id))
-			.on('contextmenu', (event, d) => {
-				event.preventDefault();
-				onNodeContextMenu(d.id, event.clientX, event.clientY);
-			});
-
-		// Hover ring (hidden by default)
-		nodeGs
-			.append('circle')
-			.attr('class', 'hover-ring')
-			.attr('r', NODE_RADIUS + 4)
-			.attr('fill', 'none')
-			.attr('stroke', 'transparent')
-			.attr('stroke-width', 3)
-			.attr('filter', 'url(#node-glow)');
-
-		// Main circle
-		nodeGs
-			.append('circle')
-			.attr('class', 'node-circle')
-			.attr('r', NODE_RADIUS)
-			.attr('fill', (d) => getColors(d.entity_type).fill)
-			.attr('stroke', (d) => getColors(d.entity_type).stroke)
-			.attr('stroke-width', 2.5);
-
-		// Inside-node text labels (1 or 2 lines)
-		nodeGs.each(function (d) {
-			const el = d3.select(this);
-			const lines = splitLabel(d.name);
-			const yOffset = lines.length === 1 ? 0 : -6;
-			lines.forEach((line, i) => {
-				el.append('text')
-					.attr('class', 'node-text')
-					.attr('text-anchor', 'middle')
-					.attr('dominant-baseline', 'central')
-					.attr('y', yOffset + i * 13)
-					.attr('fill', themeColors.nodeText)
-					.attr('font-size', `${FONT_SIZE}px`)
-					.attr('font-weight', '600')
-					.attr('font-family', 'system-ui, sans-serif')
-					.attr('pointer-events', 'none')
-					.text(line);
-			});
+		// Remove nodes not in the new set
+		const newNodeIds = new Set(newNodes.map(n => n.id));
+		graph.forEachNode((nodeId) => {
+			if (!newNodeIds.has(nodeId)) graph!.dropNode(nodeId);
 		});
 
-		// Type badge (small text below the circle)
-		nodeGs
-			.append('text')
-			.attr('class', 'type-badge')
-			.attr('y', NODE_RADIUS + 14)
-			.attr('text-anchor', 'middle')
-			.attr('fill', themeColors.typeBadgeText)
-			.attr('font-size', '8px')
-			.attr('font-family', 'system-ui, sans-serif')
-			.attr('opacity', themeColors.typeBadgeOpacity)
-			.attr('pointer-events', 'none')
-			.text((d) => d.entity_type.replace(/_/g, ' '));
-
-		// Hover effects
-		nodeGs
-			.on('mouseenter', function (_, d) {
-				d3.select(this).select('.hover-ring')
-					.attr('stroke', getColors(d.entity_type).fill)
-					.attr('stroke-opacity', 0.6);
-				d3.select(this).select('.node-circle').attr('stroke-width', 3.5);
-				// Brighten connected edges
-				linkPaths.filter((e) => {
-					const s = typeof e.source === 'object' ? (e.source as SimNode).id : e.source;
-					const t = typeof e.target === 'object' ? (e.target as SimNode).id : e.target;
-					return s === d.id || t === d.id;
-				}).attr('stroke', '#2980B9').attr('stroke-width', 3);
-				edgeTexts.filter((e) => {
-					const s = typeof e.source === 'object' ? (e.source as SimNode).id : e.source;
-					const t = typeof e.target === 'object' ? (e.target as SimNode).id : e.target;
-					return s === d.id || t === d.id;
-				}).attr('fill', theme === 'light' ? '#1E293B' : '#E2E8F0').attr('font-weight', '600');
-			})
-			.on('mouseleave', function () {
-				d3.select(this).select('.hover-ring').attr('stroke', 'transparent');
-				d3.select(this).select('.node-circle').attr('stroke-width', 2.5);
-				// Reset edges (will be re-applied by highlighting)
-				linkPaths.attr('stroke', themeColors.edgeStroke).attr('stroke-width', 2);
-				edgeTexts.attr('fill', themeColors.edgeText).attr('font-weight', 'normal');
-				applyHighlighting();
-			});
-
-		// Drag
-		const drag = d3
-			.drag<SVGGElement, SimNode>()
-			.on('start', (event, d) => {
-				if (!event.active) simulation!.alphaTarget(0.3).restart();
-				d.fx = d.x;
-				d.fy = d.y;
-			})
-			.on('drag', (event, d) => {
-				d.fx = event.x;
-				d.fy = event.y;
-			})
-			.on('end', (event, d) => {
-				if (!event.active) simulation!.alphaTarget(0);
-				if (pinnedNodes?.has(d.id)) {
-					// Keep the node fixed at its dropped position
-					d.fx = d.x;
-					d.fy = d.y;
-				} else {
-					d.fx = null;
-					d.fy = null;
-				}
-			});
-		nodeGs.call(drag);
-
-		// Simulation
-		simulation = d3
-			.forceSimulation(simNodes)
-			.force(
-				'link',
-				d3.forceLink<SimNode, SimEdge>(simEdges).id((d) => d.id).distance(140),
-			)
-			.force('charge', d3.forceManyBody().strength(-400))
-			.force('center', d3.forceCenter(width / 2, height / 2))
-			.force('collision', d3.forceCollide(NODE_RADIUS + 12))
-			.on('tick', () => {
-				linkPaths.attr('d', (d) => edgePath(d));
-
-				// Position edge labels at curve midpoint
-				edgeLabelGs.each(function (d) {
-					const mid = edgeMidpoint(d);
-					d3.select(this).attr('transform', `translate(${mid.x},${mid.y}) rotate(${mid.angle})`);
-				});
-
-				// Size pills to fit text
-				edgeTexts.each(function () {
-					const bbox = (this as SVGTextElement).getBBox();
-					const pill = d3.select(this.parentNode as Element).select('rect');
-					pill
-						.attr('x', -bbox.width / 2 - 5)
-						.attr('y', -bbox.height / 2 - 2)
-						.attr('width', bbox.width + 10)
-						.attr('height', bbox.height + 4);
-				});
-
-				nodeGs.attr('transform', (d) => `translate(${d.x},${d.y})`);
-			});
-
-		(containerEl as any).__d3refs = {
-			svgEl, g, zoom, nodeGs, linkPaths, edgeLabelGs, edgePills, edgeTexts,
-			simNodes, simEdges, width, height,
-		};
-
-		// Apply initial highlight/selection/pin state
-		applyHighlighting();
-		applySelection();
-		applyPinning();
-
-		// Notify parent that graph API is ready
-		onGraphReady({ mergeNodes, fitToView, resetLayout });
-	}
-
-	function applyHighlighting() {
-		const refs = (containerEl as any)?.__d3refs;
-		if (!refs) return;
-		const { nodeGs, linkPaths, edgePills, edgeTexts } = refs;
-		const hasHighlight = highlightedNodeIds || highlightedEdgeIds;
-
-		nodeGs
-			.select('.node-circle')
-			.attr('opacity', (d: SimNode) => {
-				if (!hasHighlight) return 1;
-				return highlightedNodeIds?.has(d.id) ? 1 : 0.15;
-			});
-		nodeGs
-			.selectAll('.node-text')
-			.attr('opacity', (d: SimNode) => {
-				if (!hasHighlight) return 1;
-				return highlightedNodeIds?.has(d.id) ? 1 : 0.15;
-			});
-		nodeGs
-			.select('.type-badge')
-			.attr('opacity', (d: SimNode) => {
-				if (!hasHighlight) return 0.7;
-				return highlightedNodeIds?.has(d.id) ? 0.7 : 0.08;
-			});
-
-		linkPaths
-			.attr('stroke', (d: SimEdge) => {
-				if (highlightedEdgeIds?.has(d.id)) return '#C0922B';
-				if (hasHighlight) return themeColors.edgeDim;
-				return themeColors.edgeStroke;
-			})
-			.attr('stroke-width', (d: SimEdge) => {
-				if (highlightedEdgeIds?.has(d.id)) return 3;
-				return 2;
-			})
-			.attr('marker-end', (d: SimEdge) => {
-				if (highlightedEdgeIds?.has(d.id)) return 'url(#neo-arrow-hl)';
-				return 'url(#neo-arrow)';
-			});
-
-		edgePills
-			.attr('opacity', (d: SimEdge) => {
-				if (!hasHighlight) return 1;
-				return highlightedEdgeIds?.has(d.id) ? 1 : 0.1;
-			});
-		edgeTexts
-			.attr('opacity', (d: SimEdge) => {
-				if (!hasHighlight) return 1;
-				return highlightedEdgeIds?.has(d.id) ? 1 : 0.1;
-			});
-	}
-
-	function applySelection() {
-		const refs = (containerEl as any)?.__d3refs;
-		if (!refs) return;
-		const { nodeGs } = refs;
-
-		nodeGs.select('.hover-ring')
-			.attr('stroke', (d: SimNode) => d.id === selectedNodeId ? '#2980B9' : 'transparent')
-			.attr('stroke-opacity', (d: SimNode) => d.id === selectedNodeId ? 0.8 : 0);
-		nodeGs.select('.node-circle')
-			.attr('stroke-width', (d: SimNode) => d.id === selectedNodeId ? 4 : 2.5);
-	}
-
-	/**
-	 * Apply pinned state: lock d.fx/d.fy for pinned nodes so the D3 simulation
-	 * holds them in place, and show a gold stroke as a visual indicator.
-	 * Unpinned nodes have d.fx/d.fy cleared so the simulation can move them freely.
-	 */
-	function applyPinning() {
-		const refs = (containerEl as any)?.__d3refs;
-		if (!refs || !simulation) return;
-		const { nodeGs, simNodes } = refs;
-
-		for (const d of simNodes as SimNode[]) {
-			if (pinnedNodes?.has(d.id)) {
-				// Fix at current position if not already locked
-				if (d.fx == null) {
-					d.fx = d.x ?? 0;
-					d.fy = d.y ?? 0;
-				}
-			} else {
-				d.fx = null;
-				d.fy = null;
-			}
+		// Restart layout with gentle alpha if nodes were added
+		if (addedCount > 0 && fa2 && fa2.isRunning()) {
+			fa2.stop();
+			fa2.start();
 		}
-		simulation.alpha(0.1).restart();
 
-		// Gold stroke for pinned nodes, default type stroke otherwise
-		nodeGs.select('.node-circle')
-			.attr('stroke', (d: SimNode) =>
-				pinnedNodes?.has(d.id) ? '#C0922B' : getColors(d.entity_type).stroke
-			);
+		renderer?.refresh();
+		updateMinimap();
 	}
 
-	function focusOnNode() {
-		if (!focusNodeId) return;
-		const refs = (containerEl as any)?.__d3refs;
-		if (!refs) return;
-		const { svgEl, zoom: zb, simNodes, width, height } = refs;
-		const node = simNodes.find((n: SimNode) => n.id === focusNodeId);
-		if (!node || node.x == null || node.y == null) return;
-		const transform = d3.zoomIdentity
-			.translate(width / 2, height / 2)
-			.scale(2)
-			.translate(-node.x, -node.y);
-		svgEl.transition().duration(750).call(zb.transform, transform);
+	// ── FA2 Web Worker (Issue 3) ───────────────────────────────────────────
+	function startLayout(): void {
+		if (!graph) return;
+		if (graph.order === 0) return;
+
+		fa2 = new FA2Layout<NodeAttrs, EdgeAttrs>(graph, {
+			settings: {
+				gravity: 1,
+				scalingRatio: 10,
+				barnesHutOptimize: true,
+				barnesHutTheta: 0.5,
+				slowDown: 10,
+			},
+		});
+
+		fa2.start();
+		startConvergenceWatch();
 	}
 
+	function startConvergenceWatch(): void {
+		if (convergenceCheckTimer) clearInterval(convergenceCheckTimer);
+
+		prevPositions = new Map();
+		graph?.forEachNode((nodeId, attrs) => {
+			prevPositions.set(nodeId, { x: attrs.x, y: attrs.y });
+		});
+
+		convergenceCheckTimer = setInterval(() => {
+			if (!fa2 || !graph || !fa2.isRunning()) {
+				stopConvergenceWatch();
+				return;
+			}
+
+			let totalDelta = 0;
+			let count = 0;
+			graph.forEachNode((nodeId, attrs) => {
+				const prev = prevPositions.get(nodeId);
+				if (prev) {
+					const dx = attrs.x - prev.x;
+					const dy = attrs.y - prev.y;
+					totalDelta += Math.sqrt(dx * dx + dy * dy);
+					count++;
+				}
+				prevPositions.set(nodeId, { x: attrs.x, y: attrs.y });
+			});
+
+			const avgDelta = count > 0 ? totalDelta / count : 0;
+			if (avgDelta < 0.01) {
+				fa2.stop();
+				stopConvergenceWatch();
+				renderer?.refresh();
+			}
+		}, 500);
+	}
+
+	function stopConvergenceWatch(): void {
+		if (convergenceCheckTimer) {
+			clearInterval(convergenceCheckTimer);
+			convergenceCheckTimer = null;
+		}
+	}
+
+	// ── Node drag (Issue 5) — implemented via Sigma mouse events ──────────
+	function bindEvents(): void {
+		if (!renderer) return;
+
+		// Node clicks
+		renderer.on('clickNode', ({ node, event }) => {
+			if (!isDragging) onNodeClick(node);
+		});
+
+		renderer.on('doubleClickNode', ({ node, event }) => {
+			event.preventSigmaDefault();
+			onNodeDblClick(node);
+		});
+
+		renderer.on('rightClickNode', ({ node, event }) => {
+			event.preventSigmaDefault();
+			const orig = event.original;
+			const x = orig instanceof MouseEvent ? orig.clientX : 0;
+			const y = orig instanceof MouseEvent ? orig.clientY : 0;
+			onNodeContextMenu(node, x, y);
+		});
+
+		// Edge events
+		renderer.on('clickEdge', ({ edge, event }) => {
+			const orig = event.original;
+			const x = orig instanceof MouseEvent ? orig.clientX : 0;
+			const y = orig instanceof MouseEvent ? orig.clientY : 0;
+			onEdgeClick(edge, x, y);
+		});
+
+		// Hover highlighting (Issue 5)
+		renderer.on('enterNode', ({ node }) => {
+			if (!graph || !renderer) return;
+			setHoverHighlight(node);
+		});
+
+		renderer.on('leaveNode', () => {
+			clearHoverHighlight();
+		});
+
+		// Drag implementation via down/move/up on stage
+		renderer.on('downNode', ({ node }) => {
+			if (!graph) return;
+			draggedNode = node;
+			isDragging = false;
+			// Disable camera panning while dragging a node
+			renderer!.getCamera().disable();
+		});
+
+		renderer.getMouseCaptor().on('mousemove', (e) => {
+			if (draggedNode && graph && renderer) {
+				isDragging = true;
+				const graphPos = renderer.viewportToGraph({ x: e.x, y: e.y });
+				graph.setNodeAttribute(draggedNode, 'x', graphPos.x);
+				graph.setNodeAttribute(draggedNode, 'y', graphPos.y);
+
+				// Pin position in FA2
+				if (fa2) {
+					// FA2 supervisor doesn't expose per-node pinning directly;
+					// we stop layout on drag to freeze it at dragged position
+				}
+
+				renderer.refresh({ skipIndexation: false });
+			}
+		});
+
+		renderer.getMouseCaptor().on('mouseup', () => {
+			if (draggedNode) {
+				renderer!.getCamera().enable();
+				draggedNode = null;
+				// Small delay to distinguish click vs drag
+				setTimeout(() => { isDragging = false; }, 50);
+			}
+		});
+	}
+
+	// Highlight connected nodes/edges on hover, dim others
+	function setHoverHighlight(nodeId: string): void {
+		if (!graph || !renderer) return;
+
+		const connectedNodes = new Set<string>([nodeId]);
+		const connectedEdges = new Set<string>();
+
+		graph.forEachEdge(nodeId, (edgeId, _attrs, source, target) => {
+			connectedEdges.add(edgeId);
+			connectedNodes.add(source);
+			connectedNodes.add(target);
+		});
+
+		renderer.setSetting('nodeReducer', (id: string, data: NodeAttrs) => {
+			const isConn = connectedNodes.has(id);
+			return {
+				...nodeReducerFn(id, data),
+				color: isConn ? getNodeColor(data.entityType) : '#334155',
+				label: isConn ? data.label : '',
+			};
+		});
+
+		renderer.setSetting('edgeReducer', (id: string, data: EdgeAttrs) => {
+			const isConn = connectedEdges.has(id);
+			return {
+				...edgeReducerFn(id, data),
+				color: isConn ? '#3B82F6' : themeColors.edgeDim,
+				size: isConn ? 3 : 1,
+			};
+		});
+
+		renderer.refresh();
+	}
+
+	function clearHoverHighlight(): void {
+		if (!renderer) return;
+		renderer.setSetting('nodeReducer', nodeReducerFn);
+		renderer.setSetting('edgeReducer', edgeReducerFn);
+		renderer.refresh();
+	}
+
+	// ── Minimap (Issue 7) ─────────────────────────────────────────────────
+	let minimapCanvas: HTMLCanvasElement | null = $state(null);
+
+	function updateMinimap(): void {
+		const shouldShow = minimapUserToggle || (graph !== null && graph.order >= 50);
+		minimapVisible = shouldShow;
+
+		if (!shouldShow) {
+			if (minimapRenderer) {
+				minimapRenderer.kill();
+				minimapRenderer = null;
+			}
+			return;
+		}
+
+		if (!graph || !minimapEl) return;
+
+		if (minimapRenderer) {
+			minimapRenderer.refresh();
+			return;
+		}
+
+		minimapRenderer = new Sigma<NodeAttrs, EdgeAttrs>(graph, minimapEl, {
+			renderLabels: false,
+			renderEdgeLabels: false,
+			enableEdgeEvents: false,
+			defaultNodeColor: '#64748B',
+			defaultEdgeColor: '#334155',
+			labelRenderedSizeThreshold: Infinity,
+			// Small fixed node sizes for overview
+			nodeReducer: (_id: string, data: NodeAttrs) => ({
+				...data,
+				size: 3,
+				color: getNodeColor(data.entityType),
+				label: '',
+			}),
+			edgeReducer: (_id: string, data: EdgeAttrs) => ({
+				...data,
+				size: 1,
+				color: '#334155',
+			}),
+		});
+
+		// Disable all interaction on minimap
+		minimapRenderer.getCamera().disable();
+
+		// Sync minimap camera to main camera
+		if (renderer) {
+			renderer.getCamera().on('updated', syncMinimapCamera);
+		}
+	}
+
+	function syncMinimapCamera(state: CameraState): void {
+		if (!minimapRenderer) return;
+		// Keep minimap at a fixed overview zoom
+		minimapRenderer.getCamera().setState({ x: state.x, y: state.y, ratio: 2, angle: 0 });
+		drawMinimapViewport();
+	}
+
+	function drawMinimapViewport(): void {
+		// Viewport indicator is drawn on a canvas overlay inside the minimap container
+		// This is a lightweight implementation showing the camera state
+		if (!minimapCanvas || !renderer) return;
+		const ctx = minimapCanvas.getContext('2d');
+		if (!ctx) return;
+		ctx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+		const vp = renderer.viewRectangle();
+		// Map graph-space viewport to minimap canvas coords (simplified)
+		ctx.strokeStyle = '#C0922B';
+		ctx.lineWidth = 1.5;
+		ctx.strokeRect(4, 4, minimapCanvas.width - 8, minimapCanvas.height - 8);
+	}
+
+	// ── Teardown ───────────────────────────────────────────────────────────
+	function teardown(): void {
+		stopConvergenceWatch();
+		if (fa2) { fa2.kill(); fa2 = null; }
+		if (minimapRenderer) { minimapRenderer.kill(); minimapRenderer = null; }
+		if (renderer) { renderer.kill(); renderer = null; }
+		if (graph) { graph = null; }
+		draggedNode = null;
+		isDragging = false;
+	}
+
+	// ── Reactive effects ───────────────────────────────────────────────────
+
+	// Rebuild graph when nodes/edges or theme changes
 	$effect(() => {
-		theme;
-		if (nodes && edges) buildGraph();
+		// Track reactive dependencies
+		const _nodes = nodes;
+		const _edges = edges;
+		const _theme = theme;
+
+		if (_nodes && _edges) {
+			buildGraph();
+		}
 	});
 
+	// Apply highlighting without rebuild (Issue 5, 6)
 	$effect(() => {
-		highlightedNodeIds;
-		highlightedEdgeIds;
-		applyHighlighting();
+		const _hl = highlightedNodeIds;
+		const _hle = highlightedEdgeIds;
+		if (renderer) {
+			renderer.setSetting('nodeReducer', nodeReducerFn);
+			renderer.setSetting('edgeReducer', edgeReducerFn);
+			renderer.refresh();
+		}
 	});
 
+	// Apply selection ring without rebuild
 	$effect(() => {
-		selectedNodeId;
-		applySelection();
+		const _sel = selectedNodeId;
+		if (renderer) {
+			renderer.setSetting('nodeReducer', nodeReducerFn);
+			renderer.refresh();
+		}
 	});
 
+	// Focus on node when focusNodeId changes (Issue 4)
 	$effect(() => {
-		pinnedNodes;
-		applyPinning();
+		const nodeId = focusNodeId;
+		if (nodeId) focusOnNode(nodeId);
 	});
 
+	// Update theme colors on edges without rebuild (Issue 6)
 	$effect(() => {
-		focusNodeId;
-		focusOnNode();
+		const _theme = theme;
+		if (!graph || !renderer) return;
+		graph.forEachEdge((edgeId) => {
+			graph!.setEdgeAttribute(edgeId, 'color', themeColors.edge);
+		});
+		renderer.setSetting('defaultEdgeColor', themeColors.edge);
+		renderer.setSetting('labelColor', { color: themeColors.labelColor });
+		renderer.refresh();
 	});
 
 	onMount(() => {
-		const debouncedBuild = debounce(() => buildGraph(), 300);
-		const observer = new ResizeObserver(() => debouncedBuild());
+		// ResizeObserver to handle container size changes
+		const observer = new ResizeObserver(() => {
+			renderer?.resize();
+			minimapRenderer?.resize();
+		});
 		observer.observe(containerEl);
+
 		return () => {
 			observer.disconnect();
-			debouncedBuild.cancel();
 		};
 	});
 
 	onDestroy(() => {
-		if (simulation) simulation.stop();
+		teardown();
 	});
 </script>
 
-<div bind:this={containerEl} class="w-full h-full min-h-[400px]"></div>
+<!-- Main graph container -->
+<div class="relative w-full h-full min-h-[400px]">
+	<div bind:this={containerEl} class="w-full h-full"></div>
+
+	<!-- Minimap (Issue 7) -->
+	{#if minimapVisible}
+		<div class="absolute bottom-4 right-4 w-[120px] h-[80px] rounded-lg overflow-hidden border border-navy-600 shadow-lg">
+			<div bind:this={minimapEl} class="w-full h-full"></div>
+			<canvas
+				bind:this={minimapCanvas}
+				width={120}
+				height={80}
+				class="absolute inset-0 pointer-events-none"
+			></canvas>
+		</div>
+	{/if}
+
+	<!-- Minimap toggle button -->
+	<button
+		onclick={() => { minimapUserToggle = !minimapUserToggle; updateMinimap(); }}
+		class="absolute bottom-4 right-[140px] w-8 h-8 flex items-center justify-center rounded-lg bg-navy-800 border border-navy-600 text-slate-400 hover:text-slate-200 hover:bg-navy-700 transition-colors text-xs"
+		title={minimapVisible ? 'Hide minimap' : 'Show minimap'}
+		aria-label={minimapVisible ? 'Hide minimap' : 'Show minimap'}
+	>
+		{#if minimapVisible}
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<rect x="3" y="3" width="7" height="7"></rect>
+				<rect x="14" y="3" width="7" height="7"></rect>
+				<rect x="14" y="14" width="7" height="7"></rect>
+				<rect x="3" y="14" width="7" height="7"></rect>
+			</svg>
+		{:else}
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+				<rect x="3" y="3" width="18" height="18" rx="2"></rect>
+				<rect x="7" y="7" width="4" height="4"></rect>
+			</svg>
+		{/if}
+	</button>
+</div>

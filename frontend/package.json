@@ -36,10 +36,14 @@
     "@types/d3": "^7.4.3",
     "chart.js": "^4.5.1",
     "d3": "^7.9.0",
+    "graphology": "^0.25.4",
+    "graphology-layout": "^0.6.1",
+    "graphology-layout-forceatlas2": "^0.10.1",
     "html2pdf.js": "^0.10.3",
     "isomorphic-dompurify": "^3.7.1",
     "marked": "^14.0.0",
     "papaparse": "^5.5.3",
+    "sigma": "^3.0.2",
     "xlsx": "^0.18.5"
   }
 }
