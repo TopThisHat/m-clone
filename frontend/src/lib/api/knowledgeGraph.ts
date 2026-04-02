@@ -119,6 +119,13 @@ export interface RelationshipPatch {
 	evidence?: string;
 }
 
+export interface KGSuggestResult {
+	id: string;
+	name: string;
+	entity_type: string;
+	relationship_count: number;
+}
+
 export const kgApi = {
 	listEntities: (params: {
 		search?: string;
@@ -218,6 +225,12 @@ export const kgApi = {
 		if (params.exclude_ids?.length) q.set('exclude_ids', params.exclude_ids.join(','));
 		if (params.team_id) q.set('team_id', params.team_id);
 		return apiFetch(`/api/kg/entities/${entityId}/neighbors?${q}`);
+	},
+
+	// Autocomplete suggest
+	suggest: (q: string, teamId: string, limit = 10): Promise<KGSuggestResult[]> => {
+		const params = new URLSearchParams({ q, team_id: teamId, limit: String(limit) });
+		return apiFetch(`/api/kg/suggest?${params}`);
 	},
 
 	// Super admin: view any team's graph

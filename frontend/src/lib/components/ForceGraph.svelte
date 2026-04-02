@@ -20,6 +20,7 @@
 		highlightedEdgeIds = null,
 		focusNodeId = null,
 		selectedNodeId = null,
+		pinnedNodes = null,
 		theme = 'dark',
 		onNodeClick = () => {},
 		onNodeDblClick = () => {},
@@ -33,6 +34,8 @@
 		highlightedEdgeIds?: Set<string> | null;
 		focusNodeId?: string | null;
 		selectedNodeId?: string | null;
+		/** Node IDs that should be fixed in place (d.fx/d.fy locked in D3 simulation). */
+		pinnedNodes?: Set<string> | null;
 		theme?: 'light' | 'dark';
 		onNodeClick?: (nodeId: string) => void;
 		onNodeDblClick?: (nodeId: string) => void;
@@ -200,7 +203,7 @@
 		svgEl.transition().duration(500).call(zb.transform, transform);
 	}
 
-	// Reset layout: unpin all nodes, randomize positions, restart simulation
+	// Reset layout: randomize positions and restart simulation, then re-apply pins
 	function resetLayout() {
 		const refs = (containerEl as any)?.__d3refs;
 		if (!refs || !simulation) return;
@@ -212,6 +215,8 @@
 			n.y = height / 2 + (Math.random() - 0.5) * height * 0.6;
 		}
 		simulation.alpha(1).restart();
+		// Re-apply pins so pinned nodes lock at their new random start positions
+		applyPinning();
 	}
 
 	// Incremental merge: update simulation data without full rebuild
@@ -487,8 +492,14 @@
 			})
 			.on('end', (event, d) => {
 				if (!event.active) simulation!.alphaTarget(0);
-				d.fx = null;
-				d.fy = null;
+				if (pinnedNodes?.has(d.id)) {
+					// Keep the node fixed at its dropped position
+					d.fx = d.x;
+					d.fy = d.y;
+				} else {
+					d.fx = null;
+					d.fy = null;
+				}
 			});
 		nodeGs.call(drag);
 
@@ -530,9 +541,10 @@
 			simNodes, simEdges, width, height,
 		};
 
-		// Apply initial highlight/selection state
+		// Apply initial highlight/selection/pin state
 		applyHighlighting();
 		applySelection();
+		applyPinning();
 
 		// Notify parent that graph API is ready
 		onGraphReady({ mergeNodes, fitToView, resetLayout });
@@ -602,6 +614,37 @@
 			.attr('stroke-width', (d: SimNode) => d.id === selectedNodeId ? 4 : 2.5);
 	}
 
+	/**
+	 * Apply pinned state: lock d.fx/d.fy for pinned nodes so the D3 simulation
+	 * holds them in place, and show a gold stroke as a visual indicator.
+	 * Unpinned nodes have d.fx/d.fy cleared so the simulation can move them freely.
+	 */
+	function applyPinning() {
+		const refs = (containerEl as any)?.__d3refs;
+		if (!refs || !simulation) return;
+		const { nodeGs, simNodes } = refs;
+
+		for (const d of simNodes as SimNode[]) {
+			if (pinnedNodes?.has(d.id)) {
+				// Fix at current position if not already locked
+				if (d.fx == null) {
+					d.fx = d.x ?? 0;
+					d.fy = d.y ?? 0;
+				}
+			} else {
+				d.fx = null;
+				d.fy = null;
+			}
+		}
+		simulation.alpha(0.1).restart();
+
+		// Gold stroke for pinned nodes, default type stroke otherwise
+		nodeGs.select('.node-circle')
+			.attr('stroke', (d: SimNode) =>
+				pinnedNodes?.has(d.id) ? '#C0922B' : getColors(d.entity_type).stroke
+			);
+	}
+
 	function focusOnNode() {
 		if (!focusNodeId) return;
 		const refs = (containerEl as any)?.__d3refs;
@@ -630,6 +673,11 @@
 	$effect(() => {
 		selectedNodeId;
 		applySelection();
+	});
+
+	$effect(() => {
+		pinnedNodes;
+		applyPinning();
 	});
 
 	$effect(() => {

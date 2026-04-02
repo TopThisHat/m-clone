@@ -31,6 +31,7 @@ from app.db import (
     db_query_kg,
     db_resolve_entity_flag,
     db_search_kg,
+    db_suggest_kg_entities,
     db_sync_entity_from_master,
     db_update_kg_entity,
     db_update_kg_relationship,
@@ -210,6 +211,28 @@ async def search_entities(
         raise _no_db()
 
 
+@router.get("/suggest")
+async def suggest_entities(
+    q: str = Query(description="Search prefix or fuzzy query string"),
+    team_id: str | None = Query(default=None, description="Team UUID; auto-resolved if omitted"),
+    limit: int = Query(default=10, ge=1, le=50, description="Max results to return (1–50)"),
+    user: dict[str, Any] = Depends(get_current_user),
+):
+    """Fast entity autocomplete using pg_trgm similarity.
+
+    Returns up to *limit* entities matching *q* via ILIKE or trigram similarity,
+    sorted by similarity score DESC.  Target: <50ms for teams with ≤5000 entities.
+
+    Each result contains ``id``, ``name``, ``entity_type``, and
+    ``relationship_count``.
+    """
+    try:
+        team_id = await _resolve_team_access(user, team_id)
+        return await db_suggest_kg_entities(q, team_id=team_id, limit=limit)
+    except DatabaseNotConfigured:
+        raise _no_db()
+
+
 @router.get("/stats")
 async def get_stats(
     team_id: str | None = Query(default=None),
@@ -307,7 +330,7 @@ async def update_entity(
         patch = body.model_dump(exclude_none=True)
         if body.metadata is not None:
             patch["metadata"] = json.dumps(body.metadata)
-        updated = await db_update_kg_entity(entity_id, patch)
+        updated = await db_update_kg_entity(entity_id, patch, entity_team)
         return updated
     except DatabaseNotConfigured:
         raise _no_db()
@@ -323,7 +346,7 @@ async def delete_entity(entity_id: str, user: dict[str, Any] = Depends(get_curre
         if not entity_team:
             raise HTTPException(status_code=400, detail="Cannot determine entity team")
         await _require_kg_edit(user, entity_team)
-        deleted = await db_delete_kg_entity(entity_id)
+        deleted = await db_delete_kg_entity(entity_id, entity_team)
         if not deleted:
             raise HTTPException(status_code=404, detail="Entity not found")
         return {"deleted": True}

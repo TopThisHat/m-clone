@@ -625,6 +625,62 @@ async def db_search_kg(
     return [_kg_entity_to_dict(r) for r in rows]
 
 
+async def db_suggest_kg_entities(
+    query: str,
+    team_id: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Fast entity autocomplete using pg_trgm similarity and ILIKE.
+
+    Matches entities whose name contains *query* (ILIKE) or is trigram-similar
+    to *query*.  Results are sorted by similarity score DESC so the closest
+    matches appear first.  Strictly team-scoped.
+
+    Designed for <50ms response via the GIN trigram index on kg_entities.name.
+
+    Returns a list of ``{id, name, entity_type, relationship_count}`` dicts.
+    """
+    limit = min(max(limit, 1), 50)
+    pattern = f"%{query.lower()}%"
+    async with _acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT e.id, e.name, e.entity_type,
+                   similarity(LOWER(e.name), LOWER($1)) AS sim,
+                   COALESCE(rc.cnt, 0)::int AS relationship_count
+            FROM playbook.kg_entities e
+            LEFT JOIN (
+                SELECT entity_id, COUNT(*) AS cnt FROM (
+                    SELECT subject_id AS entity_id
+                      FROM playbook.kg_relationships
+                     WHERE team_id = $2::uuid
+                    UNION ALL
+                    SELECT object_id AS entity_id
+                      FROM playbook.kg_relationships
+                     WHERE team_id = $2::uuid
+                ) sub GROUP BY entity_id
+            ) rc ON rc.entity_id = e.id
+            WHERE e.team_id = $2::uuid
+              AND (
+                LOWER(e.name) LIKE $3
+                OR similarity(LOWER(e.name), LOWER($1)) > 0.1
+              )
+            ORDER BY sim DESC, e.name
+            LIMIT $4
+            """,
+            query, team_id, pattern, limit,
+        )
+    return [
+        {
+            "id": str(r["id"]),
+            "name": r["name"],
+            "entity_type": r["entity_type"],
+            "relationship_count": r["relationship_count"],
+        }
+        for r in rows
+    ]
+
+
 async def db_get_kg_stats(team_id: str) -> dict[str, Any]:
     """Get aggregate KG statistics for a single team."""
     async with _acquire() as conn:

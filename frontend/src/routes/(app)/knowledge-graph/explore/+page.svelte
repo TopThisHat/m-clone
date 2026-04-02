@@ -881,6 +881,7 @@
 					{highlightedEdgeIds}
 					{focusNodeId}
 					{selectedNodeId}
+					{pinnedNodes}
 					theme={$theme}
 					onNodeClick={handleNodeClick}
 					onNodeDblClick={handleNodeDblClick}
