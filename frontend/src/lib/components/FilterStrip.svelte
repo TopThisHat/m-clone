@@ -62,14 +62,15 @@
 	);
 </script>
 
-<div class="bg-navy-900 border-t border-navy-700">
+<div class="backdrop-blur-sm bg-navy-900/95 border-t border-navy-700">
 	<!-- Collapsed bar (always visible) -->
 	<div class="flex items-center gap-3 px-4 py-2">
-		<span class="text-xs px-2 py-0.5 rounded border font-mono {countPillClass}">
+		<span class="text-xs px-2.5 py-0.5 rounded-full border font-mono {countPillClass}">
 			{nodeCount} nodes
 		</span>
-		<span class="text-xs text-slate-500">·</span>
-		<span class="text-xs text-slate-400">{edgeCount} edges</span>
+		<span class="text-xs px-2.5 py-0.5 rounded-full border border-navy-600/60 bg-navy-800/60 text-slate-400">
+			{edgeCount} edges
+		</span>
 
 		{#if hasActiveFilters}
 			<span class="text-[10px] px-1.5 py-0.5 rounded bg-gold/10 border border-gold/20 text-gold">
@@ -97,7 +98,7 @@
 
 	<!-- Expanded filter controls -->
 	{#if expanded}
-		<div class="border-t border-navy-700/60 px-4 py-3 space-y-3">
+		<div class="border-t border-navy-700/60 px-4 py-3 space-y-3 transition-all duration-200">
 			<!-- Entity types -->
 			<div class="flex flex-wrap items-center gap-1.5">
 				<span class="text-[10px] text-slate-500 uppercase tracking-wider w-14 shrink-0">Types</span>

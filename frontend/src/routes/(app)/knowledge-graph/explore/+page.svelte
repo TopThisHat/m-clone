@@ -23,12 +23,12 @@
 	import KGChat from '$lib/components/KGChat.svelte';
 
 	const NODE_COLORS: Record<string, string> = {
-		person: '#1B365D',
-		company: '#1A5276',
-		sports_team: '#8B6914',
-		location: '#1E6E3E',
-		product: '#5D6D7E',
-		other: '#7B8794',
+		person: '#60A5FA',
+		company: '#22D3EE',
+		sports_team: '#FBBF24',
+		location: '#4ADE80',
+		product: '#C084FC',
+		other: '#CBD5E1',
 	};
 
 	// --------------- Core state ---------------
@@ -629,10 +629,10 @@
 
 <div class="flex flex-col h-[calc(100vh-4rem)]">
 	<!-- Top bar -->
-	<div class="flex items-center gap-3 px-4 py-3 bg-navy-900 border-b border-navy-700 shrink-0">
+	<div class="flex items-center gap-3 px-4 py-3.5 bg-gradient-to-r from-navy-900 via-navy-900 to-navy-950 border-b border-navy-700 shrink-0">
 		<a
 			href="/knowledge-graph"
-			class="text-xs text-slate-500 hover:text-gold transition-colors shrink-0"
+			class="text-xs text-slate-500 hover:text-gold transition-colors shrink-0 px-2 py-1 rounded-md hover:bg-navy-800"
 		>
 			&larr; Back
 		</a>
@@ -647,7 +647,7 @@
 		<!-- Search pill -->
 		<button
 			onclick={openCommandPalette}
-			class="flex items-center gap-2 bg-navy-800 border border-navy-600 rounded-full px-3 py-1.5 text-xs text-slate-500 hover:border-navy-500 hover:text-slate-400 transition-colors"
+			class="flex items-center gap-2 bg-navy-800 border border-navy-600 rounded-full px-3 py-1.5 text-xs text-slate-500 hover:border-navy-500 hover:text-slate-400 transition-colors min-w-[200px] focus-within:ring-1 focus-within:ring-gold/30"
 			aria-label="Search (Cmd+K)"
 			data-testid="search-pill"
 		>
@@ -658,41 +658,44 @@
 			<kbd class="text-[10px] px-1 py-0.5 rounded bg-navy-700 border border-navy-600 text-slate-600 font-mono">⌘K</kbd>
 		</button>
 
-		<!-- Chat button -->
-		<button
-			onclick={() => (chatPanelOpen = !chatPanelOpen)}
-			class="w-8 h-8 flex items-center justify-center rounded border transition-colors {chatPanelOpen
-				? 'border-gold text-gold bg-gold/10'
-				: 'border-navy-600 text-slate-400 hover:text-gold hover:border-gold/40'}"
-			aria-label="Toggle chat"
-			data-testid="chat-btn"
-		>
-			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-			</svg>
-		</button>
+		<!-- Right-side action buttons with separator -->
+		<div class="flex items-center gap-2 border-l border-navy-700 pl-3 ml-auto">
+			<!-- Chat button -->
+			<button
+				onclick={() => (chatPanelOpen = !chatPanelOpen)}
+				class="w-8 h-8 flex items-center justify-center rounded border transition-colors {chatPanelOpen
+					? 'border-gold text-gold bg-gold/10'
+					: 'border-navy-600 text-slate-400 hover:text-gold hover:border-gold/40'}"
+				aria-label="Toggle chat"
+				data-testid="chat-btn"
+			>
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+				</svg>
+			</button>
 
-		<!-- Query button -->
-		<button
-			onclick={() => (queryPanelOpen = !queryPanelOpen)}
-			class="text-xs px-2.5 py-1 rounded border transition-colors {queryPanelOpen
-				? 'border-gold text-gold bg-gold/10'
-				: 'border-navy-600 text-slate-400 hover:text-slate-200'}"
-		>
-			Query
-		</button>
+			<!-- Query button -->
+			<button
+				onclick={() => (queryPanelOpen = !queryPanelOpen)}
+				class="text-xs px-2.5 py-1 rounded border transition-colors {queryPanelOpen
+					? 'border-gold text-gold bg-gold/10'
+					: 'border-navy-600 text-slate-400 hover:text-slate-200'}"
+			>
+				Query
+			</button>
 
-		<!-- Upload button -->
-		<button
-			onclick={() => (uploadWizardOpen = true)}
-			class="w-8 h-8 flex items-center justify-center rounded border border-navy-600 text-slate-400 hover:text-gold hover:border-gold/40 transition-colors"
-			aria-label="Upload document"
-			data-testid="upload-btn"
-		>
-			<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-			</svg>
-		</button>
+			<!-- Upload button -->
+			<button
+				onclick={() => (uploadWizardOpen = true)}
+				class="w-8 h-8 flex items-center justify-center rounded border border-navy-600 text-slate-400 hover:text-gold hover:border-gold/40 transition-colors"
+				aria-label="Upload document"
+				data-testid="upload-btn"
+			>
+				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+				</svg>
+			</button>
+		</div>
 	</div>
 
 	<!-- Warning banner -->
@@ -734,6 +737,8 @@
 			style="opacity: {graphOpacity};"
 			data-testid="graph-area"
 		>
+			<!-- Ambient radial glow for depth -->
+			<div class="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-navy-800/20 via-transparent to-transparent z-0"></div>
 			{#if loading}
 				<div class="absolute inset-0 flex items-center justify-center">
 					<div class="flex items-center gap-2 text-slate-500">
@@ -941,7 +946,7 @@
 	/>
 
 	<!-- Color legend -->
-	<div class="flex items-center gap-5 px-4 py-2 bg-navy-900 border-t border-navy-700 shrink-0">
+	<div class="flex items-center gap-5 px-4 py-2 bg-gradient-to-r from-navy-900 to-navy-950 border-t border-navy-700 shrink-0">
 		{#each Object.entries(NODE_COLORS) as [type, color] (type)}
 			<div class="flex items-center gap-1.5">
 				<svg width="14" height="14" viewBox="-7 -7 14 14" aria-hidden="true">
@@ -970,12 +975,12 @@
 <!-- Context menu -->
 {#if contextMenu}
 	<div
-		class="fixed z-50 bg-navy-800 border border-navy-600 rounded-lg shadow-xl py-1 min-w-[160px]"
+		class="fixed z-50 bg-navy-800/95 backdrop-blur-sm border border-navy-600/80 rounded-xl shadow-2xl py-1.5 min-w-[160px]"
 		style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
 		role="menu"
 	>
 		<button
-			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700 hover:text-gold transition-colors disabled:opacity-40"
+			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700/80 hover:pl-4 hover:text-gold transition-all duration-150 disabled:opacity-40"
 			role="menuitem"
 			onclick={contextExpandNeighbors}
 			disabled={expansionBlocked}
@@ -983,15 +988,15 @@
 			Expand neighbors
 		</button>
 		<button
-			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700 hover:text-gold transition-colors"
+			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700/80 hover:pl-4 hover:text-gold transition-all duration-150"
 			role="menuitem"
 			onclick={contextHideNode}
 		>
 			Hide node
 		</button>
-		<hr class="border-navy-700 my-0.5" />
+		<hr class="border-navy-600/60 my-0.5" />
 		<button
-			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700 hover:text-gold transition-colors"
+			class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-navy-700/80 hover:pl-4 hover:text-gold transition-all duration-150"
 			role="menuitem"
 			onclick={() => { handleNodeClick(contextMenu!.nodeId); closeContextMenu(); }}
 		>
@@ -1003,7 +1008,7 @@
 <!-- Edge detail tooltip -->
 {#if edgeTooltip && selectedEdge}
 	<div
-		class="fixed z-50 bg-navy-800 border border-navy-600 rounded-lg shadow-xl p-3 min-w-[200px] max-w-[280px]"
+		class="fixed z-50 backdrop-blur-sm bg-navy-800/95 border border-navy-600/80 rounded-xl shadow-2xl p-3 min-w-[200px] max-w-[280px]"
 		style="left: {edgeTooltip.x + 8}px; top: {edgeTooltip.y + 8}px;"
 		role="tooltip"
 	>
@@ -1079,7 +1084,7 @@
 
 <!-- Toast notification -->
 {#if toastMessage}
-	<div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-navy-800 border border-navy-600 rounded-lg px-4 py-2 text-xs text-slate-200 shadow-lg">
+	<div class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-navy-800/95 backdrop-blur-sm border border-gold/30 border-l-2 border-l-gold rounded-xl px-5 py-3 text-xs text-slate-200 shadow-2xl">
 		{toastMessage}
 	</div>
 {/if}

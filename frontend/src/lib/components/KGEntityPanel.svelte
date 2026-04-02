@@ -13,12 +13,12 @@
 	};
 
 	const TYPE_COLORS: Record<string, string> = {
-		person: 'bg-[#1B365D]',
-		company: 'bg-[#1A5276]',
-		sports_team: 'bg-[#8B6914]',
-		location: 'bg-[#1E6E3E]',
-		product: 'bg-[#5D6D7E]',
-		other: 'bg-[#7B8794]',
+		person: 'bg-[#1e3a5f] text-[#60A5FA]',
+		company: 'bg-[#0e3a42] text-[#22D3EE]',
+		sports_team: 'bg-[#3d2e05] text-[#FBBF24]',
+		location: 'bg-[#0f2e1a] text-[#4ADE80]',
+		product: 'bg-[#2a1a42] text-[#C084FC]',
+		other: 'bg-navy-700 text-[#CBD5E1]',
 	};
 
 	let {
@@ -119,7 +119,7 @@
 
 	<!-- Content -->
 	<div class="p-4 flex-1 space-y-3">
-		<span class="inline-block text-xs px-2 py-0.5 rounded text-white {typeColor(node.entity_type)}">
+		<span class="inline-block text-xs px-2 py-0.5 rounded font-medium {typeColor(node.entity_type)}">
 			{typeLabel(node.entity_type)}
 		</span>
 

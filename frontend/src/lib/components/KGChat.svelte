@@ -249,7 +249,7 @@
 			<svg class="w-4 h-4 text-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
 			</svg>
-			<span class="text-xs font-medium text-slate-200">KG Chat</span>
+			<span class="text-xs font-medium text-slate-200 tracking-wide">KG Chat</span>
 		</div>
 		{#if messages.length > 0}
 			<button
@@ -294,7 +294,7 @@
 						<button
 							onclick={() => sendMessage(prompt)}
 							disabled={streaming}
-							class="text-left text-xs px-3 py-2 rounded border border-navy-700 text-slate-400 hover:text-slate-200 hover:border-navy-500 hover:bg-navy-800/60 transition-colors disabled:opacity-40"
+							class="text-left text-xs px-3 py-2 rounded-lg border border-navy-700 bg-navy-800/60 text-slate-400 hover:text-slate-200 hover:border-gold/30 hover:bg-gold/5 transition-colors disabled:opacity-40"
 						>
 							{prompt}
 						</button>
@@ -305,11 +305,11 @@
 			{#each messages as message (message.id)}
 				<div class="flex flex-col gap-1 {message.role === 'user' ? 'items-end' : 'items-start'}">
 					{#if message.role === 'user'}
-						<div class="max-w-[85%] bg-navy-800 rounded-lg px-3 py-2 text-xs text-slate-200">
+						<div class="max-w-[85%] bg-gold/10 border border-gold/20 rounded-lg px-3 py-2 text-xs text-slate-200">
 							{message.content}
 						</div>
 					{:else}
-						<div class="w-full">
+						<div class="w-full border-l-2 border-l-slate-600 pl-2">
 							<div class="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
 								{#if message.pending && !message.content}
 									<span class="inline-flex items-center gap-1 text-slate-500">

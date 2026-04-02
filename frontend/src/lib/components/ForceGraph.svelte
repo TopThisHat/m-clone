@@ -753,7 +753,7 @@
 
 	<!-- Minimap (Issue 7) -->
 	{#if minimapVisible}
-		<div class="absolute bottom-4 right-4 w-[120px] h-[80px] rounded-lg overflow-hidden border border-navy-600 shadow-lg">
+		<div class="absolute bottom-4 right-4 w-[120px] h-[80px] rounded-xl overflow-hidden border border-navy-600/60 shadow-xl bg-navy-950/80 backdrop-blur-sm">
 			<div bind:this={minimapEl} class="w-full h-full"></div>
 			<canvas
 				bind:this={minimapCanvas}
