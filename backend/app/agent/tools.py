@@ -11,6 +11,7 @@ import yfinance as yf
 from rank_bm25 import BM25Okapi
 
 from app.agent.clarification import clarification_store
+from app.config import settings
 from app.dependencies import AgentDeps
 
 FINANCIAL_DOMAINS = [
@@ -993,7 +994,6 @@ def _get_talktome_semaphore() -> asyncio.Semaphore:
     """Lazy-init semaphore to cap concurrent TalkToMe requests per process."""
     global _talktome_semaphore
     if _talktome_semaphore is None:
-        from app.config import settings
         _talktome_semaphore = asyncio.Semaphore(settings.talktome_max_concurrency)
     return _talktome_semaphore
 
@@ -1026,14 +1026,16 @@ async def talk_to_me(
     deps: AgentDeps, question: str, gwm_id: str, client_name: str,
 ) -> str:
     """Query TalkToMe API for client interaction history."""
-    from app.config import settings
-
     # ── Parameter validation ────────────────────────────────────────
     question = question.strip()
     gwm_id = gwm_id.strip()
     client_name = client_name.strip()
-    if not question or not gwm_id or not client_name:
-        return "Missing required parameter: question, gwm_id, and client_name must all be non-empty."
+    if not question:
+        return "Missing required parameter: question must be non-empty."
+    if not gwm_id:
+        return "Missing required parameter: gwm_id must be non-empty. Use lookup_client to resolve a name first."
+    if not client_name:
+        return "Missing required parameter: client_name must be non-empty."
 
     # ── Feature gate ────────────────────────────────────────────────
     if not settings.talktome_api_url:
@@ -1041,7 +1043,7 @@ async def talk_to_me(
         return "TalkToMe integration is not configured. Set TALKTOME_API_URL in the environment."
 
     # ── Cache check ─────────────────────────────────────────────────
-    cache_key = ("talk_to_me", gwm_id, question.strip().lower())
+    cache_key = ("talk_to_me", gwm_id, question.lower())
     if cache_key in deps.tool_cache:
         return deps.tool_cache[cache_key]
 
@@ -1064,7 +1066,6 @@ async def talk_to_me(
 
     # ── HTTP call with retry + concurrency limit ────────────────────
     max_attempts = 2  # initial + 1 retry for 502/503
-    last_exc: Exception | None = None
 
     async with _get_talktome_semaphore():
         async with httpx.AsyncClient(timeout=settings.talktome_timeout_seconds) as client:
@@ -1078,31 +1079,42 @@ async def talk_to_me(
                     resp.raise_for_status()
 
                     # ── Parse response ──────────────────────────────
-                    data = resp.json()
+                    try:
+                        data = resp.json()
+                    except (ValueError, json.JSONDecodeError):
+                        logger.warning(
+                            "TalkToMe non-JSON response",
+                            extra={"correlation_id": correlation_id},
+                        )
+                        return "TalkToMe returned an unexpected response format."
                     summary = data.get("summary")
 
                     if summary is None or not isinstance(summary, str):
-                        logger.error(
+                        logger.warning(
                             "TalkToMe unexpected response format",
                             extra={"correlation_id": correlation_id},
                         )
                         return "TalkToMe returned an unexpected response format."
 
                     if not summary.strip():
+                        logger.warning(
+                            "TalkToMe returned empty summary",
+                            extra={"correlation_id": correlation_id},
+                        )
                         return f"No relevant interaction records found for this query about {client_name}."
 
                     result = f"**TalkToMe Insight** (client: {client_name})\n\n{summary.strip()}"
                     deps.tool_cache[cache_key] = result
                     logger.info(
                         "TalkToMe request succeeded",
-                        extra={"correlation_id": correlation_id},
+                        extra={"correlation_id": correlation_id, "attempt": attempt},
                     )
                     return result
 
                 except httpx.TimeoutException:
                     logger.error(
                         "TalkToMe request timed out",
-                        extra={"correlation_id": correlation_id},
+                        extra={"correlation_id": correlation_id, "attempt": attempt},
                     )
                     return (
                         f"TalkToMe query timed out after {settings.talktome_timeout_seconds:.0f} seconds. "
@@ -1122,7 +1134,6 @@ async def talk_to_me(
                                 "attempt": attempt,
                             },
                         )
-                        last_exc = exc
                         await asyncio.sleep(2.0)
                         continue
 
@@ -1145,13 +1156,3 @@ async def talk_to_me(
                         extra={"correlation_id": correlation_id},
                     )
                     return "TalkToMe service is unreachable. Check network connectivity."
-
-    # Exhausted retries (only reachable after 502/503 retry)
-    if last_exc and isinstance(last_exc, httpx.HTTPStatusError):
-        status = last_exc.response.status_code
-        logger.error(
-            "TalkToMe HTTP error after retries",
-            extra={"correlation_id": correlation_id, "status_code": status},
-        )
-        return f"TalkToMe service returned an error (HTTP {status}). Try again later."
-    return "TalkToMe service is unreachable. Check network connectivity."
