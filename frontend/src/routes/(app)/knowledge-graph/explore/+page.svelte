@@ -15,7 +15,9 @@
 		type KGRelationship,
 		type KGQueryResult,
 	} from '$lib/api/knowledgeGraph';
-	import { uploadToKG, isSupportedFile, SUPPORTED_EXTENSIONS, type KGUploadResult } from '$lib/api/documents';
+	import UploadWizard from '$lib/components/UploadWizard.svelte';
+	import CommandPalette from '$lib/components/CommandPalette.svelte';
+	import KGChat from '$lib/components/KGChat.svelte';
 
 	const ENTITY_TYPES = ['person', 'company', 'sports_team', 'location', 'product', 'other'];
 	const PREDICATE_FAMILIES = ['ownership', 'employment', 'transaction', 'location', 'partnership'];
@@ -85,12 +87,7 @@
 	let queryError = $state('');
 
 	// --------------- Upload state ---------------
-	let uploadPanelOpen = $state(false);
-	let uploadDragging = $state(false);
-	let uploadFile = $state<File | null>(null);
-	let uploading = $state(false);
-	let uploadResult = $state<KGUploadResult | null>(null);
-	let uploadError = $state('');
+	let uploadWizardOpen = $state(false);
 
 	// --------------- Smart rendering state ---------------
 	const NODE_BUDGET = 150;
@@ -114,6 +111,14 @@
 	// --------------- Minimap state ---------------
 	let minimapVisible = $state(true);
 
+	// --------------- Command palette state ---------------
+	let commandPaletteOpen = $state(false);
+
+	// --------------- KG Chat state ---------------
+	let chatPanelOpen = $state(false);
+	let chatHighlightedNodeIds = $state<Set<string> | null>(null);
+	let chatHighlightedEdgeIds = $state<Set<string> | null>(null);
+
 	// --------------- Derived ---------------
 	let isAdmin = $derived(user?.is_super_admin === true);
 	let nodeCount = $derived(graphData.nodes.length);
@@ -121,6 +126,8 @@
 	let expansionBlocked = $derived(nodeCount >= BLOCK_THRESHOLD);
 
 	let highlightedNodeIds = $derived.by(() => {
+		// Chat highlights take priority when active
+		if (chatHighlightedNodeIds && chatHighlightedNodeIds.size > 0) return chatHighlightedNodeIds;
 		if (!dealModeActive || dealPartners.length === 0) return null;
 		const ids = new Set<string>();
 		for (const dp of dealPartners) {
@@ -134,6 +141,8 @@
 	});
 
 	let highlightedEdgeIds = $derived.by(() => {
+		// Chat path highlights take priority
+		if (chatHighlightedEdgeIds && chatHighlightedEdgeIds.size > 0) return chatHighlightedEdgeIds;
 		if (!dealModeActive || dealPartners.length === 0) return null;
 		const dealEntityIds = new Set<string>();
 		const personIds = new Set<string>();
@@ -466,45 +475,6 @@
 		}
 	}
 
-	// --------------- Upload ---------------
-	async function handleUpload() {
-		if (!uploadFile) return;
-		uploading = true;
-		uploadError = '';
-		uploadResult = null;
-		try {
-			uploadResult = await uploadToKG(uploadFile, teamId ?? undefined);
-			uploadFile = null;
-		} catch (err: unknown) {
-			uploadError = err instanceof Error ? err.message : 'Upload failed';
-		} finally {
-			uploading = false;
-		}
-	}
-
-	function handleFileDrop(e: DragEvent) {
-		e.preventDefault();
-		uploadDragging = false;
-		const file = e.dataTransfer?.files[0];
-		if (file && isSupportedFile(file.name)) {
-			uploadFile = file;
-			uploadError = '';
-			uploadResult = null;
-		} else if (file) {
-			uploadError = `Unsupported file type. Accepted: ${SUPPORTED_EXTENSIONS.join(', ')}`;
-		}
-	}
-
-	function handleFileSelect(e: Event) {
-		const input = e.target as HTMLInputElement;
-		const file = input.files?.[0];
-		if (file) {
-			uploadFile = file;
-			uploadError = '';
-			uploadResult = null;
-		}
-	}
-
 	// --------------- Helpers ---------------
 	function typeColor(type: string): string {
 		const colors: Record<string, string> = {
@@ -534,6 +504,59 @@
 		return source === 'team'
 			? 'bg-gold/20 text-gold border-gold/30'
 			: 'bg-slate-700/50 text-slate-300 border-slate-600';
+	}
+
+	// --------------- Command palette handlers ---------------
+
+	function openCommandPalette() {
+		commandPaletteOpen = true;
+	}
+
+	function handlePaletteSelectEntity(entityId: string) {
+		// Focus the node in the graph
+		focusNodeId = entityId;
+		// Open entity detail panel
+		selectedNodeId = entityId;
+		editingEntity = false;
+		editingRelId = null;
+		loadNodeRels(entityId);
+	}
+
+	function handlePaletteSelectFilter(kind: 'entity_type' | 'predicate_family', value: string) {
+		if (kind === 'entity_type') {
+			toggleType(value);
+		} else {
+			toggleFamily(value);
+		}
+	}
+
+	// --------------- KG Chat handlers ---------------
+
+	function handleChatFocusNode(entityId: string) {
+		focusNodeId = entityId;
+	}
+
+	function handleChatHighlight(entityIds: string[]) {
+		chatHighlightedNodeIds = new Set(entityIds);
+		// Focus on first entity if it's in the graph
+		const firstInGraph = entityIds.find((id) => graphData.nodes.some((n) => n.id === id));
+		if (firstInGraph) focusNodeId = firstInGraph;
+	}
+
+	function handleChatPath(
+		paths: unknown[],
+		_sourceId: string,
+		_targetId: string
+	) {
+		// Highlight all nodes and edges along the paths
+		const nodeIds = new Set<string>();
+		const edgeIds = new Set<string>();
+		for (const path of paths as Array<{ entities?: Array<{ id: string }>; relationships?: Array<{ id: string }> }>) {
+			for (const entity of path.entities ?? []) nodeIds.add(entity.id);
+			for (const rel of path.relationships ?? []) edgeIds.add(rel.id);
+		}
+		chatHighlightedNodeIds = nodeIds.size > 0 ? nodeIds : null;
+		chatHighlightedEdgeIds = edgeIds.size > 0 ? edgeIds : null;
 	}
 
 	// --------------- Lifecycle ---------------
@@ -597,6 +620,16 @@
 		closeContextMenu();
 		closeEdgeTooltip();
 	}
+	// Cmd+K (Mac) or Ctrl+K (Windows/Linux) opens command palette
+	if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+		e.preventDefault();
+		openCommandPalette();
+	}
+	// "/" opens palette when no input element is focused
+	if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+		e.preventDefault();
+		openCommandPalette();
+	}
 }} onclick={() => {
 	closeContextMenu();
 	closeEdgeTooltip();
@@ -620,13 +653,26 @@
 			/>
 		</span>
 
-		<!-- Search -->
+		<!-- Search pill — opens command palette -->
+		<button
+			onclick={openCommandPalette}
+			class="flex items-center gap-2 bg-navy-800 border border-navy-600 rounded px-3 py-1 text-xs text-slate-400 hover:text-slate-200 hover:border-gold transition-colors"
+			title="Search (Cmd+K)"
+		>
+			<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+			</svg>
+			Search Knowledge Graph...
+			<kbd class="hidden sm:block bg-navy-700 border border-navy-600 rounded px-1 py-0.5 text-[10px] text-slate-500">⌘K</kbd>
+		</button>
+
+		<!-- Graph text search -->
 		<div class="flex items-center gap-1">
 			<input
 				bind:value={searchQuery}
 				onkeydown={(e) => e.key === 'Enter' && handleSearch()}
-				placeholder="Search name, alias, description..."
-				class="bg-navy-800 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold w-56"
+				placeholder="Filter graph..."
+				class="bg-navy-800 border border-navy-600 rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-gold w-40"
 			/>
 			<button
 				onclick={handleSearch}
@@ -698,12 +744,24 @@
 
 		<!-- Upload button -->
 		<button
-			onclick={() => (uploadPanelOpen = !uploadPanelOpen)}
-			class="text-xs px-2.5 py-1 rounded border transition-colors {uploadPanelOpen
-				? 'border-gold text-gold bg-gold/10'
-				: 'border-navy-600 text-slate-400 hover:text-slate-200'}"
+			onclick={() => (uploadWizardOpen = true)}
+			class="text-xs px-2.5 py-1 rounded border transition-colors border-navy-600 text-slate-400 hover:text-slate-200"
 		>
 			Upload
+		</button>
+
+		<!-- Chat button -->
+		<button
+			onclick={() => (chatPanelOpen = !chatPanelOpen)}
+			class="text-xs px-2.5 py-1 rounded border transition-colors {chatPanelOpen
+				? 'border-gold text-gold bg-gold/10'
+				: 'border-navy-600 text-slate-400 hover:text-slate-200'}"
+			title="KG Chat"
+		>
+			<svg class="w-3.5 h-3.5 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+			</svg>
+			Chat
 		</button>
 
 		<!-- Layout controls (task 6uw.11) -->
@@ -774,6 +832,19 @@
 
 	<!-- Main content -->
 	<div class="flex flex-1 min-h-0">
+		<!-- KG Chat sidebar (left) -->
+		{#if chatPanelOpen}
+			<div class="w-72 shrink-0 flex flex-col min-h-0">
+				<KGChat
+					teamId={teamId}
+					onHighlight={handleChatHighlight}
+					onPath={handleChatPath}
+					onFocusNode={handleChatFocusNode}
+					lookupEntityName={(id) => graphData.nodes.find((n) => n.id === id)?.name ?? null}
+				/>
+			</div>
+		{/if}
+
 		<!-- Graph area -->
 		<div
 			class="flex-1 relative bg-navy-950 transition-opacity duration-200"
@@ -820,111 +891,21 @@
 			{/if}
 		</div>
 
-		<!-- Upload panel (slide-out) -->
-		{#if uploadPanelOpen}
-			<div class="w-80 bg-navy-900 border-l border-navy-700 overflow-y-auto flex flex-col">
-				<div class="flex items-center justify-between px-4 py-3 border-b border-navy-700">
-					<h3 class="text-sm font-semibold text-slate-200">Upload to KG</h3>
-					<button
-						onclick={() => (uploadPanelOpen = false)}
-						class="text-slate-500 hover:text-slate-300 text-xs"
-					>
-						&times;
-					</button>
-				</div>
+		<!-- Upload Wizard modal -->
+		<UploadWizard
+			open={uploadWizardOpen}
+			onClose={() => (uploadWizardOpen = false)}
+			teamId={teamId}
+			onComplete={async () => { await fetchGraph(); graphApi?.fitToView(); }}
+		/>
 
-				<div class="p-4 space-y-3 flex-1">
-					<!-- Drop zone -->
-					<div
-						class="border-2 border-dashed rounded-lg p-6 text-center transition-colors {uploadDragging
-							? 'border-gold bg-gold/5'
-							: 'border-navy-600 hover:border-navy-500'}"
-						role="region"
-						aria-label="File drop zone"
-						ondragover={(e) => { e.preventDefault(); uploadDragging = true; }}
-						ondragleave={() => (uploadDragging = false)}
-						ondrop={handleFileDrop}
-					>
-						<p class="text-xs text-slate-400 mb-2">
-							Drag & drop a file here
-						</p>
-						<p class="text-[10px] text-slate-600 mb-3">
-							PDF, DOCX, Excel, CSV, PNG, JPEG
-						</p>
-						<label class="text-xs px-3 py-1.5 rounded border border-navy-600 text-slate-300 hover:text-slate-200 hover:border-navy-500 cursor-pointer transition-colors">
-							Browse files
-							<input
-								type="file"
-								accept={SUPPORTED_EXTENSIONS.join(',')}
-								onchange={handleFileSelect}
-								class="hidden"
-							/>
-						</label>
-					</div>
-
-					<!-- Selected file -->
-					{#if uploadFile}
-						<div class="flex items-center gap-2 bg-navy-800 rounded px-3 py-2">
-							<span class="text-xs text-slate-200 truncate flex-1">{uploadFile.name}</span>
-							<span class="text-[10px] text-slate-500 shrink-0">
-								{(uploadFile.size / 1024).toFixed(0)} KB
-							</span>
-							<button
-								onclick={() => { uploadFile = null; uploadResult = null; uploadError = ''; }}
-								class="text-slate-500 hover:text-slate-300 text-xs shrink-0"
-							>
-								&times;
-							</button>
-						</div>
-
-						<button
-							onclick={handleUpload}
-							disabled={uploading}
-							class="w-full text-xs px-3 py-2 rounded transition-colors {uploading
-								? 'bg-navy-700 text-slate-500 cursor-not-allowed'
-								: 'bg-gold/20 text-gold border border-gold/30 hover:bg-gold/30'}"
-						>
-							{uploading ? 'Processing...' : 'Extract & Add to KG'}
-						</button>
-					{/if}
-
-					<!-- Error -->
-					{#if uploadError}
-						<p class="text-xs text-red-400">{uploadError}</p>
-					{/if}
-
-					<!-- Success result -->
-					{#if uploadResult}
-						<div class="bg-navy-800 rounded p-3 space-y-1">
-							<p class="text-xs text-green-400 font-medium">Queued for processing</p>
-							<p class="text-[10px] text-slate-400">{uploadResult.filename}</p>
-							<p class="text-[10px] text-slate-500">{uploadResult.char_count.toLocaleString()} characters extracted</p>
-							<p class="text-[10px] text-slate-600 mt-1">
-								Entities and relationships will appear in the graph shortly.
-							</p>
-							<button
-								onclick={() => { uploadResult = null; fetchGraph(); }}
-								class="text-[10px] text-gold hover:text-gold-light mt-1 transition-colors"
-							>
-								Refresh graph
-							</button>
-						</div>
-					{/if}
-
-					<!-- Supported formats info -->
-					<div class="text-[10px] text-slate-600 pt-2 border-t border-navy-700">
-						<p class="font-medium text-slate-500 mb-1">Supported formats:</p>
-						<ul class="space-y-0.5">
-							<li>PDF — text & tables</li>
-							<li>DOCX — paragraphs & tables</li>
-							<li>Excel (.xlsx, .xls) — all sheets</li>
-							<li>CSV / TSV — tabular data</li>
-							<li>Images (PNG, JPEG, GIF, WebP) — OCR via AI</li>
-						</ul>
-					</div>
-				</div>
-			</div>
-		{/if}
+		<!-- Command palette -->
+		<CommandPalette
+			bind:open={commandPaletteOpen}
+			{teamId}
+			onSelectEntity={handlePaletteSelectEntity}
+			onSelectFilter={handlePaletteSelectFilter}
+		/>
 
 		<!-- Query panel (slide-out) -->
 		{#if queryPanelOpen}
@@ -1023,7 +1004,7 @@
 		{/if}
 
 		<!-- Detail panel -->
-		{#if selectedNode && !queryPanelOpen && !uploadPanelOpen}
+		{#if selectedNode && !queryPanelOpen}
 			<div class="w-80 bg-navy-900 border-l border-navy-700 overflow-y-auto p-4">
 				<div class="flex items-center justify-between mb-3">
 					<h3 class="text-sm font-semibold text-slate-200 truncate">{selectedNode.name}</h3>
