@@ -1,6 +1,8 @@
 import asyncio
 import json
+import logging
 import re
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine
 
@@ -9,6 +11,7 @@ import yfinance as yf
 from rank_bm25 import BM25Okapi
 
 from app.agent.clarification import clarification_store
+from app.config import settings
 from app.dependencies import AgentDeps
 
 FINANCIAL_DOMAINS = [
@@ -978,3 +981,178 @@ async def query_knowledge_graph(deps: AgentDeps, query: str) -> str:
         return "\n".join(parts)
     except Exception as exc:
         return f"Knowledge graph query failed: {exc}"
+
+
+# ── TalkToMe integration ───────────────────────────────────────────────────
+
+logger = logging.getLogger(__name__)
+
+_talktome_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_talktome_semaphore() -> asyncio.Semaphore:
+    """Lazy-init semaphore to cap concurrent TalkToMe requests per process."""
+    global _talktome_semaphore
+    if _talktome_semaphore is None:
+        _talktome_semaphore = asyncio.Semaphore(settings.talktome_max_concurrency)
+    return _talktome_semaphore
+
+
+@_register(
+    "talk_to_me",
+    "Query the TalkToMe API for client interaction history (meeting notes, call "
+    "transcripts). Requires a resolved gwm_id — call lookup_client first if you "
+    "only have a name. Returns a summary of relevant interactions.",
+    {
+        "type": "object",
+        "properties": {
+            "question": {
+                "type": "string",
+                "description": "Natural language question about client interactions",
+            },
+            "gwm_id": {
+                "type": "string",
+                "description": "GWM client ID from lookup_client",
+            },
+            "client_name": {
+                "type": "string",
+                "description": "Human-readable client name from lookup_client (for display)",
+            },
+        },
+        "required": ["question", "gwm_id", "client_name"],
+    },
+)
+async def talk_to_me(
+    deps: AgentDeps, question: str, gwm_id: str, client_name: str,
+) -> str:
+    """Query TalkToMe API for client interaction history."""
+    # ── Parameter validation ────────────────────────────────────────
+    question = question.strip()
+    gwm_id = gwm_id.strip()
+    client_name = client_name.strip()
+    if not question:
+        return "Missing required parameter: question must be non-empty."
+    if not gwm_id:
+        return "Missing required parameter: gwm_id must be non-empty. Use lookup_client to resolve a name first."
+    if not client_name:
+        return "Missing required parameter: client_name must be non-empty."
+
+    # ── Feature gate ────────────────────────────────────────────────
+    if not settings.talktome_api_url:
+        logger.warning("TalkToMe feature gate: TALKTOME_API_URL not configured")
+        return "TalkToMe integration is not configured. Set TALKTOME_API_URL in the environment."
+
+    # ── Cache check ─────────────────────────────────────────────────
+    cache_key = ("talk_to_me", gwm_id, question.lower())
+    if cache_key in deps.tool_cache:
+        return deps.tool_cache[cache_key]
+
+    # ── Build request ───────────────────────────────────────────────
+    correlation_id = str(uuid.uuid4())
+    payload = {
+        "question": question,
+        "id": correlation_id,
+        "context": {"client_id": gwm_id},
+    }
+
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if settings.talktome_api_key:
+        headers["Authorization"] = f"Bearer {settings.talktome_api_key}"
+
+    logger.info(
+        "TalkToMe request initiated",
+        extra={"correlation_id": correlation_id, "gwm_id": gwm_id, "client_name": client_name},
+    )
+
+    # ── HTTP call with retry + concurrency limit ────────────────────
+    max_attempts = 2  # initial + 1 retry for 502/503
+
+    async with _get_talktome_semaphore():
+        async with httpx.AsyncClient(timeout=settings.talktome_timeout_seconds) as client:
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    resp = await client.post(
+                        settings.talktome_api_url,
+                        json=payload,
+                        headers=headers,
+                    )
+                    resp.raise_for_status()
+
+                    # ── Parse response ──────────────────────────────
+                    try:
+                        data = resp.json()
+                    except (ValueError, json.JSONDecodeError):
+                        logger.warning(
+                            "TalkToMe non-JSON response",
+                            extra={"correlation_id": correlation_id},
+                        )
+                        return "TalkToMe returned an unexpected response format."
+                    summary = data.get("summary")
+
+                    if summary is None or not isinstance(summary, str):
+                        logger.warning(
+                            "TalkToMe unexpected response format",
+                            extra={"correlation_id": correlation_id},
+                        )
+                        return "TalkToMe returned an unexpected response format."
+
+                    if not summary.strip():
+                        logger.warning(
+                            "TalkToMe returned empty summary",
+                            extra={"correlation_id": correlation_id},
+                        )
+                        return f"No relevant interaction records found for this query about {client_name}."
+
+                    result = f"**TalkToMe Insight** (client: {client_name})\n\n{summary.strip()}"
+                    deps.tool_cache[cache_key] = result
+                    logger.info(
+                        "TalkToMe request succeeded",
+                        extra={"correlation_id": correlation_id, "attempt": attempt},
+                    )
+                    return result
+
+                except httpx.TimeoutException:
+                    logger.error(
+                        "TalkToMe request timed out",
+                        extra={"correlation_id": correlation_id, "attempt": attempt},
+                    )
+                    return (
+                        f"TalkToMe query timed out after {settings.talktome_timeout_seconds:.0f} seconds. "
+                        "The service may be under heavy load — try again shortly."
+                    )
+
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code
+
+                    # Retry on 502/503
+                    if status in (502, 503) and attempt < max_attempts:
+                        logger.warning(
+                            "TalkToMe retryable error",
+                            extra={
+                                "correlation_id": correlation_id,
+                                "status_code": status,
+                                "attempt": attempt,
+                            },
+                        )
+                        await asyncio.sleep(2.0)
+                        continue
+
+                    # Terminal HTTP errors
+                    logger.error(
+                        "TalkToMe HTTP error",
+                        extra={"correlation_id": correlation_id, "status_code": status},
+                    )
+                    if status == 404:
+                        return f"No interaction records found for {client_name} in TalkToMe."
+                    if status in (401, 403):
+                        return "TalkToMe service authentication failed. Contact your administrator."
+                    if status == 429:
+                        return "TalkToMe service is rate-limited. Try again in a few minutes."
+                    return f"TalkToMe service returned an error (HTTP {status}). Try again later."
+
+                except httpx.RequestError:
+                    logger.error(
+                        "TalkToMe connection error",
+                        extra={"correlation_id": correlation_id},
+                    )
+                    return "TalkToMe service is unreachable. Check network connectivity."
