@@ -88,13 +88,13 @@
 		product:     '#7C3AED',
 		other:       '#64748B',
 	} as Record<string, string> : {
-		person:      '#3B82F6',
-		company:     '#06B6D4',
-		sports_team: '#F59E0B',
-		location:    '#22C55E',
-		pe_fund:     '#A78BFA',
-		product:     '#A78BFA',
-		other:       '#94A3B8',
+		person:      '#60A5FA',
+		company:     '#22D3EE',
+		sports_team: '#FBBF24',
+		location:    '#4ADE80',
+		pe_fund:     '#C084FC',
+		product:     '#C084FC',
+		other:       '#CBD5E1',
 	} as Record<string, string>);
 
 	function nodeColor(entityType: string): string {
@@ -171,6 +171,13 @@
 				}
 			}
 		}
+
+		// Scale node sizes by degree: min 8, max 24
+		graph.forEachNode((nodeId) => {
+			const degree = graph!.degree(nodeId);
+			const size = Math.min(24, Math.max(8, 8 + degree * 2));
+			graph!.setNodeAttribute(nodeId, 'size', size);
+		});
 
 		mountRenderer();
 	}
@@ -372,10 +379,20 @@
 			if (!newNodeIds.has(nodeId)) graph!.dropNode(nodeId);
 		});
 
-		// Restart layout with gentle alpha if nodes were added
-		if (addedCount > 0 && fa2 && fa2.isRunning()) {
-			fa2.stop();
-			fa2.start();
+		// Recalculate sizes by degree after structural changes
+		graph.forEachNode((nodeId) => {
+			const degree = graph!.degree(nodeId);
+			const size = Math.min(24, Math.max(8, 8 + degree * 2));
+			graph!.setNodeAttribute(nodeId, 'size', size);
+		});
+
+		// Restart layout only if FA2 has already converged and stopped
+		if (addedCount > 0 && fa2) {
+			if (!fa2.isRunning()) {
+				fa2.start();
+				startConvergenceWatch();
+			}
+			// If already running, new nodes are automatically picked up
 		}
 
 		renderer?.refresh();
@@ -393,7 +410,10 @@
 				scalingRatio: 10,
 				barnesHutOptimize: true,
 				barnesHutTheta: 0.5,
-				slowDown: 10,
+				slowDown: 50,
+				linLogMode: true,
+				outboundAttractionDistribution: true,
+				strongGravityMode: false,
 			},
 		});
 
@@ -429,7 +449,7 @@
 			});
 
 			const avgDelta = count > 0 ? totalDelta / count : 0;
-			if (avgDelta < 0.01) {
+			if (avgDelta < 0.05) {
 				fa2.stop();
 				stopConvergenceWatch();
 				renderer?.refresh();
@@ -647,15 +667,27 @@
 
 	// ── Reactive effects ───────────────────────────────────────────────────
 
-	// Rebuild graph when nodes/edges or theme changes
-	$effect(() => {
-		// Track reactive dependencies
-		const _nodes = nodes;
-		const _edges = edges;
-		const _theme = theme;
+	// Identity-based change detection — only rebuild/merge when actual data changes,
+	// not on every Svelte re-evaluation caused by unrelated state (chat panel, etc.)
+	let prevNodeFingerprint = '';
+	let prevEdgeFingerprint = '';
+	let graphInitialized = false;
 
-		if (_nodes && _edges) {
-			buildGraph();
+	$effect(() => {
+		const nodeFingerprint = nodes.map((n) => n.id).sort().join(',');
+		const edgeFingerprint = edges.map((e) => e.id).sort().join(',');
+
+		if (nodeFingerprint !== prevNodeFingerprint || edgeFingerprint !== prevEdgeFingerprint) {
+			prevNodeFingerprint = nodeFingerprint;
+			prevEdgeFingerprint = edgeFingerprint;
+
+			if (!graphInitialized || !graph || !renderer) {
+				buildGraph();
+				graphInitialized = true;
+			} else {
+				// Incremental update instead of full teardown + rebuild
+				mergeNodes(nodes, edges);
+			}
 		}
 	});
 
