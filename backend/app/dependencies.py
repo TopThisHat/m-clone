@@ -92,6 +92,8 @@ class AgentDeps:
     # Team context for KG queries
     team_id: str | None = None  # Deprecated: use team_ids instead
     team_ids: list[str] = field(default_factory=list)
+    # Authenticated user SID — threaded from JWT / job owner / campaign owner
+    user_sid: str | None = None
 
 
 _DEPTH_MAP = {"fast": "simple", "balanced": "standard", "deep": "deep"}
@@ -106,6 +108,7 @@ def get_agent_deps(
     depth: str = "balanced",
     user_rules: list[str] | None = None,
     team_ids: list[str] | None = None,
+    user_sid: str | None = None,
     # Deprecated alias — will be removed
     pdf_context: str = "",
 ) -> AgentDeps:
@@ -124,4 +127,5 @@ def get_agent_deps(
         query_complexity=_DEPTH_MAP.get(depth, "standard"),
         user_rules=user_rules or [],
         team_ids=team_ids or [],
+        user_sid=user_sid,
     )

@@ -139,9 +139,10 @@ class ValidationCampaignWorkflow(BaseWorkflow):
         campaign_id = str(entities[0]["campaign_id"])
         total_pairs = len(entities) * len(attributes)
 
-        # Get campaign for team_id
+        # Get campaign for team_id + owner_sid
         campaign = await db_get_campaign(campaign_id)
         team_id = campaign.get("team_id") if campaign else None
+        owner_sid = campaign.get("owner_sid") if campaign else None
 
         logger.info(
             "ValidationCampaign job=%s: %d entities x %d attributes = %d pairs",
@@ -238,6 +239,7 @@ class ValidationCampaignWorkflow(BaseWorkflow):
                             "attribute_ids": [str(a) for a in cluster_attr_ids],
                             "research_question": str(question),
                             "team_id": str(team_id) if team_id is not None else None,
+                            "owner_sid": owner_sid,
                         },
                         "parent_job_id": self.job_id,
                         "root_job_id": self.job_id,
@@ -371,7 +373,8 @@ class ValidationClusterWorkflow(BaseWorkflow):
             attr_labels = ", ".join(a["label"] for a in attributes)
             research_question = f"{entity['label']}: {attr_labels}"
 
-        report_md = await run_research(research_question)
+        owner_sid = p.get("owner_sid")
+        report_md = await run_research(research_question, user_sid=owner_sid)
 
         # Post-research cancellation check
         vj = await db_get_validation_job(job_id)
@@ -493,7 +496,8 @@ class ValidationPairWorkflow(BaseWorkflow):
                 return
 
         query = f"{entity['label']}: {attribute['label']}. {attribute.get('description') or ''}"
-        report_md = await run_research(query)
+        owner_sid = p.get("owner_sid")
+        report_md = await run_research(query, user_sid=owner_sid)
 
         # Post-research cancellation check
         vj = await db_get_validation_job(job_id)

@@ -20,7 +20,7 @@ async def _run_monitor(monitor: dict) -> None:
     from app.dependencies import get_agent_deps
 
     final_md: str | None = None
-    deps = get_agent_deps()
+    deps = get_agent_deps(user_sid=monitor.get("owner_sid"))
 
     try:
         current_event = ""

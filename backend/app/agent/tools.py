@@ -14,6 +14,8 @@ from app.agent.clarification import clarification_store
 from app.config import settings
 from app.dependencies import AgentDeps
 
+logger = logging.getLogger(__name__)
+
 FINANCIAL_DOMAINS = [
     "reuters.com", "bloomberg.com", "ft.com", "wsj.com",
     "sec.gov", "investopedia.com", "marketwatch.com",
@@ -828,9 +830,9 @@ async def lookup_client(deps: AgentDeps, name: str, company: str | None = None) 
 async def batch_lookup_clients(deps: AgentDeps, people: list[dict]) -> str:
     if not people:
         return "No names provided."
-    from app.agent.batch_resolver import batch_resolve_clients, format_results_as_markdown
+    from app.agent.batch_resolver import batch_resolve_clients, format_results_as_compact_json
     results = await batch_resolve_clients(people)
-    return format_results_as_markdown(results)
+    return format_results_as_compact_json(results)
 
 
 @_register(
@@ -851,7 +853,7 @@ async def batch_lookup_clients(deps: AgentDeps, people: list[dict]) -> str:
     },
 )
 async def extract_and_lookup_entities(deps: AgentDeps, filename: str) -> str:
-    from app.agent.batch_resolver import batch_resolve_clients, extract_person_names, format_results_as_markdown
+    from app.agent.batch_resolver import batch_resolve_clients, extract_person_names, format_results_as_compact_json
 
     if not deps.doc_texts and not deps.uploaded_doc_metadata:
         return "No documents have been uploaded."
@@ -892,11 +894,11 @@ async def extract_and_lookup_entities(deps: AgentDeps, filename: str) -> str:
 
     people = [{"name": n} for n in names]
     results = await batch_resolve_clients(people)
-    markdown_table = format_results_as_markdown(results)
+    compact_json = format_results_as_compact_json(results)
 
     return (
         f"Extracted {len(names)} unique names from {display_name} "
-        f"({total_mentions} total mentions). {markdown_table}"
+        f"({total_mentions} total mentions). {compact_json}"
     )
 
 
@@ -985,8 +987,6 @@ async def query_knowledge_graph(deps: AgentDeps, query: str) -> str:
 
 # ── TalkToMe integration ───────────────────────────────────────────────────
 
-logger = logging.getLogger(__name__)
-
 _talktome_semaphore: asyncio.Semaphore | None = None
 
 
@@ -1051,7 +1051,7 @@ async def talk_to_me(
     correlation_id = str(uuid.uuid4())
     payload = {
         "question": question,
-        "id": correlation_id,
+        "id": deps.user_sid or correlation_id,
         "context": {"client_id": gwm_id},
     }
 

@@ -116,6 +116,7 @@ class TestBatchLookupClients:
     @pytest.mark.asyncio
     async def test_50_plus_names_all_results_returned(self):
         """Batch with 50+ names returns one result per unique name."""
+        import json as _json
         from app.agent.tools import batch_lookup_clients
 
         num_names = 55
@@ -128,18 +129,15 @@ class TestBatchLookupClients:
         with patch("app.agent.batch_resolver.resolve_client", side_effect=mock_resolve):
             result = await batch_lookup_clients(deps, people=people)
 
-        # Verify summary line has correct count
-        assert f"Processed {num_names} name" in result
-        assert f"{num_names} matched" in result
-        # Verify markdown table has a row for each name
-        lines = result.strip().split("\n")
-        # Table rows = total lines - summary line - blank line - header - separator
-        data_rows = [ln for ln in lines if ln.startswith("|") and "---" not in ln and "Entity Name" not in ln]
-        assert len(data_rows) == num_names
+        parsed = _json.loads(result)
+        assert parsed["summary"]["total"] == num_names
+        assert parsed["summary"]["matched"] == num_names
+        assert len(parsed["results"]) == num_names
 
     @pytest.mark.asyncio
     async def test_mixed_results_matched_nomatch_errors(self):
         """Batch with mixed outcomes: matched, no_match, and errors."""
+        import json as _json
         from app.agent.tools import batch_lookup_clients
 
         people = [
@@ -167,21 +165,22 @@ class TestBatchLookupClients:
         with patch("app.agent.batch_resolver.resolve_client", side_effect=mock_resolve):
             result = await batch_lookup_clients(deps, people=people)
 
-        assert "Processed 4 names" in result
-        assert "2 matched" in result
-        assert "1 no match" in result
-        assert "1 error" in result
-        # Verify the table contains all names
-        assert "Alice Thornton" in result
-        assert "Bob Henderson" in result
-        assert "Charlie Unknown" in result
-        assert "Diana Error" in result
-        # Verify error row includes error info
-        assert "Error:" in result
+        parsed = _json.loads(result)
+        assert parsed["summary"]["total"] == 4
+        assert parsed["summary"]["matched"] == 2
+        assert parsed["summary"]["no_match"] == 1
+        assert parsed["summary"]["errors"] == 1
+        # Verify the JSON results contain all names
+        names = [r["name"] for r in parsed["results"]]
+        assert "Alice Thornton" in names
+        assert "Bob Henderson" in names
+        assert "Charlie Unknown" in names
+        assert "Diana Error" in names
 
     @pytest.mark.asyncio
-    async def test_output_is_markdown_table(self):
-        """Output contains properly formatted markdown table."""
+    async def test_output_is_compact_json(self):
+        """Output is valid compact JSON with summary and results."""
+        import json as _json
         from app.agent.tools import batch_lookup_clients
 
         people = [{"name": "John Smith"}]
@@ -193,10 +192,13 @@ class TestBatchLookupClients:
         with patch("app.agent.batch_resolver.resolve_client", side_effect=mock_resolve):
             result = await batch_lookup_clients(deps, people=people)
 
-        # Verify markdown table structure
-        assert "| # | Entity Name | Client ID | Confidence | Status |" in result
-        assert "|---|-------------|-----------|------------|--------|" in result
-        assert "| 1 |" in result
+        # Verify compact JSON structure
+        parsed = _json.loads(result)
+        assert "summary" in parsed
+        assert "results" in parsed
+        assert parsed["results"][0]["name"] == "John Smith"
+        assert parsed["results"][0]["gwm_id"] == "GWM-100"
+        assert parsed["results"][0]["status"] == "matched"
 
     @pytest.mark.asyncio
     async def test_concurrency_controlled_by_semaphore(self):
@@ -228,7 +230,7 @@ class TestBatchLookupClients:
 
         # The semaphore limit is 10 (_BATCH_CONCURRENCY)
         assert max_concurrent <= 10, f"Max concurrent was {max_concurrent}, expected <= 10"
-        assert f"Processed {num_names} name" in result
+        assert f'"total":{num_names}' in result
 
     @pytest.mark.asyncio
     async def test_individual_errors_do_not_stop_batch(self):
@@ -251,11 +253,14 @@ class TestBatchLookupClients:
             result = await batch_lookup_clients(deps, people=people)
 
         # Both good persons should be matched
-        assert "2 matched" in result
-        assert "1 error" in result
-        assert "Good Person 1" in result
-        assert "Good Person 2" in result
-        assert "Bad Person" in result
+        import json as _json
+        parsed = _json.loads(result)
+        assert parsed["summary"]["matched"] == 2
+        assert parsed["summary"]["errors"] == 1
+        names = [r["name"] for r in parsed["results"]]
+        assert "Good Person 1" in names
+        assert "Good Person 2" in names
+        assert "Bad Person" in names
 
     @pytest.mark.asyncio
     async def test_summary_line_correct_counts(self):
@@ -276,10 +281,12 @@ class TestBatchLookupClients:
         with patch("app.agent.batch_resolver.resolve_client", side_effect=mock_resolve):
             result = await batch_lookup_clients(deps, people=people)
 
-        assert "Processed 10 names" in result
-        assert "5 matched" in result
-        assert "3 no match" in result
-        assert "2 error" in result
+        import json as _json
+        parsed = _json.loads(result)
+        assert parsed["summary"]["total"] == 10
+        assert parsed["summary"]["matched"] == 5
+        assert parsed["summary"]["no_match"] == 3
+        assert parsed["summary"]["errors"] == 2
 
     @pytest.mark.asyncio
     async def test_deduplication_same_name_different_casing(self):
@@ -303,8 +310,10 @@ class TestBatchLookupClients:
             result = await batch_lookup_clients(deps, people=people)
 
         # Only one unique name should be resolved
+        import json as _json
         assert call_count == 1
-        assert "Processed 1 name" in result
+        parsed = _json.loads(result)
+        assert parsed["summary"]["total"] == 1
 
     @pytest.mark.asyncio
     async def test_single_name_singular_grammar(self):
@@ -320,7 +329,10 @@ class TestBatchLookupClients:
         with patch("app.agent.batch_resolver.resolve_client", side_effect=mock_resolve):
             result = await batch_lookup_clients(deps, people=people)
 
-        assert "Processed 1 name:" in result
+        import json as _json
+        parsed = _json.loads(result)
+        assert parsed["summary"]["total"] == 1
+        assert parsed["summary"]["matched"] == 1
 
     @pytest.mark.asyncio
     async def test_company_passed_to_resolver(self):
@@ -517,7 +529,8 @@ class TestExtractAndLookupEndToEnd:
 
     @pytest.mark.asyncio
     async def test_full_pipeline_csv_extraction_and_lookup(self):
-        """Full pipeline: CSV doc -> extract names -> resolve -> markdown output."""
+        """Full pipeline: CSV doc -> extract names -> resolve -> compact JSON output."""
+        import json as _json
         from app.agent.tools import extract_and_lookup_entities
 
         deps = _make_deps(
@@ -544,17 +557,21 @@ class TestExtractAndLookupEndToEnd:
         assert "Extracted 3 unique names" in result
         assert "owners.csv" in result
 
-        # Verify markdown table is present
-        assert "| # | Entity Name | Client ID | Confidence | Status |" in result
+        # Extract the JSON portion (after the header text)
+        json_start = result.index("{")
+        parsed = _json.loads(result[json_start:])
 
-        # Verify all names appear in the table
-        assert "Robert Kraft" in result
-        assert "Jerry Jones" in result
-        assert "Steve Cohen" in result
+        # Verify all names appear in the results
+        names = [r["name"] for r in parsed["results"]]
+        assert "Robert Kraft" in names
+        assert "Jerry Jones" in names
+        assert "Steve Cohen" in names
 
         # Verify match statuses
-        assert "Matched" in result
-        assert "No match" in result
+        statuses = {r["name"]: r["status"] for r in parsed["results"]}
+        assert statuses["Robert Kraft"] == "matched"
+        assert statuses["Jerry Jones"] == "matched"
+        assert statuses["Steve Cohen"] == "no_match"
 
     @pytest.mark.asyncio
     async def test_deduplication_in_extraction(self):
@@ -586,7 +603,7 @@ class TestExtractAndLookupEndToEnd:
         # The mock returns 2 entries, so batch_resolve handles dedup.
         # In any case, the result should be valid.
         assert "Robert Kraft" in result
-        assert "Processed" in result
+        assert '"summary"' in result
 
     @pytest.mark.asyncio
     async def test_zero_names_extracted_returns_message(self):
@@ -625,9 +642,9 @@ class TestExtractAndLookupEndToEnd:
 
             result = await extract_and_lookup_entities(deps, filename="owners.csv")
 
-        # Should start with extraction info, then include the table
+        # Should start with extraction info, then include the JSON results
         assert result.startswith("Extracted 2 unique names")
-        assert "Processed" in result
+        assert '"summary"' in result
 
     @pytest.mark.asyncio
     async def test_mixed_results_in_pipeline(self):
@@ -654,10 +671,13 @@ class TestExtractAndLookupEndToEnd:
 
             result = await extract_and_lookup_entities(deps, filename="owners.csv")
 
-        # All three outcomes should appear in the summary
-        assert "1 matched" in result
-        assert "1 no match" in result
-        assert "1 error" in result
+        # All three outcomes should appear in the compact JSON summary
+        import json as _json
+        json_start = result.index("{")
+        parsed = _json.loads(result[json_start:])
+        assert parsed["summary"]["matched"] == 1
+        assert parsed["summary"]["no_match"] == 1
+        assert parsed["summary"]["errors"] == 1
 
     @pytest.mark.asyncio
     async def test_multiple_documents_via_all(self):

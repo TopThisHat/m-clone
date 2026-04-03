@@ -9,12 +9,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def run_research(query: str) -> str:
+async def run_research(query: str, user_sid: str | None = None) -> str:
     """Run the research agent and return the final report markdown."""
     from app.agent.streaming import stream_research
     from app.dependencies import get_agent_deps
 
-    deps = get_agent_deps(depth="balanced")
+    deps = get_agent_deps(depth="balanced", user_sid=user_sid)
     markdown = ""
     current_event = ""
 
