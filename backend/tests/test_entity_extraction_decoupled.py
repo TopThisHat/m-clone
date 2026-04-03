@@ -444,8 +444,8 @@ class TestExistingAgentToolsUnchanged:
             "app.agent.batch_resolver.batch_resolve_clients",
             mock_resolve,
         ), patch(
-            "app.agent.batch_resolver.format_results_as_markdown",
-            return_value="| # | Name | ... |",
+            "app.agent.batch_resolver.format_results_as_compact_json",
+            return_value='{"summary":{"total":1,"matched":1,"no_match":0,"errors":0},"results":[{"name":"Ivan King","gwm_id":"GWM-300","confidence":0.92,"status":"matched"}]}',
         ):
             result = await execute_tool(
                 "batch_lookup_clients",
@@ -453,7 +453,7 @@ class TestExistingAgentToolsUnchanged:
                 deps,
             )
 
-        assert result  # returns non-empty markdown
+        assert result  # returns non-empty JSON
 
     @pytest.mark.asyncio
     async def test_extract_and_lookup_entities_tool_still_works(self):
@@ -478,8 +478,8 @@ class TestExistingAgentToolsUnchanged:
             "app.agent.batch_resolver.batch_resolve_clients",
             mock_resolve,
         ), patch(
-            "app.agent.batch_resolver.format_results_as_markdown",
-            return_value="| # | Name | ... |",
+            "app.agent.batch_resolver.format_results_as_compact_json",
+            return_value='{"summary":{"total":1,"matched":1,"no_match":0,"errors":0},"results":[{"name":"Jane Doe","gwm_id":"GWM-400","confidence":0.85,"status":"matched"}]}',
         ):
             result = await execute_tool(
                 "extract_and_lookup_entities",

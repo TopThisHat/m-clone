@@ -106,6 +106,7 @@ async def research_endpoint(body: ResearchRequest, request: Request, user: dict[
         depth=body.depth,
         user_rules=body.rules,
         team_ids=team_ids,
+        user_sid=user["sub"] if user else None,
     )
 
     return StreamingResponse(
@@ -130,6 +131,7 @@ async def _run_async_job(
     webhook_url: str,
     doc_session_key: str | None,
     team_ids: list[str] | None = None,
+    owner_sid: str | None = None,
 ) -> None:
     """Background task: run research and POST results to webhook."""
     from app.db import db_update_job
@@ -155,6 +157,7 @@ async def _run_async_job(
             uploaded_doc_metadata=doc_session.metadata,
             memory_context=memory_ctx,
             team_ids=team_ids or [],
+            user_sid=owner_sid,
         )
 
         # Collect all SSE output into a string
@@ -233,6 +236,7 @@ async def async_research_endpoint(body: AsyncResearchRequest, background_tasks: 
         body.webhook_url,
         body.doc_session_key,
         team_ids,
+        user["sub"],
     )
     return {"job_id": job_id, "status": "queued"}
 

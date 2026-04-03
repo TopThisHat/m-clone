@@ -1,12 +1,15 @@
 """Batch entity resolution for the Autonomous Bulk Entity Extraction & Client Lookup feature.
 
-Provides three capabilities:
+Provides four capabilities:
 
-  1. batch_resolve_clients()    — resolve a list of names against the client directory
-                                  with concurrency control and per-item error isolation.
-  2. format_results_as_markdown() — render batch results as a markdown table with summary.
-  3. extract_person_names()     — LLM-backed name extraction from arbitrary document text,
-                                  with automatic chunking for large inputs.
+  1. batch_resolve_clients()         — resolve a list of names against the client directory
+                                       with concurrency control, per-item error isolation,
+                                       per-call timeout, and overall batch timeout.
+  2. format_results_as_markdown()    — render batch results as a markdown table with summary.
+  3. format_results_as_compact_json() — render batch results as a compact JSON string
+                                        (preferred default; ~40 %+ smaller than markdown).
+  4. extract_person_names()          — LLM-backed name extraction from arbitrary document
+                                       text, with automatic chunking for large inputs.
 
 Reference: openspec/changes/autonomous-bulk-entity-lookup/
 """
@@ -27,6 +30,12 @@ logger = logging.getLogger(__name__)
 
 # Maximum number of resolve_client() calls running at the same time.
 _BATCH_CONCURRENCY = 10
+
+# Timeout (seconds) for a single resolve_client() call within a batch.
+_PER_CALL_TIMEOUT = 10.0
+
+# Timeout (seconds) for the entire batch_resolve_clients() operation.
+_BATCH_TIMEOUT = 120.0
 
 # Characters per chunk when splitting large documents for extraction.
 # 8000 chars is ~2000 tokens, well within gpt-4o-mini's context window while
@@ -322,7 +331,24 @@ async def batch_resolve_clients(
 
         async with semaphore:
             try:
-                lookup_result = await resolve_client(name=name, company=company)
+                lookup_result = await asyncio.wait_for(
+                    resolve_client(name=name, company=company),
+                    timeout=_PER_CALL_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "batch_resolver: resolve_client timed out for name=%r after %.1fs",
+                    name,
+                    _PER_CALL_TIMEOUT,
+                )
+                result = {
+                    "name": original_name,
+                    "status": "error",
+                    "gwm_id": None,
+                    "confidence": None,
+                    "error": f"Client resolution timed out after {_PER_CALL_TIMEOUT}s",
+                    "result": None,
+                }
             except Exception as exc:
                 logger.warning(
                     "batch_resolver: resolve_client raised for name=%r: %s",
@@ -369,32 +395,57 @@ async def batch_resolve_clients(
 
         return result
 
-    results = await asyncio.gather(
-        *[_resolve_one(entry) for entry in unique_entries],
-        return_exceptions=True,
-    )
+    tasks = [asyncio.create_task(_resolve_one(entry)) for entry in unique_entries]
+    done, pending = await asyncio.wait(tasks, timeout=_BATCH_TIMEOUT)
 
+    # Cancel any tasks that didn't finish within the overall timeout.
+    for t in pending:
+        t.cancel()
+
+    if pending:
+        logger.warning(
+            "batch_resolver: overall timeout (%.1fs) reached — %d/%d tasks still pending",
+            _BATCH_TIMEOUT,
+            len(pending),
+            len(tasks),
+        )
+
+    # Build output preserving original order.
     output: list[dict[str, Any]] = []
-    for i, result in enumerate(results):
-        if isinstance(result, BaseException):
-            # Should not occur since _resolve_one catches internally, but guard anyway.
+    for i, task in enumerate(tasks):
+        if task in done:
+            try:
+                result = task.result()
+            except BaseException as exc:
+                # Should not occur since _resolve_one catches internally, but guard anyway.
+                original_name = unique_entries[i].get("_original_name", unique_entries[i]["name"])
+                logger.error(
+                    "batch_resolver: unexpected exception for entry %d (%r): %s",
+                    i,
+                    original_name,
+                    exc,
+                )
+                output.append({
+                    "name": original_name,
+                    "status": "error",
+                    "gwm_id": None,
+                    "confidence": None,
+                    "error": f"Unexpected error: {exc}",
+                    "result": None,
+                })
+            else:
+                output.append(result)
+        else:
+            # Task was still pending when the overall timeout fired.
             original_name = unique_entries[i].get("_original_name", unique_entries[i]["name"])
-            logger.error(
-                "batch_resolver: unexpected exception for entry %d (%r): %s",
-                i,
-                original_name,
-                result,
-            )
             output.append({
                 "name": original_name,
                 "status": "error",
                 "gwm_id": None,
                 "confidence": None,
-                "error": f"Unexpected error: {result}",
+                "error": f"Batch processing timed out after {_BATCH_TIMEOUT}s",
                 "result": None,
             })
-        else:
-            output.append(result)
 
     return output
 
@@ -469,3 +520,58 @@ def format_results_as_markdown(results: list[dict[str, Any]]) -> str:
 def _escape_md(text: str) -> str:
     """Escape pipe characters in text so they don't break markdown table cells."""
     return text.replace("|", "\\|")
+
+
+# ── Public: format_results_as_compact_json ───────────────────────────────────
+
+
+def format_results_as_compact_json(results: list[dict[str, Any]]) -> str:
+    """Format batch lookup results as a compact JSON string.
+
+    Returns a JSON string with the structure::
+
+        {
+          "summary": {"total": N, "matched": M, "no_match": X, "errors": Y},
+          "results": [
+            {"name": "...", "gwm_id": "..." | null,
+             "confidence": 0.94 | null,
+             "status": "matched" | "no_match" | "error"}
+          ]
+        }
+
+    All rows are included (no truncation).  Uses ``json.dumps`` with no
+    indentation and compact separators for minimal token usage.
+
+    Args:
+        results: List of result dicts as returned by batch_resolve_clients().
+
+    Returns:
+        Compact JSON string.  Returns a plain-text message when the
+        input list is empty.
+    """
+    if not results:
+        return "No names provided."
+
+    matched = sum(1 for r in results if r.get("status") == "matched")
+    no_match = sum(1 for r in results if r.get("status") == "no_match")
+    errors = sum(1 for r in results if r.get("status") == "error")
+
+    payload = {
+        "summary": {
+            "total": len(results),
+            "matched": matched,
+            "no_match": no_match,
+            "errors": errors,
+        },
+        "results": [
+            {
+                "name": r.get("name") or "",
+                "gwm_id": r.get("gwm_id"),
+                "confidence": r.get("confidence"),
+                "status": r.get("status", "error"),
+            }
+            for r in results
+        ],
+    }
+
+    return json.dumps(payload, separators=(",", ":"))
