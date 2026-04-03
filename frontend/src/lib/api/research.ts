@@ -11,7 +11,8 @@ import {
 	conflictWarnings,
 	memoryContext,
 	pendingClarification,
-	docSessionKey
+	docSessionKey,
+	reportStore
 } from '$lib/stores/reportStore';
 import type { ChartPayload, ChatSource, ClarificationData } from '$lib/stores/reportStore';
 import type { QueryResult } from '$lib/api/documents';
@@ -64,6 +65,7 @@ export async function startResearch(
 	const asstMsgId = crypto.randomUUID();
 
 	traceStore.reset();
+	reportStore.reset();
 	errorMessage.set(null);
 	researchPhase.set(null);
 	memoryContext.set('');
@@ -393,6 +395,42 @@ function handleSSEEvent(
 			break;
 		}
 
+		case 'classification':
+			reportStore.setClassification(
+				data as unknown as Parameters<typeof reportStore.setClassification>[0]
+			);
+			break;
+
+		case 'progress':
+			reportStore.setProgress(
+				data as unknown as Parameters<typeof reportStore.setProgress>[0]
+			);
+			break;
+
+		case 'plan':
+			reportStore.setExecutionPlan(
+				data as unknown as Parameters<typeof reportStore.setExecutionPlan>[0]
+			);
+			break;
+
+		case 'step_update':
+			reportStore.updatePlanStep(
+				data as unknown as Parameters<typeof reportStore.updatePlanStep>[0]
+			);
+			break;
+
+		case 'batch_job_submitted':
+			reportStore.setBatchJob(
+				data as unknown as Parameters<typeof reportStore.setBatchJob>[0]
+			);
+			break;
+
+		case 'confirmation_needed':
+			reportStore.setConfirmation(
+				data as unknown as Parameters<typeof reportStore.setConfirmation>[0]
+			);
+			break;
+
 		case 'error':
 			errorMessage.set(data.message as string);
 			chatMessages.update((msgs) =>
@@ -402,6 +440,10 @@ function handleSSEEvent(
 
 		case 'done':
 			isStreaming.set(false);
+			break;
+
+		default:
+			console.debug('Unknown SSE event:', eventType);
 			break;
 	}
 

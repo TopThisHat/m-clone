@@ -121,7 +121,7 @@
 	// ── Share session ─────────────────────────────────────────────────────────
 	import { activeSessionId, sessionList } from '$lib/stores/sessionStore';
 	import { currentUser } from '$lib/stores/authStore';
-	import { sessionComments } from '$lib/stores/reportStore';
+	import { sessionComments, currentMode } from '$lib/stores/reportStore';
 	import HighlightableReport from './HighlightableReport.svelte';
 	import ShareModal from './ShareModal.svelte';
 
@@ -141,10 +141,29 @@
 
 	// ── Phase label ──────────────────────────────────────────────────────────
 	const phaseLabel: Record<string, string> = {
+		// research mode
 		planning: 'Planning...',
 		searching: 'Searching...',
 		evaluating: 'Evaluating...',
-		writing: 'Writing...'
+		writing: 'Writing...',
+		// data_processing mode
+		Inventorying: 'Inventorying...',
+		Processing: 'Processing...',
+		Aggregating: 'Aggregating...',
+		// task_execution mode
+		Planning: 'Planning...',
+		Executing: 'Executing...',
+		Adapting: 'Adapting...',
+		Summarizing: 'Summarizing...'
+	};
+
+	// ── Mode badge label ─────────────────────────────────────────────────────
+	const modeLabel: Record<string, string> = {
+		research: 'Research query',
+		data_processing: 'Data task',
+		task_execution: 'Multi-step task',
+		quick_answer: 'Quick answer',
+		format_only: 'Formatting'
 	};
 
 	// ── Suggestions ────────────────────────────────────────────────────────
@@ -259,6 +278,12 @@
 								<span class="text-navy font-serif font-bold text-xs select-none">P</span>
 							</div>
 							<span class="text-xs text-gold font-medium tracking-wide">Playbook Research</span>
+
+							{#if isLast && $currentMode && modeLabel[$currentMode]}
+								<span class="text-[10px] text-slate-500 border border-navy-600 rounded px-1.5 py-0.5 leading-none">
+									{modeLabel[$currentMode]}
+								</span>
+							{/if}
 
 							{#if msg.isStreaming}
 								{#if $pendingClarification && msg.clarification && !msg.clarification.answered}
