@@ -14,12 +14,22 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 
 from worker.entity_extraction import (
     ExtractionResult,
     ExtractedEntity,
     _process_message,
 )
+
+
+# ---------------------------------------------------------------------------
+# Override autouse conftest fixture (no DB needed for unit tests)
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture(autouse=True)
+async def _ensure_schema():
+    yield
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,8 @@ from app.agent.clarification import clarification_store
 from app.config import settings
 from app.dependencies import AgentDeps
 
+logger = logging.getLogger(__name__)
+
 FINANCIAL_DOMAINS = [
     "reuters.com", "bloomberg.com", "ft.com", "wsj.com",
     "sec.gov", "investopedia.com", "marketwatch.com",
@@ -984,8 +986,6 @@ async def query_knowledge_graph(deps: AgentDeps, query: str) -> str:
 
 
 # ── TalkToMe integration ───────────────────────────────────────────────────
-
-logger = logging.getLogger(__name__)
 
 _talktome_semaphore: asyncio.Semaphore | None = None
 
