@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     # Knowledge Graph
     kg_master_team_id: str = "00000000-0000-0000-0000-000000000001"
 
+    # Agent execution limits
+    max_tool_calls_per_turn: int = 200
+
     # TalkToMe API
     talktome_api_url: str = ""
     talktome_api_key: str = ""

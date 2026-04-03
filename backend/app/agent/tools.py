@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -32,13 +34,29 @@ _CLAIM_PATTERN = re.compile(r'\$[\d,]+\.?\d*[BMTKbmtk]?|\d+\.?\d*%')
 class ToolDef:
     func: Callable[..., Coroutine]
     schema: dict[str, Any]
+    modes: frozenset[str] | None = None  # None = available in all modes
 
 
 TOOL_REGISTRY: dict[str, ToolDef] = {}
 
 
-def _register(name: str, description: str, parameters: dict[str, Any]):
-    """Decorator: register a tool function with its OpenAI function-calling schema."""
+def _register(
+    name: str,
+    description: str,
+    parameters: dict[str, Any],
+    modes: set[str] | None = None,
+):
+    """Decorator: register a tool function with its OpenAI function-calling schema.
+
+    Args:
+        name: Tool name used in the OpenAI function-calling protocol.
+        description: Human-readable description sent to the LLM.
+        parameters: JSON Schema for the tool's parameters.
+        modes: Execution modes where this tool is available.
+            ``None`` means available in all modes.
+    """
+    frozen_modes: frozenset[str] | None = frozenset(modes) if modes is not None else None
+
     def decorator(fn: Callable[..., Coroutine]):
         TOOL_REGISTRY[name] = ToolDef(
             func=fn,
@@ -50,6 +68,7 @@ def _register(name: str, description: str, parameters: dict[str, Any]):
                     "parameters": parameters,
                 },
             },
+            modes=frozen_modes,
         )
         return fn
     return decorator
@@ -68,6 +87,93 @@ async def execute_tool(name: str, args: dict[str, Any], deps: AgentDeps) -> str:
     return await tool_def.func(deps=deps, **args)
 
 
+def get_tools_for_mode(mode: str) -> list[dict[str, Any]]:
+    """Return tool schemas filtered for the given execution mode.
+
+    Tools with ``modes=None`` are available in every mode.  Tools with an
+    explicit ``modes`` frozenset are included only when *mode* is a member.
+    """
+    return [
+        td.schema
+        for td in TOOL_REGISTRY.values()
+        if td.modes is None or mode in td.modes
+    ]
+
+
+def _tool_names_for_mode(mode: str) -> set[str]:
+    """Return the set of tool names available in *mode*."""
+    return {
+        name
+        for name, td in TOOL_REGISTRY.items()
+        if td.modes is None or mode in td.modes
+    }
+
+
+def normalize_history_for_mode(
+    messages: list[dict[str, Any]],
+    mode: str,
+) -> list[dict[str, Any]]:
+    """Remove tool call/result pairs for tools not available in the given mode.
+
+    When a follow-up message switches execution modes (e.g. RESEARCH to
+    DATA_PROCESSING), the conversation history may contain tool calls and
+    results for tools that are not in the new mode's allowed set.  Sending
+    those to the LLM confuses it (it sees tools it cannot call), so this
+    function strips them while preserving all other messages.
+
+    Rules:
+      - Assistant messages with ``tool_calls`` are filtered: only calls for
+        allowed tools are kept.  If no calls remain and the message has no
+        text ``content``, the entire message is dropped.
+      - Tool-role messages whose ``name`` (or the tool_call_id's originating
+        name) is not in the mode's allowed set are dropped.
+      - All other messages pass through unchanged.
+    """
+    allowed = _tool_names_for_mode(mode)
+
+    # First pass: collect tool_call_ids that belong to allowed tools so we
+    # can match tool-result messages reliably.
+    allowed_call_ids: set[str] = set()
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                fn_name = (tc.get("function") or {}).get("name", "")
+                if fn_name in allowed:
+                    allowed_call_ids.add(tc.get("id", ""))
+
+    result: list[dict[str, Any]] = []
+    for msg in messages:
+        role = msg.get("role")
+
+        # ── Assistant message with tool_calls ──────────────────────────
+        if role == "assistant" and msg.get("tool_calls"):
+            kept_calls = [
+                tc for tc in msg["tool_calls"]
+                if (tc.get("function") or {}).get("name", "") in allowed
+            ]
+            if kept_calls:
+                result.append({**msg, "tool_calls": kept_calls})
+            elif msg.get("content"):
+                # Keep the text portion even though all tool_calls were removed
+                cleaned = {k: v for k, v in msg.items() if k != "tool_calls"}
+                result.append(cleaned)
+            # else: drop entirely — no text, no valid tool calls
+            continue
+
+        # ── Tool result message ────────────────────────────────────────
+        if role == "tool":
+            call_id = msg.get("tool_call_id", "")
+            if call_id in allowed_call_ids:
+                result.append(msg)
+            # else: drop — the originating tool_call was stripped
+            continue
+
+        # ── All other messages (user, system, plain assistant) ─────────
+        result.append(msg)
+
+    return result
+
+
 # ── Tool implementations ─────────────────────────────────────────────────────
 
 @_register(
@@ -76,7 +182,8 @@ async def execute_tool(name: str, args: dict[str, Any], deps: AgentDeps) -> str:
     "Use ONLY when the top-level query is genuinely ambiguous in a way that changes "
     "the entire research direction. Call at most ONCE, as the very first action — "
     "before create_research_plan. Never call mid-research.",
-    {
+    modes={"quick_answer", "research", "data_processing", "task_execution"},
+    parameters={
         "type": "object",
         "properties": {
             "question": {"type": "string", "description": "The clarifying question to ask the user."},
@@ -120,7 +227,8 @@ async def ask_clarification(
     "create_research_plan",
     "Create a structured research plan before starting information gathering. "
     "MUST be called as the very first action for any research query.",
-    {
+    modes={"research"},
+    parameters={
         "type": "object",
         "properties": {
             "topic": {"type": "string", "description": "The central research topic or question."},
@@ -175,7 +283,8 @@ async def create_research_plan(
     "evaluate_research_completeness",
     "Evaluate whether enough research has been done before writing the final report. "
     "Call this after completing a batch of research tool calls.",
-    {
+    modes={"research"},
+    parameters={
         "type": "object",
         "properties": {
             "findings_summary": {"type": "string", "description": "A concise summary of what has been found so far."},
@@ -247,7 +356,8 @@ async def evaluate_research_completeness(
 @_register(
     "web_search",
     "Search the web for current information, news, and online sources using Tavily.",
-    {
+    modes={"quick_answer", "research", "task_execution"},
+    parameters={
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "The search query string. Be specific and include relevant context."},
@@ -319,7 +429,8 @@ async def web_search(deps: AgentDeps, query: str) -> str:
 @_register(
     "wiki_lookup",
     "Look up a topic on Wikipedia for encyclopedic background information.",
-    {
+    modes={"quick_answer", "research", "task_execution"},
+    parameters={
         "type": "object",
         "properties": {
             "topic": {"type": "string", "description": "The Wikipedia article title or search term to look up."},
@@ -357,7 +468,8 @@ async def wiki_lookup(deps: AgentDeps, topic: str) -> str:
 @_register(
     "get_financials",
     "Retrieve financial market data for a publicly traded company via Yahoo Finance.",
-    {
+    modes={"quick_answer", "research", "data_processing", "task_execution"},
+    parameters={
         "type": "object",
         "properties": {
             "ticker": {"type": "string", "description": "Stock ticker symbol (e.g. AAPL, MSFT, TSLA, NVDA)."},
@@ -489,7 +601,8 @@ async def get_financials(
 @_register(
     "sec_edgar_search",
     "Search SEC EDGAR full-text search for public company filings.",
-    {
+    modes={"research", "task_execution"},
+    parameters={
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Company name, ticker, or topic to search for."},
@@ -568,7 +681,8 @@ async def sec_edgar_search(
     "images, etc.). You MUST provide specific content keywords from the document — wildcards "
     'like "*" do NOT work and will return no results. Use concrete terms (e.g. "revenue", '
     '"team names", "Q3 results") that you expect to appear in the document text.',
-    {
+    modes={"quick_answer", "research", "data_processing", "task_execution"},
+    parameters={
         "type": "object",
         "properties": {
             "query": {
@@ -747,7 +861,8 @@ def _chunk_label(chunk: dict) -> str:
     "lookup_client",
     "Look up a client's GWM ID by name. Searches the client directory and priority queue "
     "using fuzzy matching, then resolves the best match using LLM adjudication.",
-    {
+    modes={"quick_answer", "research", "data_processing", "task_execution"},
+    parameters={
         "type": "object",
         "properties": {
             "name": {
@@ -802,7 +917,8 @@ async def lookup_client(deps: AgentDeps, name: str, company: str | None = None) 
     "Look up GWM client IDs for a list of people. Use this when you have 5 or more "
     "pre-extracted person names to resolve. Returns a formatted markdown table with "
     "match results, confidence scores, and status for every name.",
-    {
+    modes={"research", "data_processing", "task_execution"},
+    parameters={
         "type": "object",
         "properties": {
             "people": {
@@ -841,7 +957,8 @@ async def batch_lookup_clients(deps: AgentDeps, people: list[dict]) -> str:
     "Use this when the user wants to extract entities from a document and check for client IDs. "
     "Handles CSV, PDF, prose, and mixed formats. Supports a specific filename or 'all' to "
     "process every uploaded document.",
-    {
+    modes={"data_processing", "task_execution"},
+    parameters={
         "type": "object",
         "properties": {
             "filename": {
@@ -907,7 +1024,8 @@ async def extract_and_lookup_entities(deps: AgentDeps, filename: str) -> str:
     "Search the internal knowledge graph for entities and relationships. "
     "Use this to answer questions about known people, companies, deals, and relationships. "
     "Searches the user's team graphs for entities and relationships.",
-    {
+    modes={"quick_answer", "research", "data_processing", "task_execution"},
+    parameters={
         "type": "object",
         "properties": {
             "query": {
@@ -1003,7 +1121,8 @@ def _get_talktome_semaphore() -> asyncio.Semaphore:
     "Query the TalkToMe API for client interaction history (meeting notes, call "
     "transcripts). Requires a resolved gwm_id — call lookup_client first if you "
     "only have a name. Returns a summary of relevant interactions.",
-    {
+    modes={"quick_answer", "research", "data_processing", "task_execution"},
+    parameters={
         "type": "object",
         "properties": {
             "question": {

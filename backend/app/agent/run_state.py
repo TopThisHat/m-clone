@@ -8,6 +8,22 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+# Rough per-tool-call cost estimates (tokens in + out)
+_TOOL_CALL_COST_USD: float = 0.02  # conservative average
+
+
+def estimate_turn_cost(tool_call_count: int) -> float:
+    """Estimate the cost of a turn based on tool call count.
+
+    Args:
+        tool_call_count: Number of tool calls executed in the turn.
+
+    Returns:
+        Estimated cost in USD.
+    """
+    return tool_call_count * _TOOL_CALL_COST_USD
+
+
 @dataclass
 class RunState:
     """Tracks mutable state during a single agent execution turn.

@@ -74,6 +74,14 @@ TOOL_METADATA: dict[str, dict[str, str]] = {
     "sec_edgar_search": {"label": "SEC Filing", "icon": "document"},
     "ask_clarification": {"label": "Clarification Needed", "icon": "tool"},
     "query_knowledge_graph": {"label": "Knowledge Graph", "icon": "graph"},
+    "lookup_client": {"label": "Client Lookup", "icon": "person"},
+    "batch_lookup_clients": {"label": "Batch Client Lookup", "icon": "people"},
+    "extract_and_lookup_entities": {"label": "Entity Extraction", "icon": "extract"},
+    "talk_to_me": {"label": "Client Interactions", "icon": "chat"},
+    # Sprint 3 tools (placeholders — implementations coming in Sprint 3)
+    "create_execution_plan": {"label": "Execution Plan", "icon": "plan"},
+    "report_progress": {"label": "Progress", "icon": "progress"},
+    "submit_batch_job": {"label": "Batch Job", "icon": "batch"},
 }
 
 
