@@ -7,6 +7,7 @@ _WORKFLOW_MODULES = [
     "worker.workflows.research",
     "worker.workflows.attribute_clustering",
     "worker.workflows.kg_promotion",
+    "worker.workflows.data_processing",
 ]
 
 for _module in _WORKFLOW_MODULES:

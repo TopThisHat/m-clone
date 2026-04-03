@@ -419,3 +419,371 @@ async def stream_research(
             clarification_store.cancel_session(deps.active_clarification_ids, reason="stream_closed")
 
     yield _sse("done", {"message": "Research complete"})
+
+
+async def stream_agent(
+    query: str,
+    deps: AgentDeps,
+    message_history: list[Any] | None = None,
+    session_id: str | None = None,
+    model: str | None = None,
+    execution_mode: str | None = None,
+) -> AsyncIterator[str]:
+    """Mode-aware SSE generator — v2 entry point with classification routing.
+
+    When execution_mode is None, delegates to stream_research() for backward
+    compatibility. When "auto" or a specific mode, classifies and routes.
+    """
+    # If no mode specified, use legacy path
+    if execution_mode is None:
+        async for event in stream_research(query, deps, message_history, session_id, model):
+            yield event
+        return
+
+    from app.agent.classifier import ClassificationError, classify_query
+    from app.agent.prompts import build_system_prompt
+    from app.agent.runner_config import ExecutionMode, RUNNER_CONFIGS
+    from app.agent.tools import (
+        _BATCH_JOB_MARKER,
+        _PROGRESS_MARKER,
+        execute_tool,
+        get_tools_for_mode,
+        normalize_history_for_mode,
+    )
+
+    yield _sse("start", {"message": "Request initiated", "query": query})
+
+    if deps.memory_context:
+        yield _sse("memory_context", {"context": deps.memory_context})
+
+    # --- Step 1: Classify ---
+    try:
+        classification = await classify_query(
+            query=query,
+            has_documents=bool(deps.uploaded_doc_metadata),
+            doc_metadata=deps.uploaded_doc_metadata or None,
+            is_followup=bool(message_history),
+            execution_mode_override=execution_mode if execution_mode != "auto" else None,
+        )
+    except ClassificationError as exc:
+        yield _sse("error", {"message": f"Classification failed: {exc}"})
+        yield _sse("done", {"message": "Request failed"})
+        return
+
+    # --- Step 2: Emit classification event ---
+    yield _sse("classification", {
+        "mode": classification.mode.value,
+        "reasoning": classification.reasoning,
+        "estimated_steps": classification.estimated_steps,
+        "batch_size": classification.batch_size,
+        "warning": classification.confidence < 0.7,
+    })
+
+    # --- Step 3: Get runner config ---
+    config = RUNNER_CONFIGS[classification.mode]
+
+    # --- Step 4: For FORMAT_ONLY, skip tools entirely ---
+    # FORMAT_ONLY has max_tool_calls=0 so the tool loop below will never
+    # execute — the model produces text in its first response and exits.
+
+    # --- Step 5: Normalize history ---
+    prior: list[dict[str, Any]] | None = None
+    if message_history:
+        if message_history and isinstance(message_history[0], dict) and message_history[0].get("role"):
+            prior = message_history
+        else:
+            prior = _convert_legacy_history(message_history)
+        if prior:
+            prior = normalize_history_for_mode(prior, classification.mode.value)
+            if len(prior) > _MAX_HISTORY_MESSAGES:
+                prior = prior[-_MAX_HISTORY_MESSAGES:]
+            query = f"[FOLLOW-UP] {query}"
+
+    # --- Step 6: Run orchestrator with mode-specific config ---
+    accumulated_text = ""
+    _pending_chart_tool_names: set[str] = set()
+    batcher = TextDeltaBatcher()
+
+    try:
+        orchestrator = ResearchOrchestrator(model=model)
+
+        # Build mode-specific system content and tools
+        mode_system_content = build_system_prompt(classification.mode, deps)
+        mode_tools = get_tools_for_mode(classification.mode.value)
+
+        # Create the messages array with mode-specific prompt
+        from app.agent.agent import _trim_history
+
+        messages: list[dict[str, Any]] = [{"role": "system", "content": mode_system_content}]
+        if prior:
+            messages.extend(_trim_history(prior))
+        messages.append({"role": "user", "content": query})
+
+        # Run the tool loop directly (bypass orchestrator.run to inject our tools)
+        total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+        while True:
+            # Circuit breaker
+            if deps.run_state.tool_call_count >= config.max_tool_calls:
+                logger.warning(
+                    "Mode %s circuit breaker: %d tool calls",
+                    classification.mode.value,
+                    deps.run_state.tool_call_count,
+                )
+                break
+
+            stream = await orchestrator.client.chat.completions.create(
+                model=orchestrator.model,
+                messages=messages,
+                tools=mode_tools if mode_tools else None,
+                parallel_tool_calls=config.parallel_tool_calls if mode_tools else None,
+                stream=True,
+            )
+
+            turn_text = ""
+            tool_calls_acc: dict[int, dict[str, str]] = {}
+
+            async for chunk in stream:
+                if chunk.usage:
+                    total_usage["prompt_tokens"] += chunk.usage.prompt_tokens or 0
+                    total_usage["completion_tokens"] += chunk.usage.completion_tokens or 0
+                    total_usage["total_tokens"] += chunk.usage.total_tokens or 0
+
+                for choice in chunk.choices:
+                    delta = choice.delta
+                    if delta is None:
+                        continue
+                    if delta.content:
+                        turn_text += delta.content
+                        accumulated_text += delta.content
+                        batched = batcher.add(delta.content)
+                        if batched is not None:
+                            yield _sse("text_delta", {"token": batched})
+                    if delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            idx = tc_delta.index
+                            if idx not in tool_calls_acc:
+                                tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                            if tc_delta.id:
+                                tool_calls_acc[idx]["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    tool_calls_acc[idx]["name"] = tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    tool_calls_acc[idx]["arguments"] += tc_delta.function.arguments
+
+            # No tool calls — model finished generating
+            if not tool_calls_acc:
+                break
+
+            # Build assistant message
+            assistant_msg: dict[str, Any] = {"role": "assistant", "content": turn_text or None}
+            assistant_msg["tool_calls"] = [
+                {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": tc["arguments"]}}
+                for tc in [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+            ]
+            messages.append(assistant_msg)
+
+            sorted_tcs = [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+            parsed_args: list[dict[str, Any]] = []
+            for tc in sorted_tcs:
+                try:
+                    args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                except json.JSONDecodeError:
+                    args = {}
+                parsed_args.append(args)
+
+            # Emit ToolCallStart events
+            for tc in sorted_tcs:
+                remaining = batcher.flush()
+                if remaining is not None:
+                    yield _sse("text_delta", {"token": remaining})
+                meta = TOOL_METADATA.get(tc["name"], {"label": tc["name"], "icon": "tool"})
+                try:
+                    display_args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                except Exception:
+                    display_args = tc["arguments"]
+
+                # Handle clarification (same as stream_research)
+                if tc["name"] == "ask_clarification":
+                    cid = tc["id"]
+                    question = display_args.get("question", "") if isinstance(display_args, dict) else str(display_args)
+                    context = display_args.get("context") if isinstance(display_args, dict) else None
+                    options = display_args.get("options") or []
+                    clarification_store.register(clarification_id=cid, question=question, context=context, options=options)
+                    deps.pending_clarification_id = cid
+                    deps.active_clarification_ids.append(cid)
+                    yield _sse("clarification_needed", {
+                        "clarification_id": cid,
+                        "question": question,
+                        "context": context,
+                        "options": options,
+                    })
+
+                if tc["name"] == "get_financials":
+                    _pending_chart_tool_names.add(tc["id"])
+
+                yield _sse("tool_call_start", {
+                    "tool_name": tc["name"],
+                    "tool_label": meta["label"],
+                    "icon": meta["icon"],
+                    "call_id": tc["id"],
+                    "args": display_args,
+                    "status": "executing",
+                })
+                while not deps.tool_sse_queue.empty():
+                    yield deps.tool_sse_queue.get_nowait()
+
+            # Execute tools
+            if len(sorted_tcs) == 1:
+                results = [await execute_tool(sorted_tcs[0]["name"], parsed_args[0], deps)]
+            else:
+                results = await asyncio.gather(
+                    *(execute_tool(tc["name"], a, deps) for tc, a in zip(sorted_tcs, parsed_args))
+                )
+
+            deps.run_state.tool_call_count += len(sorted_tcs)
+
+            # Process results
+            for tc, result_content in zip(sorted_tcs, results):
+                # Check for special markers
+                if result_content.startswith(_PROGRESS_MARKER):
+                    try:
+                        progress_data = json.loads(result_content[len(_PROGRESS_MARKER):])
+                        yield _sse("progress", progress_data)
+                    except json.JSONDecodeError:
+                        pass
+                elif result_content.startswith(_BATCH_JOB_MARKER):
+                    try:
+                        batch_data = json.loads(result_content[len(_BATCH_JOB_MARKER):])
+                        yield _sse("batch_job_submitted", batch_data)
+                    except json.JSONDecodeError:
+                        pass
+
+                # Check for clarification answer
+                if result_content.startswith("User clarification:"):
+                    answer_text = result_content.removeprefix("User clarification: ")
+                    yield _sse("clarification_answered", {
+                        "clarification_id": tc["id"],
+                        "answer": answer_text,
+                    })
+
+                preview = result_content[:400] + "..." if len(result_content) > 400 else result_content
+                yield _sse("tool_result", {
+                    "call_id": tc["id"],
+                    "preview": preview,
+                })
+
+                # Emit chart_data if this was a get_financials call
+                if tc["id"] in _pending_chart_tool_names and deps.chart_payloads:
+                    _pending_chart_tool_names.discard(tc["id"])
+                    chart_payload = deps.chart_payloads[-1]
+                    yield _sse("chart_data", {"chart": chart_payload})
+                    ticker = chart_payload.get("ticker", "") if isinstance(chart_payload, dict) else ""
+                    yield _sse("chart_trace", {"ticker": ticker, "payload": chart_payload})
+
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result_content})
+
+                while not deps.tool_sse_queue.empty():
+                    yield deps.tool_sse_queue.get_nowait()
+
+        # --- Final result handling ---
+        remaining = batcher.flush()
+        if remaining is not None:
+            yield _sse("text_delta", {"token": remaining})
+
+        final_text = accumulated_text
+        usage_data = {
+            "request_tokens": total_usage["prompt_tokens"],
+            "response_tokens": total_usage["completion_tokens"],
+            "total_tokens": total_usage["total_tokens"],
+        }
+
+        # Save usage
+        if session_id and usage_data.get("total_tokens"):
+            try:
+                from app.db import db_update_session
+
+                asyncio.create_task(db_update_session(session_id, {"usage_tokens": usage_data["total_tokens"]}))
+            except Exception:
+                logger.warning("Failed to save token usage for session %s", session_id, exc_info=True)
+
+        # Sources
+        cited_urls = re.findall(r'\[.*?\]\((https?://[^)]+)\)', final_text)
+        citation_warnings: list[str] = []
+        if cited_urls:
+            unknown = [
+                u for u in cited_urls
+                if not any(
+                    known in u or u.startswith(known)
+                    for known in deps.source_urls
+                )
+            ]
+            if len(unknown) / len(cited_urls) > 0.3:
+                citation_warnings = unknown[:5]
+
+        conflict_warnings = _detect_conflicts(deps.source_claims)
+        if conflict_warnings:
+            yield _sse("conflict_warning", {"warnings": conflict_warnings})
+
+        sources = [
+            {
+                "url": url,
+                "title": deps.source_titles.get(url, url),
+                "domain": urlparse(url).netloc,
+            }
+            for url in sorted(deps.source_urls)
+        ]
+
+        yield _sse("final_report", {
+            "markdown": final_text,
+            "usage": usage_data,
+            "messages": messages,
+            "citation_warnings": citation_warnings,
+            "conflict_warnings": conflict_warnings,
+            "sources": sources,
+            "mode": classification.mode.value,
+            "estimated_cost_usd": round(deps.run_state.estimated_cost, 4),
+        })
+
+        # Emit AI-generated follow-up suggestions
+        try:
+            from app.agent.memory import generate_suggestions
+
+            original_query = query.removeprefix("[FOLLOW-UP] ")
+            suggestions = await generate_suggestions(original_query, final_text)
+            if suggestions:
+                yield _sse("suggestions", {"suggestions": suggestions})
+        except Exception:
+            logger.warning("Failed to generate follow-up suggestions for agent stream", exc_info=True)
+
+        # Trigger memory extraction non-blocking
+        if session_id and final_text:
+            try:
+                from app.agent.memory import extract_memories
+
+                original_query = query.removeprefix("[FOLLOW-UP] ")
+                asyncio.create_task(extract_memories(session_id, original_query, final_text))
+            except Exception:
+                logger.warning("Failed to trigger memory extraction for session %s", session_id, exc_info=True)
+
+        # Publish report to knowledge graph extraction pipeline
+        if session_id and final_text:
+            try:
+                from app.streams import publish_for_extraction
+
+                asyncio.create_task(publish_for_extraction(session_id, final_text))
+            except Exception:
+                logger.warning("Failed to publish report to knowledge graph extraction for session %s", session_id, exc_info=True)
+
+    except Exception as exc:
+        # Flush buffered text before emitting the error
+        remaining = batcher.flush()
+        if remaining is not None:
+            yield _sse("text_delta", {"token": remaining})
+        yield _sse("error", {"message": str(exc)})
+    finally:
+        if deps.active_clarification_ids:
+            clarification_store.cancel_session(deps.active_clarification_ids, reason="stream_closed")
+
+    yield _sse("done", {"message": "Request complete"})

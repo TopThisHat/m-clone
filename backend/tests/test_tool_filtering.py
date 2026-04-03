@@ -425,38 +425,31 @@ class TestModeTagsMatchRunnerConfig:
         )
 
     def test_data_processing_consistency(self):
-        """Tools tagged for DATA_PROCESSING should be a subset of
-        RunnerConfig allowed_tools (config may include future Sprint 3 tools)."""
+        """Tools tagged for DATA_PROCESSING should match RunnerConfig allowed_tools."""
         from app.agent.runner_config import RUNNER_CONFIGS, ExecutionMode
 
         config = RUNNER_CONFIGS[ExecutionMode.DATA_PROCESSING]
         assert config.allowed_tools is not None
 
         tagged = _tool_names(get_tools_for_mode(DATA_PROCESSING))
-        # Config includes Sprint 3 tools not yet registered
-        sprint3_tools = {"report_progress", "submit_batch_job"}
-        config_minus_future = config.allowed_tools - sprint3_tools
-        assert tagged == config_minus_future, (
+        assert tagged == config.allowed_tools, (
             f"DATA_PROCESSING mismatch.\n"
-            f"  Tagged but not in config: {tagged - config_minus_future}\n"
-            f"  In config but not tagged: {config_minus_future - tagged}"
+            f"  Tagged but not in config: {tagged - config.allowed_tools}\n"
+            f"  In config but not tagged: {config.allowed_tools - tagged}"
         )
 
     def test_task_execution_consistency(self):
-        """Tools tagged for TASK_EXECUTION should be a subset of
-        RunnerConfig allowed_tools (config may include future Sprint 3 tools)."""
+        """Tools tagged for TASK_EXECUTION should match RunnerConfig allowed_tools."""
         from app.agent.runner_config import RUNNER_CONFIGS, ExecutionMode
 
         config = RUNNER_CONFIGS[ExecutionMode.TASK_EXECUTION]
         assert config.allowed_tools is not None
 
         tagged = _tool_names(get_tools_for_mode(TASK_EXECUTION))
-        sprint3_tools = {"create_execution_plan", "report_progress", "submit_batch_job"}
-        config_minus_future = config.allowed_tools - sprint3_tools
-        assert tagged == config_minus_future, (
+        assert tagged == config.allowed_tools, (
             f"TASK_EXECUTION mismatch.\n"
-            f"  Tagged but not in config: {tagged - config_minus_future}\n"
-            f"  In config but not tagged: {config_minus_future - tagged}"
+            f"  Tagged but not in config: {tagged - config.allowed_tools}\n"
+            f"  In config but not tagged: {config.allowed_tools - tagged}"
         )
 
     def test_research_allows_most_tools(self):
@@ -473,8 +466,15 @@ class TestModeTagsMatchRunnerConfig:
         assert config.allowed_tools is None  # None = all tools at runner level
 
         tagged = _tool_names(get_tools_for_mode(RESEARCH))
-        # extract_and_lookup_entities is excluded at the tool level
-        expected = ALL_TOOL_NAMES - {"extract_and_lookup_entities"}
+        # extract_and_lookup_entities, create_execution_plan, report_progress,
+        # and submit_batch_job are excluded at the tool level
+        excluded_from_research = {
+            "extract_and_lookup_entities",
+            "create_execution_plan",
+            "report_progress",
+            "submit_batch_job",
+        }
+        expected = ALL_TOOL_NAMES - excluded_from_research
         assert tagged == expected
 
     def test_format_only_empty(self):

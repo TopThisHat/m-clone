@@ -1275,3 +1275,205 @@ async def talk_to_me(
                         extra={"correlation_id": correlation_id},
                     )
                     return "TalkToMe service is unreachable. Check network connectivity."
+
+
+# ── Execution plan & progress tools ─────────────────────────────────────────
+
+@_register(
+    "create_execution_plan",
+    "Create a multi-step execution plan for a complex task. Each step defines "
+    "what to do, which tools to use, and what data flows to the next step. "
+    "Use this instead of create_research_plan for non-research tasks.",
+    {
+        "type": "object",
+        "properties": {
+            "task_summary": {
+                "type": "string",
+                "description": "One-sentence summary of the overall task.",
+            },
+            "steps": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "step_number": {"type": "integer"},
+                        "description": {"type": "string"},
+                        "tools": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Tool names this step will use.",
+                        },
+                        "depends_on": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                            "description": "Step numbers this step depends on.",
+                        },
+                        "critical": {
+                            "type": "boolean",
+                            "description": "If true, failure aborts the plan.",
+                        },
+                    },
+                    "required": ["step_number", "description", "tools"],
+                },
+            },
+            "estimated_tool_calls": {
+                "type": "integer",
+                "description": "Total estimated tool calls across all steps.",
+            },
+        },
+        "required": ["task_summary", "steps"],
+    },
+    modes={"task_execution"},
+)
+async def create_execution_plan(
+    deps: AgentDeps,
+    task_summary: str,
+    steps: list[dict],
+    estimated_tool_calls: int = 10,
+) -> str:
+    """Register an execution plan and return it formatted for the model."""
+    deps.run_state.execution_plan = steps
+    deps.run_state.execution_step = 0
+    deps.run_state.estimated_tool_calls = estimated_tool_calls
+
+    steps_md = []
+    for s in steps:
+        dep_str = ""
+        if s.get("depends_on"):
+            dep_str = f" (depends on: {', '.join(str(d) for d in s['depends_on'])})"
+        critical = " [CRITICAL]" if s.get("critical") else ""
+        tools = ", ".join(s.get("tools", []))
+        steps_md.append(
+            f"{s['step_number']}. {s['description']}{dep_str}{critical}\n"
+            f"   Tools: {tools}"
+        )
+
+    return (
+        f"## Execution Plan: {task_summary}\n\n"
+        f"**Estimated tool calls:** {estimated_tool_calls}\n\n"
+        f"### Steps\n" + "\n".join(steps_md) + "\n\n"
+        f"Execute steps in order. Report progress after each step completes."
+    )
+
+
+_PROGRESS_MARKER = "__PROGRESS__:"
+
+@_register(
+    "report_progress",
+    "Report progress to the user during long-running operations. "
+    "Use during data processing to show how many items have been processed, "
+    "or during multi-step tasks to indicate which step is executing.",
+    {
+        "type": "object",
+        "properties": {
+            "message": {
+                "type": "string",
+                "description": "Human-readable progress message.",
+            },
+            "current": {
+                "type": "integer",
+                "description": "Current item/step number (e.g., 45 of 200).",
+            },
+            "total": {
+                "type": "integer",
+                "description": "Total items/steps (e.g., 200).",
+            },
+            "step_label": {
+                "type": "string",
+                "description": "Label for current execution plan step, if applicable.",
+            },
+            "phase": {
+                "type": "string",
+                "enum": ["inventory", "processing", "aggregating", "complete"],
+                "description": "Current phase of the operation.",
+            },
+        },
+        "required": ["message"],
+    },
+    modes={"data_processing", "task_execution"},
+)
+async def report_progress(
+    deps: AgentDeps,
+    message: str,
+    current: int | None = None,
+    total: int | None = None,
+    step_label: str | None = None,
+    phase: str = "processing",
+) -> str:
+    """Emit a progress event via a marker prefix the orchestrator detects."""
+    progress_data: dict = {"message": message, "phase": phase}
+    if current is not None:
+        progress_data["current"] = current
+    if total is not None:
+        progress_data["total"] = total
+    if step_label is not None:
+        progress_data["step_label"] = step_label
+    if current is not None and total is not None and total > 0:
+        progress_data["percent"] = round((current / total) * 100, 1)
+
+    return f"{_PROGRESS_MARKER}{json.dumps(progress_data)}"
+
+
+_BATCH_JOB_MARKER = "__BATCH_JOB__:"
+
+@_register(
+    "submit_batch_job",
+    "Submit a large data processing job to the background worker system. "
+    "Use this when processing 200+ items that would take too long inline. "
+    "The job runs asynchronously and results are available via the jobs API.",
+    {
+        "type": "object",
+        "properties": {
+            "job_type": {
+                "type": "string",
+                "enum": ["batch_client_lookup", "batch_enrichment", "batch_extraction"],
+                "description": "Type of batch operation.",
+            },
+            "data": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "Array of items to process.",
+            },
+            "options": {
+                "type": "object",
+                "description": "Operation-specific options.",
+            },
+        },
+        "required": ["job_type", "data"],
+    },
+    modes={"data_processing", "task_execution"},
+)
+async def submit_batch_job(
+    deps: AgentDeps,
+    job_type: str,
+    data: list[dict],
+    options: dict | None = None,
+) -> str:
+    """Enqueue a batch job to the worker system and return the job ID."""
+    try:
+        from app.job_queue import enqueue
+        from app.streams import publish_job, STREAM_DATA_PROCESSING
+
+        job_id = await enqueue(
+            job_type=f"data_processing_{job_type}",
+            payload={
+                "items": data,
+                "options": options or {},
+                "user_sid": deps.user_sid,
+            },
+        )
+
+        await publish_job(STREAM_DATA_PROCESSING, {
+            "job_id": str(job_id),
+            "job_type": f"data_processing_{job_type}",
+        })
+
+        result = {"job_id": str(job_id), "item_count": len(data)}
+        return f"{_BATCH_JOB_MARKER}{json.dumps(result)}"
+
+    except Exception as exc:
+        logger.warning("Batch job submission failed: %s", exc)
+        return (
+            f"Batch job system unavailable ({exc}). "
+            f"Process the {len(data)} items inline using batch_lookup_clients instead."
+        )

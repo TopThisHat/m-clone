@@ -9,6 +9,7 @@ from __future__ import annotations
 from pydantic_settings import BaseSettings
 
 from app.streams import (
+    STREAM_DATA_PROCESSING,
     STREAM_VALIDATION_CAMPAIGN,
     STREAM_VALIDATION_CLUSTER,
     STREAM_VALIDATION_PAIR,
@@ -19,6 +20,7 @@ ALL_WORKFLOW_STREAMS = [
     STREAM_VALIDATION_CAMPAIGN,
     STREAM_VALIDATION_PAIR,
     STREAM_VALIDATION_CLUSTER,
+    STREAM_DATA_PROCESSING,
 ]
 
 

@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.agent.clarification import clarification_store
-from app.agent.streaming import stream_research
+from app.agent.streaming import stream_agent, stream_research
 from app.auth import get_current_user, get_optional_user
 from app.config import settings
 from app.db import db_get_session_doc_key, db_is_team_member, db_list_user_teams
@@ -109,13 +109,26 @@ async def research_endpoint(body: ResearchRequest, request: Request, user: dict[
         user_sid=user["sub"] if user else None,
     )
 
-    return StreamingResponse(
-        stream_research(
+    if body.execution_mode:
+        generator = stream_agent(
             query=body.query,
             deps=deps,
             message_history=body.message_history,
+            session_id=body.session_id,
             model=body.model,
-        ),
+            execution_mode=body.execution_mode,
+        )
+    else:
+        generator = stream_research(
+            query=body.query,
+            deps=deps,
+            message_history=body.message_history,
+            session_id=body.session_id,
+            model=body.model,
+        )
+
+    return StreamingResponse(
+        generator,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

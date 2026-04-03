@@ -251,6 +251,31 @@ async def fail(job_id: str, error: str, backoff_seconds: float = 0) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Progress tracking
+# ---------------------------------------------------------------------------
+
+async def update_job_progress(job_id: str, progress: dict[str, Any]) -> None:
+    """Merge *progress* data into the job's payload JSONB column.
+
+    This uses ``jsonb_concat`` (``||``) so existing payload keys are preserved
+    and only the keys present in *progress* are upserted.  Callers typically
+    pass ``items_completed``, ``items_total``, ``items_failed``, and
+    ``results`` from batch data-processing workflows.
+    """
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE playbook.job_queue
+            SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+            WHERE id = $1::uuid
+            """,
+            job_id,
+            json.dumps(_sanitize_payload(progress)),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Heartbeat & reclaim
 # ---------------------------------------------------------------------------
 
