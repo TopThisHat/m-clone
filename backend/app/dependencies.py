@@ -7,6 +7,7 @@ from typing import Any
 import wikipediaapi
 from fastapi import Cookie, HTTPException, Header, status
 
+from app.agent.run_state import RunState
 from app.auth import decode_jwt
 from app.config import settings
 
@@ -69,19 +70,16 @@ class AgentDeps:
     doc_texts: list[str] = field(default_factory=list)
     uploaded_filenames: list[str] = field(default_factory=list)
     uploaded_doc_metadata: list[dict] = field(default_factory=list)
-    research_plan: list[str] = field(default_factory=list)
-    evaluation_count: int = 0
     tool_cache: dict = field(default_factory=dict)
     source_urls: set = field(default_factory=set)
     source_titles: dict[str, str] = field(default_factory=dict)  # url → title
-    query_complexity: str = "standard"
     # Enhanced feature fields
     chart_payloads: list[dict] = field(default_factory=list)
     source_claims: dict[str, list[str]] = field(default_factory=dict)
-    # Track items_found across evaluations to detect stalled progress
-    progress_history: list[int] = field(default_factory=list)
     memory_context: str = ""
     user_rules: list[str] = field(default_factory=list)
+    # Mutable execution state — tools access via deps.run_state
+    run_state: RunState = field(default_factory=RunState)
     # Clarification fields
     # Bridge for agent-level ask_clarification (set by FunctionToolCallEvent handler)
     pending_clarification_id: str | None = None
@@ -113,6 +111,9 @@ def get_agent_deps(
     pdf_context: str = "",
 ) -> AgentDeps:
     resolved_context = doc_context or pdf_context
+    run_state = RunState(
+        query_complexity=_DEPTH_MAP.get(depth, "standard"),
+    )
     return AgentDeps(
         tavily_api_key=settings.tavily_api_key,
         wiki=wikipediaapi.Wikipedia(
@@ -124,8 +125,8 @@ def get_agent_deps(
         uploaded_filenames=uploaded_filenames or [],
         uploaded_doc_metadata=uploaded_doc_metadata or [],
         memory_context=memory_context,
-        query_complexity=_DEPTH_MAP.get(depth, "standard"),
         user_rules=user_rules or [],
+        run_state=run_state,
         team_ids=team_ids or [],
         user_sid=user_sid,
     )

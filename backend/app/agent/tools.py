@@ -150,8 +150,8 @@ async def create_research_plan(
     initial_hypotheses: list[str],
     complexity: str = "standard",
 ) -> str:
-    deps.research_plan = research_angles
-    deps.query_complexity = complexity
+    deps.run_state.research_plan = research_angles
+    deps.run_state.query_complexity = complexity
     angles_md = "\n".join(f"{i+1}. {a}" for i, a in enumerate(research_angles))
     hypo_md = "\n".join(f"- {h}" for h in initial_hypotheses)
 
@@ -203,26 +203,26 @@ async def evaluate_research_completeness(
     confidence_pct: int,
     items_found: int = 0,
 ) -> str:
-    deps.evaluation_count += 1
-    deps.progress_history.append(items_found)
+    deps.run_state.evaluation_count += 1
+    deps.run_state.progress_history.append(items_found)
 
     recommended_queries = identified_gaps[:3] if identified_gaps else []
 
     # Comprehensive/deep queries get more evaluation rounds
-    max_evals = 5 if deps.query_complexity == "deep" else 3
+    max_evals = 5 if deps.run_state.query_complexity == "deep" else 3
 
     # Detect stalled progress: same items_found for last 2 evaluations
     progress_stalled = (
-        len(deps.progress_history) >= 2
+        len(deps.run_state.progress_history) >= 2
         and items_found > 0
-        and deps.progress_history[-1] == deps.progress_history[-2]
+        and deps.run_state.progress_history[-1] == deps.run_state.progress_history[-2]
     )
 
     # SUFFICIENT when: confident enough, hit max evals, OR progress stalled
-    if confidence_pct >= 85 or deps.evaluation_count >= max_evals or progress_stalled:
+    if confidence_pct >= 85 or deps.run_state.evaluation_count >= max_evals or progress_stalled:
         result = {
             "decision": "SUFFICIENT",
-            "evaluation_number": deps.evaluation_count,
+            "evaluation_number": deps.run_state.evaluation_count,
             "max_evaluations": max_evals,
             "confidence_pct": confidence_pct,
             "items_found": items_found,
@@ -233,7 +233,7 @@ async def evaluate_research_completeness(
     else:
         result = {
             "decision": "CONTINUE",
-            "evaluation_number": deps.evaluation_count,
+            "evaluation_number": deps.run_state.evaluation_count,
             "max_evaluations": max_evals,
             "confidence_pct": confidence_pct,
             "items_found": items_found,
@@ -263,7 +263,7 @@ async def web_search(deps: AgentDeps, query: str) -> str:
         return deps.tool_cache[cache_key]
 
     is_financial = any(
-        kw in " ".join(deps.research_plan).lower()
+        kw in " ".join(deps.run_state.research_plan).lower()
         for kw in ["stock", "revenue", "earnings", "market cap", "valuation"]
     )
     kwargs: dict = {"exclude_domains": NOISE_DOMAINS}
