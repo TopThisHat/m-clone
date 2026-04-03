@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { cancelOperation, isCancelled } from '$lib/stores/reportStore';
+
 	type Progress = {
 		message: string;
 		phase: string;
@@ -67,13 +69,33 @@
 		{/if}
 	</div>
 
-	<!-- Bottom row: counts + percent -->
-	{#if isDeterminate}
-		<div class="flex items-center justify-between gap-2">
+	<!-- Bottom row: counts + percent + cancel -->
+	<div class="flex items-center justify-between gap-2">
+		{#if isDeterminate}
 			<span class="text-xs text-slate-600">
 				{progress.current ?? 0} / {progress.total}
 			</span>
-			<span class="text-xs text-slate-500">{displayPercent}%</span>
-		</div>
-	{/if}
+			<div class="flex items-center gap-3">
+				<span class="text-xs text-slate-500">{displayPercent}%</span>
+				{#if !isComplete && !$isCancelled}
+					<button
+						onclick={cancelOperation}
+						class="text-xs text-slate-600 hover:text-red-400 transition-colors px-2 py-0.5 rounded border border-navy-600 hover:border-red-800/40 hover:bg-red-900/10"
+						aria-label="Cancel operation"
+					>
+						Cancel
+					</button>
+				{/if}
+			</div>
+		{:else if !isComplete && !$isCancelled}
+			<div class="flex-1"></div>
+			<button
+				onclick={cancelOperation}
+				class="text-xs text-slate-600 hover:text-red-400 transition-colors px-2 py-0.5 rounded border border-navy-600 hover:border-red-800/40 hover:bg-red-900/10"
+				aria-label="Cancel operation"
+			>
+				Cancel
+			</button>
+		{/if}
+	</div>
 </div>

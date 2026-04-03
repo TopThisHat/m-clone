@@ -112,6 +112,12 @@ export const progressData = writable<ProgressData | null>(null);
 export const batchJob = writable<BatchJob | null>(null);
 export const confirmationPending = writable<ConfirmationPending | null>(null);
 
+// Cancel flag — checked by the SSE stream handler to abort an in-progress operation
+export const isCancelled = writable<boolean>(false);
+export function cancelOperation() {
+	isCancelled.set(true);
+}
+
 export const reportStore = {
 	setClassification(data: ClassificationData) {
 		classificationData.set(data);
@@ -147,5 +153,6 @@ export const reportStore = {
 		progressData.set(null);
 		batchJob.set(null);
 		confirmationPending.set(null);
+		isCancelled.set(false);
 	}
 };

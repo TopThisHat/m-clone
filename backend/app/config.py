@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Agent execution limits
     max_tool_calls_per_turn: int = 200
 
+    # Multi-mode agent rollout (0 = disabled / legacy RESEARCH only, 100 = fully enabled)
+    auto_mode_rollout_percent: int = 0
+
     # TalkToMe API
     talktome_api_url: str = ""
     talktome_api_key: str = ""

@@ -5,7 +5,7 @@
 	import MemoryPanel from './MemoryPanel.svelte';
 	import ChartCard from './ChartCard.svelte';
 	import CommentThread from './CommentThread.svelte';
-	import { isStreaming, memoryContext, chartData } from '$lib/stores/reportStore';
+	import { isStreaming, memoryContext, chartData, executionPlan } from '$lib/stores/reportStore';
 	import { activeSessionId } from '$lib/stores/sessionStore';
 	import { currentUser } from '$lib/stores/authStore';
 	import { listTeams, type Team } from '$lib/api/teams';
@@ -13,6 +13,60 @@
 	let { steps }: { steps: TraceStep[] } = $props();
 
 	let swimlaneView = $state(false);
+
+	// ── Task 14.4: Grouped trace when >10 tool calls and an execution plan is active ──
+
+	interface TraceGroup {
+		label: string;
+		steps: TraceStep[];
+		collapsed: boolean;
+	}
+
+	// Build groups from step_label on TraceStep.args or from execution plan step labels.
+	// We group by the "step_label" field in progressData updates, which gets surfaced via
+	// the args map. Fall back to "Uncategorized" for steps with no label.
+	const showGrouped = $derived(steps.length > 10 && $executionPlan !== null);
+
+	// Each TraceStep may carry a step_label in its args (set by the backend batch events).
+	function getStepLabel(step: TraceStep): string {
+		if (step.args && typeof step.args['step_label'] === 'string') {
+			return step.args['step_label'];
+		}
+		return 'Other';
+	}
+
+	// Build ordered groups preserving insertion order of labels
+	const traceGroups = $derived.by<TraceGroup[]>(() => {
+		if (!showGrouped) return [];
+
+		const map = new Map<string, TraceStep[]>();
+		for (const step of steps) {
+			const label = getStepLabel(step);
+			const existing = map.get(label);
+			if (existing) {
+				existing.push(step);
+			} else {
+				map.set(label, [step]);
+			}
+		}
+
+		return Array.from(map.entries()).map(([label, groupSteps]) => ({
+			label,
+			steps: groupSteps,
+			collapsed: false
+		}));
+	});
+
+	// Mutable collapsed state per group label (not derived — user toggles it)
+	let collapsedGroups = $state<Set<string>>(new Set());
+
+	function toggleGroup(label: string) {
+		collapsedGroups = new Set(
+			collapsedGroups.has(label)
+				? [...collapsedGroups].filter((l) => l !== label)
+				: [...collapsedGroups, label]
+		);
+	}
 
 	// Share to team
 	let showShareModal = $state(false);
@@ -131,6 +185,45 @@
 
 		{#if swimlaneView}
 			<ResearchSwimlane {steps} />
+		{:else if showGrouped}
+			<!-- Grouped view: collapsible step groups when >10 tool calls + execution plan -->
+			{#each traceGroups as group (group.label)}
+				{@const isCollapsed = collapsedGroups.has(group.label)}
+				<div class="border border-navy-700 rounded-lg overflow-hidden mb-2">
+					<!-- Group header -->
+					<button
+						onclick={() => toggleGroup(group.label)}
+						class="w-full flex items-center justify-between gap-2 px-3 py-2 bg-navy-800/60 hover:bg-navy-800 transition-colors text-left"
+						aria-expanded={!isCollapsed}
+					>
+						<div class="flex items-center gap-2 min-w-0">
+							<!-- Chevron -->
+							<svg
+								class="w-3 h-3 text-slate-500 flex-shrink-0 transition-transform duration-150 {isCollapsed ? '-rotate-90' : ''}"
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+								aria-hidden="true"
+							>
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+							</svg>
+							<span class="text-xs font-medium text-slate-300 truncate">{group.label}</span>
+						</div>
+						<span class="flex-shrink-0 text-xs text-slate-600 tabular-nums">
+							{group.steps.length} call{group.steps.length !== 1 ? 's' : ''}
+						</span>
+					</button>
+
+					<!-- Group body -->
+					{#if !isCollapsed}
+						<div class="divide-y divide-navy-700/50 px-2 py-1.5 space-y-1.5">
+							{#each group.steps as step (step.id)}
+								<TraceStepCard {step} />
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{/each}
 		{:else}
 			{#each steps as step (step.id)}
 				<TraceStepCard {step} />

@@ -5,9 +5,10 @@
 	import ChatInput from '$lib/components/ChatInput.svelte';
 	import RulesPanel from '$lib/components/RulesPanel.svelte';
 	import DropzoneOverlay from '$lib/components/DropzoneOverlay.svelte';
+	import StickyProgressHeader from '$lib/components/StickyProgressHeader.svelte';
 	import { dropzone } from '$lib/actions/dropzone';
 	import { traceStore } from '$lib/stores/traceStore';
-	import { isStreaming } from '$lib/stores/reportStore';
+	import { isStreaming, progressData } from '$lib/stores/reportStore';
 	import { newResearch } from '$lib/stores/sessionStore';
 	import { sidebarOpen } from '$lib/stores/uiStore';
 	import { rules } from '$lib/stores/rulesStore';
@@ -16,6 +17,39 @@
 	let rulesOpen = $state(false);
 	let dragging = $state(false);
 	let chatInput = $state<{ processFiles: (files: File[]) => Promise<void> } | null>(null);
+
+	// Element to observe for the sticky header (bound from ChatThread's progress area).
+	// ChatThread doesn't expose a binding, so we watch the chat section itself and let
+	// StickyProgressHeader track the DataProgressBar via a named slot target if wired later.
+	// For now we keep the observeTarget undefined — ChatThread can pass it via a bindable prop.
+	let progressAreaEl = $state<Element | null>(null);
+
+	// ── Task 14.2: Browser tab title updates ────────────────────────────────
+	const ORIGINAL_TITLE = 'Playbook Research';
+
+	$effect(() => {
+		const progress = $progressData;
+		if (!progress) {
+			document.title = ORIGINAL_TITLE;
+			return;
+		}
+		if (progress.phase === 'complete') {
+			document.title = ORIGINAL_TITLE;
+			return;
+		}
+
+		// Compute percent for the title
+		let pct: number | null = null;
+		if (typeof progress.percent === 'number') {
+			pct = Math.min(100, Math.max(0, Math.round(progress.percent)));
+		} else if (typeof progress.total === 'number' && progress.total > 0) {
+			pct = Math.round(((progress.current ?? 0) / progress.total) * 100);
+		}
+
+		document.title = pct !== null
+			? `Playbook (${pct}%) — Processing`
+			: 'Playbook — Processing';
+	});
 
 	function handleKeydown(e: KeyboardEvent) {
 		// Cmd+Shift+N (Mac) or Ctrl+Shift+N (Win/Linux) → new research
@@ -97,6 +131,9 @@
 				{traceVisible ? 'Hide trace' : 'Show trace'}
 			</button>
 		</div>
+
+		<!-- Sticky progress header — appears when DataProgressBar scrolls out of view -->
+		<StickyProgressHeader observeTarget={progressAreaEl} />
 
 		<!-- Scrollable chat thread -->
 		<ChatThread />
